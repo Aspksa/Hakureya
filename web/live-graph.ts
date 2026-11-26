@@ -39,7 +39,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement){
   snapshot=next;graph=layout(next);items.clear();links.replaceChildren();dots.replaceChildren();overlay.replaceChildren();
   // Always preserve root, categories and canon links; thin dense secondary edges only.
   const essential=graph.edges.filter(e=>e.kind==="category"||e.kind==="chronology"||e.a.startsWith("canon:")||e.kind==="draft");
-  const secondary=graph.edges.filter(e=>!essential.includes(e));
+  const essentialSet=new Set(essential);const secondary=graph.edges.filter(e=>!essentialSet.has(e));
   drawnEdges=essential.concat(secondary.slice(0,Math.max(0,10000-essential.length)));
   edgeEls=drawnEdges.map(e=>{const b=graph.byKey.get(e.b);return el("line",{stroke:e.kind==="category"&&e.a==="root"?"#bbb2ab":colors[(b?.group??-1)+1],"stroke-opacity":e.kind==="category"?.22:e.kind==="keywords"?.12:Math.min(.65,.23+.07*(e.shared||0)),"stroke-width":e.a==="root"?.55:Math.min(1.25,.36+.12*(e.shared||0)),...(e.kind==="draft"?{"stroke-dasharray":"2 3"}:{})},links)});
   const dense=graph.nodes.length>800;
@@ -93,7 +93,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement){
   const k=motion.matches?1:1-Math.exp(-dt/200);fit+=(desired-fit)*k;if(Math.abs(desired-fit)<.001)fit=desired;
   world.setAttribute("transform","translate("+(w*.5+panX)+" "+(h*.39+panY)+") scale("+(zoom*fit)+")");
   drawActivity(now);
-  if(replayAt||fit!==desired||works.size)invalidate();
+  if(replayAt||fit!==desired||[...works.values()].some(a=>a.terminal||!motion.matches))invalidate();
  }
  const observer=new ResizeObserver(resize);observer.observe(svg);resize();render(snapshot,true);
  function visibility(){if(document.hidden){cancelAnimationFrame(raf);raf=0;clearActivity()}else{last=performance.now();invalidate()}}
