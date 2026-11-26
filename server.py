@@ -446,7 +446,9 @@ def chronicle_command(content):
                 plan=soul_saga.plan(db,"future")
                 soul_intellect.prepare(db,plan)
                 soul_intelligence.prepare(db,plan)
-                return soul_network.report(db,plan["intelligence"]["network"])
+                trace=plan["intelligence"]["network"]
+                soul_network.record_diagnostic(db,trace)
+                return soul_network.report(db,trace)
             except (ValueError,TypeError,KeyError,IndexError,sqlite3.Error):
                 return "Сеть мозгов: локальная диагностика обнаружила ошибку данных. Платный запрос не отправлен."
     intellect_commands={"литературный интеллект":"overview","проверка противоречий":"issues","открытые сюжетные нити":"threads","история знаний":"knowledge","проверить свидетельства":"audit","восстановить свидетельства":"repair","забытые герои":"forgotten","проверка связей модулей":"modules","хронология мира":"world_time"}
