@@ -256,7 +256,7 @@ def status(db):
     pages=writer_volume.target(db)
     task=writer_volume.job(db)
     if task and task["state"]=="active":
-        return f"Разовое задание: {task['chars']}/{task['pages']*writer_volume.PAGE_CHARS} символов утверждённой прозы. Черновиков: {pending}. Запросов задания: {task['attempts']}/{task['limit']}. До 1800 выходных токенов на запрос."
+        return f"Разовое задание: {task['chars']}/{task['pages']*writer_volume.PAGE_CHARS} символов утверждённой прозы. Черновиков: {pending}. Запросов задания: {task['attempts']}/{task['limit']}. До {writer_volume.JOB_OUTPUT_LIMIT} выходных токенов на запрос."
     return ("Развитие: "+{"off":"выключено","draft":"черновики","auto":"автопубликация с проверками"}[mode(db)]+
         f". Черновиков: {pending}. Запросов UTC сегодня: {len(attempts)}/{writer_volume.limit(db)}."+
         (f" Цель: {pages} условных страниц А4 (по {writer_volume.PAGE_CHARS} символов)." if pages else " Обычный режим: одна попытка в сутки.")+
