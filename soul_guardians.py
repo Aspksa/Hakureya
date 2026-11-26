@@ -82,7 +82,9 @@ def audit(db):
 
 def knowledge(count):
     return {"love":"известна всем девяти" if count>=10 else "известна свидетелям" if count>=9 else "скрыта",
-            "identity":"известна девяти" if count>=21 else "скрыта от хранительниц"}
+            "identity":"известна девяти" if count>=21 else "скрыта от хранительниц",
+            "love_known_by":list(BY_ID) if count>=10 else ["mikage","yumeka","meirin"] if count>=9 else [],
+            "identity_known_by":list(BY_ID) if count>=21 else []}
 
 def plan(db):
     if audit(db) or shadow.audit(db):return None
@@ -123,7 +125,8 @@ def save(db,did,story,raw,p):
     current=plan(db)
     if not current or current["step"]!=p["step"]:raise ValueError("guardian prerequisites missing")
     evidence=o.clean(raw["evidence"],12,240)
-    if evidence not in story or not any(BY_ID[a][1].casefold()[:4] in story.casefold() for a in current["actors"]):raise ValueError("guardian excerpt or participant absent")
+    present=[a for a in current["actors"] if BY_ID[a][1].casefold()[:4] in story.casefold()]
+    if evidence not in story or not present:raise ValueError("guardian excerpt or participant absent")
     entries=raw["memories"]
     if not isinstance(entries,list) or len(entries)>2:raise ValueError("invalid memories")
     out=[]
@@ -138,7 +141,7 @@ def save(db,did,story,raw,p):
         if quote not in story or name not in quote.casefold():raise ValueError("guardian absent from excerpt")
         if other in BY_ID and BY_ID[other][1].casefold()[:4] not in quote.casefold():raise ValueError("other guardian absent from excerpt")
         out.append({"actor":a,"summary":o.clean(x["summary"],8,180),"evidence":quote,"other":other,"relation":rel})
-    payload=o.dump({"evidence":evidence,"memories":out})
+    payload=o.dump({"evidence":evidence,"memories":out,"participants":present})
     source=db.execute("SELECT checksum FROM chronicle_drafts WHERE id=?",(did,)).fetchone()[0]
     db.execute("INSERT INTO guardian_drafts VALUES(?,?,?,?,?,?)",(did,p["step"],payload,source,o.digest(o.dump([p["step"],payload,source,VERSION])),VERSION))
 
@@ -179,9 +182,10 @@ def graph(db):
     if audit(db):return nodes,edges
     rows=published(db);relations={}
     for did,n,step,data in rows:
-        primary=STEPS[step][2][0];event=f"guardian:stage:{step}"
+        primary=data["participants"][0];event=f"guardian:stage:{step}"
         node(event,STEPS[step][1]+" · гл. "+str(n),"guardian_memory",primary,step*3)
         edges.extend([{"a":"guardian:"+primary,"b":event,"kind":"guardian_event"},{"a":f"c:{did}","b":event,"kind":"guardian_source"}])
+        for actor in data["participants"][1:]:edges.append({"a":"guardian:"+actor,"b":event,"kind":"guardian_event"})
         if step:edges.append({"a":f"guardian:stage:{step-1}","b":event,"kind":"guardian_sequence"})
         for j,e in enumerate(data["memories"]):
             a=e["actor"];key=f"guardian:memory:{did}:{j}"
