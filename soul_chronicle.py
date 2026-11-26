@@ -179,7 +179,7 @@ def finish(db, reservation, value, saga_plan=None):
     soul_immortal.save(db,cur.lastrowid,data["story"],immortal,plan)
     soul_novel.save(db,cur.lastrowid,data,plan)
     soul_infinite.save(db,cur.lastrowid,data["story"],infinite,plan)
-    soul_intelligence.save(db,cur.lastrowid,data["story"],intelligence,plan)
+    soul_intelligence.save_optional(db,cur.lastrowid,data["story"],intelligence,plan)
     db.execute("UPDATE chronicle_attempts SET status='draft' WHERE day=?",(day,))
 
 def fail(db,reservation):
