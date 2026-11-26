@@ -110,7 +110,7 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
         graph_activity.update(activity,"done",f"draft:{pending['id']}" if pending else "hub:4")
         if plan.get("shadow"):
             return "Черновик создан.\n\n"+pending["title"]+"\n\n"+pending["story"]+"\n\n"+("Этап сюжета подтверждён цитатой." if shadow_saved else "Этап ещё не завершён; следующий пока не откроется.")+"\nПринять главу / Отклонить главу. Оценки: летопись: качество."
-        return "Черновик создан. "+soul_saga.ARC_LABELS[plan["arc"]]+".\n\n"+pending["title"]+"\n\n"+pending["story"]+"\n\nОценка редактора (эвристика): "+str(editorial["score"])+"/100. "+", ".join(editorial["warnings"])+( "\nОригинальность (эвристика): "+str(scene_report["originality_heuristic"])+"/100, слов: "+str(scene_report["words"])+". "+", ".join(scene_report["warnings"]) if scene_report else "")+( "\nЕсть варианты: летопись: варианты" if variants else "")+"\n\nлетопись: принять "+str(pending["id"])+" / летопись: отклонить "+str(pending["id"])
+        return "Черновик создан. "+soul_saga.ARC_LABELS[plan["arc"]]+".\n\n"+pending["title"]+"\n\n"+pending["story"]+("\n\nЕсть варианты: летопись: варианты" if variants else "")+"\n\nПринять главу / Отклонить главу. Оценки: летопись: качество / летопись: оригинальность."
     except (URLError,TimeoutError,ValueError,KeyError,IndexError,TypeError,OSError,sqlite3.Error):
         with LOCK, closing(connect()) as db, db:
             soul_chronicle.fail(db,reservation)
