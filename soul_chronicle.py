@@ -242,6 +242,8 @@ def _decide(db, draft_id, approve):
             soul_genesis.consolidate(db)
             soul_romance.on_approve(db,draft_id)
             soul_intelligence.refresh(db)
+            n=db.execute("SELECT number FROM saga_arcs WHERE draft_id=?",(draft_id,)).fetchone()[0]
+            soul_director.update_annotation(db,n)
     return bool(cur.rowcount)
 
 def approved(db,limit=20):
