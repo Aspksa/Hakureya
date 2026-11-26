@@ -94,7 +94,7 @@ def enrich(db,plan):
     choice=choose(db,plan["arc"])
     old=list(published(db))
     recalls=g.recall(db,choice["lens"],3)
-    plan["heart"]={**choice,"recent":[{k:p[k] for k in ("chapter","title","before","after","effect")} for p in old[-5:]],
+    plan["heart"]={**choice,"future_lenses":[{"topic":t,"lens":LENSES[t][0]} for t in TOPICS if t!=choice["topic"]][:4],"recent":[{k:p[k] for k in ("chapter","title","before","after","effect")} for p in old[-5:]],
                    "threads":[{"key":k,**v} for k,v in threads(db).items() if v["closed"] is None][:4],
                    "recall":[{"chapter":p["number"],"title":p["title"],"excerpt":p["story"][:350]} for p in recalls]}
     return plan
@@ -114,7 +114,7 @@ def instruction(plan):
         " Не более одного значимого момента; topic из "+", ".join(TOPICS)+
         "; before/after из "+", ".join(EMOTIONS)+
         "; evidence — точная цитата из story, cause — номер существующей опубликованной главы или null, effect — конкретное художественное последствие из текста, "
-        " thread — null или {key,action,title}, action open/resolve, ключ латиницей. Не придумывай ссылки. При нехватке места отдай приоритет полному тексту сцены.")
+        " effect — дословный фрагмент story, либо пустая строка. thread — null или {key,action,title}, action open/resolve, ключ латиницей. Не придумывай ссылки. При нехватке места отдай приоритет полному тексту сцены.")
 
 def validate(db,story,raw,arc):
     if raw is None:return {"moments":[]}
@@ -176,8 +176,10 @@ def thread_text(db):
     return "Художественные сюжетные линии:\n"+"\n".join(f"{v['title']} — глава {v['opened']}; "+(f"завершена в главе {v['closed']}" if v["closed"] else "открыта") for v in threads(db).values()) if threads(db) else "Новых незавершённых романтических линий пока нет."
 
 def graph(db):
-    nodes=[]; edges=[]
+    nodes=[]; edges=[]; seen=set()
     def node(key,label,kind,topic,slot=None):
+        if key in seen:return
+        seen.add(key)
         if slot is None:
             db.execute("INSERT OR IGNORE INTO heart_slots(key,topic,slot) SELECT ?,?,COALESCE(MAX(slot),-1)+1 FROM heart_slots WHERE topic=?",(key,topic,topic))
             slot=db.execute("SELECT slot FROM heart_slots WHERE key=?",(key,)).fetchone()[0]
@@ -203,6 +205,14 @@ def graph(db):
             if cause:edges.append({"a":cause,"b":key,"kind":"heart_cause"})
         if topic in previous:edges.append({"a":previous[topic],"b":key,"kind":"heart_related"})
         previous[topic]=key
+        for kind,emotion in (("heart_before",p["before"]),("heart_after",p["after"])):
+            feeling="heart:feeling:"+o.digest(emotion)[:16]
+            node(feeling,"Чувство героини: "+emotion,"heart_moment","tenderness")
+            edges.append({"a":key,"b":feeling,"kind":kind})
+        if p["effect"]:
+            consequence=key+":effect"
+            node(consequence,"Последствие: "+p["effect"],"heart_moment",topic)
+            edges.append({"a":key,"b":consequence,"kind":"heart_effect"})
     for n,did in db.execute("SELECT number,draft_id FROM omega_index WHERE draft_id IS NOT NULL ORDER BY number DESC LIMIT 12"):
         w=g.world(db,did);m=o.metadata(db,did)
         for kind,body in (("letter",w.get("letter") if w else None),("diary",m["data"].get("diary") if m else None)):
