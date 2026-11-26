@@ -36,7 +36,9 @@ for(let i=0;i<80;i++)graph.records.push({key:"m:"+i,group:i%5,slot:Math.floor(i/
 for(let i=0;i<4;i++)graph.records.push({key:"era:"+["past","meeting","love","future"][i],group:4,kind:"epoch",sector:["past","meeting","love","future"][i],book:0,chapter_slot:0,label:["Прошлое","Встреча","Любовь","Будущее"][i],slot:20+i});
 graph.records.push({key:"immortal:root",group:4,kind:"immortal_root",immortal_slot:-1,label:"Летопись",slot:30});
 graph.total=graph.records.length;
-const reader={chapter:1,title:"Первая глава",volume:1,page:1,pages:5,text:"Вечный снег. \n\nХакурэя открыла глаза.",chapter_progress:.2,volume_progress:.03,can_back:false,can_next:true,last_published:false};
+const prose=Array.from({length:55},(_,i)=>"Абзац "+(i+1)+". Хакурэя подняла глаза и прислушалась к тишине. — Пойдём дальше, — сказала она. Герой улыбнулся.").join("\n\n");
+const checkpoints=[];
+const reader={chapter:1,title:"Первая глава",volume:1,page:1,pages:5,text:"Вечный снег. \n\nХакурэя открыла глаза.",chapter_progress:.2,volume_progress:.03,can_back:false,can_next:true,last_published:false,document:{chapter:1,last_chapter:1,title:"Первая глава",volume:1,text:prose,hash:"fixture",offset:0,segments:[{number:1,start:0,end:Array.from(prose).length,hash:"fixture-part"}],latest:2,volume_count:2,volume_ordinal:1,parts:1,epoch:1}};
 test("real browser: SVG, chat, book and settings at four viewport widths",{skip:!chrome&&"Chrome/Chromium not installed",timeout:120000},async()=>{
  const dir=await mkdtemp(join(tmpdir(),"hakureya-layout-"));
  const dist=join(dir,"dist");
@@ -46,6 +48,12 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
   server=createServer(async(req,res)=>{
    const path=new URL(req.url,"http://localhost").pathname;
    if(path.startsWith("/api/")){
+    if(path==="/api/reader"&&req.method==="POST"){
+     let body="";for await(const chunk of req)body+=chunk;
+     const payload=JSON.parse(body);
+     if(payload.action==="position")checkpoints.push(payload);
+     res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify(payload.action==="position"?{ok:true}:{reader}));return;
+    }
     const data=path==="/api/graph"?graph:path==="/api/history"?{messages:[],connected:false}:path==="/api/reader"?{reader:null}:path==="/api/chat"?{reply:"",reader,connected:false}:{session:"test",revision:1,active:[],recent:[]};
     req.resume();res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify(data));return;
    }
@@ -92,6 +100,16 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
    assert.equal(book.font,21);
    assert.ok(book.title>=29);
    assert.ok(book.button>=50);
+   await waitFor(()=>checkpoints.length>0);
+   const fit=await evaluate("({page:document.querySelector('#book-page').getBoundingClientRect().height,available:document.querySelector('#book-scroll').clientHeight,position:document.querySelector('#book-position').textContent})");
+   assert.ok(fit.page<=fit.available+2,JSON.stringify(fit));
+   assert.match(fit.position,/Страница 1 из [2-9][0-9]*|Страница 1 из 1[0-9]+/);
+   const before=checkpoints.length;
+   await evaluate("document.querySelector('#book-next').click()");
+   await waitFor(()=>checkpoints.length>before&&checkpoints.at(-1).start>0);
+   assert.match(await evaluate("document.querySelector('#book-position').textContent"),/Страница 2 из /);
+   assert.ok(await evaluate("document.querySelector('#book-title').hidden"));
+   checkpoints.length=0;
    await evaluate("document.querySelector('#settings').click()");
    assert.ok(await evaluate("document.querySelector('#config').open && parseFloat(getComputedStyle(document.querySelector('#key')).fontSize)>=16"));
    await evaluate("document.querySelector('#config-close').click()");
