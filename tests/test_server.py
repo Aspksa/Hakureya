@@ -152,3 +152,23 @@ class ServerTest(unittest.TestCase):
         graph=self.request("graph")
         self.assertTrue(any(e["a"]=="arc:love" and e["b"]=="c:1" for e in graph["edges"]))
         self.assertFalse(any(n["key"].startswith("d:") for n in graph["records"]))
+
+
+    def test_shadow_saga_and_simple_chat(self):
+        from test_omega import chapter
+        with patch.object(server,"urlopen") as remote:
+            self.assertIn("Оглавление",self.request("chat",{"content":"Летопись!"})["reply"])
+            self.assertIn("0/18",self.request("chat",{"content":"Что дальше по сюжету?"})["reply"])
+            self.assertIn("Нет ожидающей",self.request("chat",{"content":"Принять главу"})["reply"])
+            remote.assert_not_called()
+        self.request("config",{"key":"test-key","model":"test-model","consent":True})
+        draft=chapter()
+        draft["shadow"]={"step":0,"evidence":"Хакурэя открыла дверь серебряного архива."}
+        fake=MagicMock()
+        fake.__enter__.return_value.read.return_value=json.dumps({"choices":[{"message":{"content":json.dumps(draft,ensure_ascii=False)}}]}).encode()
+        with patch.object(server,"urlopen",return_value=fake) as remote:
+            self.assertIn("Черновик создан",self.request("chat",{"content":"Продолжи сагу"})["reply"])
+            self.assertIn("Глава 14 сохранена",self.request("chat",{"content":"Принять главу."})["reply"])
+            self.assertIn("1/18",self.request("chat",{"content":"Что дальше по сюжету?"})["reply"])
+            self.assertEqual(remote.call_count,1)
+        self.assertTrue(any(n["key"]=="shadow:event:0" for n in self.request("graph")["records"]))
