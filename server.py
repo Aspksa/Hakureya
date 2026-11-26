@@ -66,7 +66,7 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == "/api/graph":
             with closing(connect()) as db:
                 return self.respond(memory_graph.snapshot(db))
-        if self.path == "/api/avatar":
+        if self.path.split("?",1)[0] == "/api/avatar":
             path = ROOT / "data" / "avatar.png"
             if not path.is_file():
                 return self.respond({"error":"Аватар не выбран"},404)
