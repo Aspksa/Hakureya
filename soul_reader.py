@@ -10,6 +10,8 @@ def init(db):
     db.execute("""CREATE TABLE IF NOT EXISTS book_reader(
        id INTEGER PRIMARY KEY CHECK(id=1), chapter INTEGER NOT NULL,
        page INTEGER NOT NULL, source_hash TEXT NOT NULL, active INTEGER NOT NULL)""")
+    db.execute("""CREATE TABLE IF NOT EXISTS book_reader_position(
+       id INTEGER PRIMARY KEY CHECK(id=1), chapter INTEGER NOT NULL, offset INTEGER NOT NULL, source_hash TEXT NOT NULL)""")
 
 def paginate(text, size=PAGE_SIZE):
     """Keep all source characters, prefer paragraph then sentence/word boundaries."""
@@ -52,6 +54,7 @@ def display(db,n,p,loaded=None):
     if loaded is None:return "Глава недоступна или повреждена. Закладка сохранена."
     pages,check=loaded
     if not 0<=p<len(pages):return "Такой страницы нет. Закладка сохранена."
+    db.execute("DELETE FROM book_reader_position")
     db.execute("INSERT OR REPLACE INTO book_reader VALUES(1,?,?,?,1)",(n,p,check))
     soul_omega.mark(db,n)
     if p==len(pages)-1:
@@ -81,7 +84,13 @@ def move(db,action,n=None):
     pages,new_check=loaded
     if check!=new_check or p>=len(pages):
         return "Текст сохранённой главы изменился. Откройте её заново; закладка сохранена."
-    if action=="resume":return display(db,chapter,p,loaded)
+    if action=="resume":
+        # Preserve the exact adaptive bookmark when reopening through the old chat command.
+        pos=db.execute("SELECT chapter FROM book_reader_position WHERE id=1").fetchone()
+        if pos and pos[0]==chapter:
+            db.execute("UPDATE book_reader SET active=1 WHERE id=1")
+            return f"Глава {chapter} · Страница {p+1}/{len(pages)}\n\n"+pages[p].strip()
+        return display(db,chapter,p,loaded)
     if action=="next":
         if p+1<len(pages):return display(db,chapter,p+1,loaded)
         if chapter>=latest(db):return "Вы на последней опубликованной странице. Закладка сохранена."
@@ -113,8 +122,95 @@ def view(db):
     count=db.execute("SELECT COUNT(*) FROM omega_index WHERE number BETWEEN ? AND ?",
         (1 if volume==1 else 14+(volume-2)*12,13 if volume==1 else 25+(volume-2)*12)).fetchone()[0]
     ordinal=n if volume==1 else (n-14)%12+1
-    return {"chapter":n,"title":index[0],"volume":volume,"page":p+1,"pages":len(pages),
+    result={"chapter":n,"title":index[0],"volume":volume,"page":p+1,"pages":len(pages),
       "text":body.strip(),"chapter_progress":(p+1)/len(pages),
       "volume_progress":min(1,(ordinal-1+(p+1)/len(pages))/max(1,count)),
       "can_back":n>1 or p>0,"can_next":n<latest(db) or p+1<len(pages),
       "last_published":n==latest(db) and p+1==len(pages)}
+    result["document"]=document(db)
+    return result
+
+
+def source(db,n):
+    """Use the approved immutable source; remove only the known technical wrapper."""
+    raw=soul_saga.read(db,n)
+    if not raw.startswith(("Художественный канон\n\n","Художественная глава ")):raise ValueError("chapter unavailable")
+    if n<=13:
+        match=re.match(r"^Художественный канон\n\n### Глава [IVX]+\. [^\n]+\n*",raw)
+    else:
+        match=re.match(r"^Художественная глава [0-9]+\. [^\n]+\n[^\n]+\n\n",raw)
+    prefix=match.end() if match else 0
+    body=raw[prefix:]
+    title=db.execute("SELECT title FROM omega_index WHERE number=?",(n,)).fetchone()[0]
+    return {"number":n,"title":title,"body":body,"hash":hashlib.sha256(body.encode("utf-8")).hexdigest(),"prefix":prefix,"raw":raw}
+
+def document(db):
+    """Return a logical chapter of contiguous, checked published parts, not drafts."""
+    row=bookmark(db)
+    if not row or not row[3]:return None
+    n,p,check,_=row
+    import soul_novel
+    group=soul_novel.group_for(db,n)
+    nums=[x["number"] for x in group] if group else [n]
+    sources=[source(db,k) for k in nums]
+    text="";segments=[]
+    for part in sources:
+        if text:text+="\n\n"
+        start=len(text);text+=part["body"]
+        segments.append({"number":part["number"],"start":start,"end":len(text),"hash":part["hash"]})
+    part=sources[nums.index(n)];segment=segments[nums.index(n)]
+    if hashlib.sha256(part["raw"].encode("utf-8")).hexdigest()!=check:raise ValueError("source changed")
+    pos=db.execute("SELECT chapter,offset,source_hash FROM book_reader_position WHERE id=1").fetchone()
+    if pos and pos[0]==n:
+        if pos[2]!=part["hash"] or not 0<=pos[1]<=len(part["body"]):raise ValueError("reader position damaged")
+        offset=pos[1]
+    else:
+        legacy=paginate(part["raw"])
+        offset=max(0,min(len(part["body"]),sum(map(len,legacy[:p]))-part["prefix"]))
+    volume=soul_omega.volume(nums[0])
+    total=db.execute("SELECT COUNT(*) FROM omega_index WHERE number BETWEEN ? AND ?",(1 if volume==1 else 14+(volume-2)*12,13 if volume==1 else 25+(volume-2)*12)).fetchone()[0]
+    return {"chapter":nums[0],"last_chapter":nums[-1],"title":sources[0]["title"],"volume":volume,"text":text,
+      "hash":hashlib.sha256(text.encode("utf-8")).hexdigest(),"offset":segment["start"]+offset,
+      "segments":segments,"latest":latest(db),"volume_count":total,
+      "volume_ordinal":nums[0] if volume==1 else (nums[0]-14)%12+1,
+      "parts":len(nums),"epoch":1+(volume-1)//8}
+
+def position(db,hash_value,start,end):
+    """Persist code-point offset, also keep the old chapter/page bookmark compatible."""
+    doc=document(db)
+    if not doc or hash_value!=doc["hash"]:raise ValueError("reader source changed")
+    if type(start) is not int or type(end) is not int or not 0<=start<=end<=len(doc["text"]):raise ValueError("invalid reader offset")
+    # Separators belong to the previous source; offsets remain stable after a new part is appended.
+    segment=next((x for x in reversed(doc["segments"]) if x["start"]<=start),doc["segments"][0])
+    n=segment["number"];part=source(db,n);offset=min(len(part["body"]),start-segment["start"])
+    raw_offset=part["prefix"]+offset
+    pages=paginate(part["raw"]);p=0;boundary=0
+    for i,page in enumerate(pages):
+        p=i;boundary+=len(page)
+        if raw_offset<boundary:break
+    check=hashlib.sha256(part["raw"].encode("utf-8")).hexdigest()
+    db.execute("INSERT OR REPLACE INTO book_reader VALUES(1,?,?,?,1)",(n,p,check))
+    db.execute("INSERT OR REPLACE INTO book_reader_position VALUES(1,?,?,?)",(n,offset,part["hash"]))
+    soul_omega.mark(db,n)
+    import soul_evolution
+    for seg in doc["segments"]:
+        if start<seg["end"]<=end:soul_evolution.mark_read(db,seg["number"])
+    return document(db)
+
+def adjacent(db,direction):
+    doc=document(db)
+    if not doc:return move(db,"resume")
+    if direction=="advance":
+        n=doc["last_chapter"]+1
+        if n>latest(db):return "Продолжение ещё не опубликовано."
+        return display(db,n,0)
+    n=doc["chapter"]-1
+    if n<1:return "Вы на первой странице книги."
+    loaded=load(db,n)
+    if not loaded:return "Предыдущая глава недоступна."
+    reply=display(db,n,len(loaded[0])-1,loaded)
+    prev=document(db)
+    if prev:
+        pos=len(prev["text"])
+        position(db,prev["hash"],pos,pos)
+    return reply
