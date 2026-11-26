@@ -80,6 +80,9 @@ def snapshot(db, limit=5000):
                 n.update(sector=arc,book=soul_omega.volume(num),chapter_slot=num-1 if num<=13 else (num-14)%12)
             elif n["key"].startswith("era:") and n["key"][4:] in soul_omega.ARCS:
                 n.update(sector=n["key"][4:],book=0,chapter_slot=0)
+            elif n["key"].startswith("segment:"):
+                _,arc,v=n["key"].split(":")
+                n.update(sector=arc,book=int(v),chapter_slot=-1)
     assign_slots(db,records)
     visible={n["key"] for n in records}
     edges.extend(e for e in chronicle_edges+biography_edges if e["a"] in visible and e["b"] in visible)
