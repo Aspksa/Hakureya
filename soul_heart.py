@@ -181,8 +181,11 @@ def graph(db):
         if key in seen:return
         seen.add(key)
         if slot is None:
-            db.execute("INSERT OR IGNORE INTO heart_slots(key,topic,slot) SELECT ?,?,COALESCE(MAX(slot),-1)+1 FROM heart_slots WHERE topic=?",(key,topic,topic))
-            slot=db.execute("SELECT slot FROM heart_slots WHERE key=?",(key,)).fetchone()[0]
+            row=db.execute("SELECT slot FROM heart_slots WHERE key=?",(key,)).fetchone()
+            if row is None:
+                db.execute("INSERT OR IGNORE INTO heart_slots(key,topic,slot) SELECT ?,?,COALESCE(MAX(slot),-1)+1 FROM heart_slots WHERE topic=?",(key,topic,topic))
+                row=db.execute("SELECT slot FROM heart_slots WHERE key=?",(key,)).fetchone()
+            slot=row[0]
         nodes.append({"key":key,"group":4,"kind":kind,"content":label,"created":"","order":0,"heart_topic":topic,"heart_slot":slot})
     node("heart:root","История любви (художественная)","heart_root","root",-1)
     edges.append({"a":"arc:love","b":"heart:root","kind":"heart_root"})
@@ -226,3 +229,11 @@ def graph(db):
             c=chapter_key(db,n) if n else None
             if c:edges.append({"a":c,"b":key,"kind":"heart_thread"})
     return nodes,edges
+
+
+def audit(db):
+    issues=[]
+    for did,n in db.execute("SELECT h.draft_id,a.number FROM heart_drafts h JOIN saga_arcs a ON a.draft_id=h.draft_id JOIN chronicle_drafts d ON d.id=h.draft_id WHERE d.status=\'approved\'"):
+        try: read(db,did)
+        except (ValueError,TypeError): issues.append(f"Глава {n}: повреждены сведения о художественных отношениях")
+    return issues
