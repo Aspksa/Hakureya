@@ -10,7 +10,7 @@ export function sourceColor(key){
 }
 export const brainColors={plot:"#c6a7e8",characters:"#a9d8f0",relations:"#efa1bd",magic:"#e5c36c",time:"#a6d8ba",memory:"#bec4eb",editor:"#e5aa8e",analytics:"#bcd9d7",twist:"#cfa1ed",coordinator:"#f6dba0"};
 export const brainLabels={plot:"Сюжет",characters:"Персонажи",relations:"Отношения",magic:"Магия",time:"Хронология",memory:"Память",editor:"Редактор",analytics:"Аналитика",twist:"Повороты",coordinator:"Координатор"};
-export const stageLabels={request:"Подготовка запроса",context:"Сбор литературного контекста",waiting:"Cloud.ru · ожидание ответа",received:"Ответ получен",validating:"Проверка текста",saving:"Сохранение SQLite",saved:"Черновик сохранён",published:"Глава опубликована",done:"Ответ сохранён",error:"Ошибка запроса",discarded:"Результат отброшен"};
+export const stageLabels={request:"Подготовка запроса",context:"Сбор литературного контекста",waiting:"Cloud.ru · ожидание ответа",streaming:"Cloud.ru · поступает текст",received:"Ответ получен",validating:"Проверка текста",saving:"Сохранение SQLite",saved:"Черновик сохранён",published:"Глава опубликована",done:"Ответ сохранён",error:"Ошибка запроса",discarded:"Результат отброшен"};
 for(const [key,label] of Object.entries(brainLabels))stageLabels["brain:"+key]="Локальный анализ · "+label;
 export function flowPaths(item,graph){
  const root=graph.byKey.get("root");
@@ -29,7 +29,7 @@ export function flowPaths(item,graph){
   return paths.length?paths:[route([source,root],"#e8c6ed")];
  }
  if(item.stage==="waiting")return [route([root,cloud],"#91cbff")];
- if(item.stage==="received")return [route([cloud,root],"#ffe2a0")];
+ if(item.stage==="streaming"||item.stage==="received")return [route([cloud,root],"#ffe2a0")];
  if(item.stage==="validating")return [route([root,target],"#c0a9e8")];
  if(item.stage==="saving"||item.stage==="saved"||item.stage==="published"||item.stage==="done")return [route([root,target],"#f7d897")];
  if(item.stage==="error")return [route([cloud,root],"#ed657d")];
