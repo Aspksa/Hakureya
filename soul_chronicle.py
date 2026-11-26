@@ -10,6 +10,7 @@ import soul_genesis
 import soul_romance
 import soul_heart
 import soul_shadow
+import soul_reader
 
 BATCH = 5
 TAGS = ("познание","доверие","достоинство","самообладание","сотрудничество","ответственность","любознательность","нежность","любовь","прошлое","встреча","сила","прощение","надежда")
@@ -37,6 +38,7 @@ def init(db):
     soul_romance.init(db)
     soul_heart.init(db)
     soul_shadow.init(db)
+    soul_reader.init(db)
 
 def canon_ok(db):
     row=db.execute("SELECT checksum FROM soul_lore_versions WHERE version=?",(soul_lore.VERSION,)).fetchone()
