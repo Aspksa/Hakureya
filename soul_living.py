@@ -189,7 +189,18 @@ def eligible(db,did):
     if inf and (inf["quality"]["warnings"] or (inf["required"] and not inf["step"])):return False
     import soul_dynasty
     dynasty=soul_dynasty.read(db,did)
-    if dynasty and (soul_dynasty.audit(db) or (dynasty["target"] and not dynasty["step"])):return False
+    if dynasty:
+        if soul_dynasty.audit(db) or dynasty.get("warning"):return False
+        if dynasty["target"] and not dynasty["step"]:
+            import soul_novel
+            part=soul_novel.record(db,did)
+            if not part or part["part"]>=12:return False
+            rows=soul_novel.published_group(db,part["start"])
+            raw,check=db.execute("SELECT payload,checksum FROM chronicle_drafts WHERE id=?",(did,)).fetchone()
+            text=c.unpack(raw,check)["story"]
+            import re
+            words=sum(len(re.findall(r"\b\w+\b",r["story"])) for r in rows)+len(re.findall(r"\b\w+\b",text))
+            if words>=part["target"] or o.volume(part["start"]+part["part"])!=o.volume(part["start"]):return False
     if db.execute("SELECT 1 FROM lit_rejections WHERE draft_id=?",(did,)).fetchone():return False
     m=o.metadata(db,did);review=r.report(db,did)
     return bool(m and review and m["score"]>=85 and not m["warnings"] and review["originality_heuristic"]>=80 and not review["warnings"] and review["words"]>=350)
