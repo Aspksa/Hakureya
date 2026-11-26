@@ -178,7 +178,7 @@ def chronicle_command(content):
             return "Летопись\n\nЧитать книгу · Дальше · Назад · Продолжить чтение\nГде остановился · Остановить чтение · Оглавление\nПродолжи сагу · Продолжи нашу историю любви\nПокажи черновик · Принять главу · Отклонить главу\nЧто дальше по сюжету · История любви · Девять хранительниц\n\nПодробности при необходимости: «план саги» (со спойлерами), «летопись: качество»."
         if q in ("летопись: сага","летопись: сага план"):
             if q.endswith(" план"):return soul_shadow.status(db,True)+"\n\n"+soul_guardians.status(db,True)
-            return soul_guardians.status(db) if soul_guardians.plan(db) else soul_shadow.status(db)
+            return soul_guardians.status(db)+"\n\n"+soul_shadow.status(db) if soul_guardians.plan(db) else soul_shadow.status(db)+"\n\n"+soul_guardians.status(db)
         if q in ("летопись: принять текущую","летопись: отклонить текущую"):
             pending=db.execute("SELECT id FROM chronicle_drafts WHERE status='pending'").fetchone()
             if not pending:return "Нет ожидающей главы."
@@ -255,7 +255,7 @@ def chronicle_command(content):
                 return "Сначала подключите Cloud.ru. Сон не включён."
             CHRONICLE.update(enabled=True,epoch=CHRONICLE["epoch"]+1)
             soul_chronicle.control(db,"background_enabled")
-            return "Сон включён до закрытия сервера: не чаще одной попытки UTC в сутки, после 20 минут тишины, даже без новой записи дневника, по этапам новой саги или открытого цикла; после завершения — по очереди веток. В Cloud.ru передаются канон, утверждённые художественные главы и счётчики (если есть), не текст чата. Отключение: летопись: выключить сон."
+            return "Сон включён до закрытия сервера: не чаще одной попытки UTC в сутки, после 20 минут тишины, даже без новой записи дневника, по этапам саги о хранительницах и Тени либо открытого цикла; после завершения — по очереди веток. В Cloud.ru передаются канон, утверждённые художественные главы и счётчики (если есть), не текст чата. Отключение: летопись: выключить сон."
         if q=="летопись: выключить сон":
             CHRONICLE.update(enabled=False,epoch=CHRONICLE["epoch"]+1)
             soul_chronicle.control(db,"background_disabled")
