@@ -90,6 +90,7 @@ def context(db,plan):
     mature=sorted((t for t in opened if n-t["chapter"]>=t["delay"]),key=lambda t:t["chapter"])
     protected=sorted((t for t in opened if n-t["chapter"]<t["delay"]),key=lambda t:t["chapter"])
     obligations=[t for t in ev.state(db).values() if t["kind"] in ("promise","conflict","thread") and t["state"]=="open"]
+    li.refresh(db)
     data=list(li.rows(db));actors,_=li.registry(data)
     forgotten=sorted((a for a in actors.values() if n-a["last"]>=9),key=lambda a:a["last"])
     prefs=dict(db.execute("SELECT theme,weight FROM evolution_preferences"))
@@ -98,6 +99,8 @@ def context(db,plan):
     cycle=None
     chosen=next((x for x in (plan.get("infinite",{}).get("selected"),plan.get("immortal",{}).get("chosen"),plan.get("evolution",{}).get("chosen")) if x and x.get("theme")!="fixed"),None)
     if fixed:
+        mandatory=next((plan[k] for k in ("shadow","guardians","destiny") if isinstance(plan.get(k),dict)),None)
+        if mandatory:chosen={"theme":"fixed","title":str(mandatory.get("title","Обязательный эпизод")),"guide":"Следуй текущей саге."}
         chosen=chosen or {"theme":"fixed","title":"Обязательный эпизод","guide":"Продолжай установленную ветку."}
         reason="приоритет обязательного этапа или явно выбранной ветки"
     elif continuation:
@@ -182,15 +185,19 @@ def report(db,mode):
     rows=[(n,did,p) for n,did,p in published(db) if source_visible(db,n)]
     if not rows:return "Нет доступных опубликованных частей с Eternal Story. Планировщик начнёт работу при следующем написании; скрытые главы не раскрываются."
     n,_,p=rows[-1]
+    if mode=="forecast":
+        return "Перспективный план, не канон (на момент написания главы "+str(n)+"):\n"+"\n".join(f"Том {x[\x27volume\x27]}, от главы {x[\x27start\x27]}: {x[\x27direction\x27]}" for x in p["forecast"])
     if mode=="cycles":
         cycles={}
         for num,_,r in rows:
             c=r.get("cycle")
             if c:cycles[c["id"]]=c
-        return "Редакционные циклы (не доказательство завершения сюжета):\n"+"\n".join(f"{c['id']}. {c['title']} — {c['part']}/{c['target']}, {c['phase']}" for c in cycles.values()) if cycles else "Действуют прежние обязательные этапы."
+        return "Редакционные циклы (не доказательство завершения сюжета):\n"+"\n".join(f"{c['id']}. "+("Редакционный цикл" if ev.settings(db)[1] else c["title"])+f" — {c['part']}/{c['target']}, {c['phase']}" for c in cycles.values()) if cycles else "Действуют прежние обязательные этапы."
     if mode=="quality":
         return "Локальные показатели, не смысловая гарантия:\n"+"\n".join(f"Глава {num}: напряжение {r['tension']}/100, оригинальность {r['originality']}, замечания: "+("; ".join(r["warnings"]) or "нет") for num,_,r in rows[-8:])
-    # Reasons and next proposals can spoil the plot, so do not expose unapproved draft data.
+    # Reasons may reference prior unread chapters; conservatively hide detailed plans in that case.
+    if ev.settings(db)[1] and any(not source_visible(db,x) for x, in db.execute("SELECT number FROM omega_index WHERE number BETWEEN 14 AND ?",(n,))):
+        return "Подробности решения скрыты до чтения предыдущих глав. Отключите защиту от спойлеров, если хотите видеть все замыслы."
     return f"Глава {n}: {p['title']}\nПричина выбора: {p['reason']}\nТемп: {p['pace']}\nОткрытых записей линий: {p['open_count']}\nВарианты (на момент написания, не канон):\n"+"\n".join(x["title"]+" — "+x["reason"] for x in p["alternatives"])
 
 def graph(db):
@@ -217,7 +224,7 @@ def graph(db):
             node(key,"Подтверждённое закрытие линии · "+str(n),"director_turn",infinite_group=c and "director:cycle:"+str(c["id"]) or "director:root")
             edge(k,key,"director_turn")
     for key,c in cycles.items():
-        node(key,c["title"]+f" · {c['part']}/{c['target']}","director_saga",infinite_group=key,cycle_complete=c["part"]>=c["target"])
+        node(key,("Редакционный цикл "+str(c["id"]) if ev.settings(db)[1] else c["title"])+f" · {c['part']}/{c['target']}","director_saga",infinite_group=key,cycle_complete=c["part"]>=c["target"])
         edge("director:root",key,"director_cycle")
     for n,_,p in rows:
         for cause in p["causes"]:
