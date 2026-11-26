@@ -427,6 +427,9 @@ def graph(db,existing=(),volume=None):
                 k="lit:family:"+o.digest(o.dump(sorted((norm(x["a"]),norm(x["b"])))))[:24]
                 node(k,"Семейная связь: "+x["a"]+" · "+x["b"],"lit_family",infinite_group=k)
                 edge(a,k,"lit_rel_family");edge(b,k,"lit_rel_family")
+    import soul_intellect
+    separated,links=soul_intellect.identity_graph(db,[*existing,*nodes],volume)
+    nodes.extend(separated);edges.extend(links)
     return nodes,edges
 
 
