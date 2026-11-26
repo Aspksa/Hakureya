@@ -3,7 +3,7 @@ import {flowPaths,pointOn,activityEvents,stageLabels,publicationLinks,brainColor
 import {rng,clamp} from "./geometry.mjs";
 type Publication={number:number,key:string,volume:number,segment:string,first:boolean,complete:boolean,epoch:number,details?:boolean};
 type Snapshot={records:any[],edges:any[],total:number,limited:boolean,volume?:number,publication?:Publication|null};
-type Work={id:string,kind:string,source:string,target:string,stage:string,sources?:string[],events?:{seq:number,stage:string,target:string}[],seq?:number};
+type Work={id:string,kind:string,source:string,target:string,stage:string,response_chars?:number,chunks?:number,sources?:string[],events?:{seq:number,stage:string,target:string}[],seq?:number};
 type Activity={session:string,revision:number,active:Work[],recent:Work[]};
 export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:number)=>void){
  const ns="http://www.w3.org/2000/svg";
@@ -90,7 +90,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   focusMotion={start:performance.now(),fromZoom:zoom,toZoom:target,fromX:panX,fromY:panY,toX:key==="root"?0:-(n.x-camera.cx)*s*k,toY:key==="root"?0:-(n.y-camera.cy)*s*k};
   invalidate();
  }
- function status(){const writer=[...works.values()].find(a=>!a.terminal&&a.item.kind==="chronicle");const count=[...works.values()].filter(a=>!a.terminal).length;info.textContent=(snapshot.volume?"Том "+snapshot.volume+" · ":"")+snapshot.total+" записей · "+graph.edges.length+" связей"+(snapshot.limited?" · ограничено 5000":"")+(snapshot.volume?" · ↻ общая карта":"")+(writer?" · Глава: "+(stageNames[writer.item.stage]||writer.item.stage):count?" · "+([...stages.values()].find(a=>!a.terminal)?.current&&stageNames[[...stages.values()].find(a=>!a.terminal)!.current.stage]||"Cloud.ru: "+count):[...stages.values()].some(a=>a.terminal)?" · "+(stageNames[[...stages.values()].at(-1)?.current.stage||""]||""):"")}
+ function status(){const writer=[...works.values()].find(a=>!a.terminal&&a.item.kind==="chronicle");const count=[...works.values()].filter(a=>!a.terminal).length;info.textContent=(snapshot.volume?"Том "+snapshot.volume+" · ":"")+snapshot.total+" записей · "+graph.edges.length+" связей"+(snapshot.limited?" · ограничено 5000":"")+(snapshot.volume?" · ↻ общая карта":"")+(writer?" · Глава: "+(stageNames[writer.item.stage]||writer.item.stage)+(writer.item.response_chars?" · "+writer.item.response_chars+" симв. ответа":""):count?" · "+([...stages.values()].find(a=>!a.terminal)?.current&&stageNames[[...stages.values()].find(a=>!a.terminal)!.current.stage]||"Cloud.ru: "+count):[...stages.values()].some(a=>a.terminal)?" · "+(stageNames[[...stages.values()].at(-1)?.current.stage||""]||""):"")}
  function redrawSelection(){
   overlay.replaceChildren();selectionGlyph=null;const n=graph.byKey.get(active);if(!n)return;
   const outer=el("g",{transform:"translate("+n.x*s+" "+n.y*s+")"},overlay),color=colors[n.group+1];
@@ -214,7 +214,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
    if(!a.terminal||fade>.15){
     hot.set("root","#e9cf9c");
     if(a.current.stage.startsWith("brain:")){hot.set("lit:db","#bec4eb");hot.set(a.current.stage,"#f6dba0");hot.set("brain:coordinator","#f6dba0")}
-    if(a.current.stage==="waiting"||a.current.stage==="received")hot.set("cloud:api","#91cbff");
+    if(a.current.stage==="waiting"||a.current.stage==="streaming"||a.current.stage==="received")hot.set("cloud:api","#91cbff");
     if(a.current.stage==="request"||a.current.stage==="context")for(const key of [a.current.source,...(a.current.sources||[])].slice(0,8))hot.set(key,"#e8c6ed");
     if(a.current.stage==="validating")hot.set("hub:4","#c0a9e8");
     if(a.current.stage==="saving"||a.current.stage==="saved"||a.current.stage==="published")hot.set(a.current.target,"#ffe2a0");
@@ -264,11 +264,11 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   spiral.forEach((p,i)=>{let d="";for(let j=0;j<=36;j++){const t=j/36,a=t*5.8+phase*(i?1:-1)+i*Math.PI,r=radius*.5+t*radius*1.7;d+=(j?"L":"M")+(Math.cos(a)*r).toFixed(2)+" "+(Math.sin(a)*r*.68).toFixed(2)}p.setAttribute("d",d);p.setAttribute("opacity",String(.42*intensity))});
   // A prospective star is an overlay, explicitly not a draft or a published chapter.
   const angle=-.68,offset=Math.min(88,Math.max(40,Math.min(w,h)*.18)),sx=Math.max(35,Math.min(w-35,x+Math.cos(angle)*offset)),sy=Math.max(35,Math.min(h-35,y+Math.sin(angle)*offset));
-  const size=received?8:4.5;
+  const chars=Math.max(0,work.item.response_chars||0),size=received?10:Math.min(10,4.5+Math.log1p(chars)*.55);
   seed.setAttribute("transform","translate("+sx+" "+sy+")");seed.setAttribute("opacity",String(.45+.55*intensity));
   seedGlow.setAttribute("r",String(size*5));seedCore.setAttribute("r",String(size));
   seedOrbit.setAttribute("rx",String(size*2.4));seedOrbit.setAttribute("ry",String(size*1.4));seedOrbit.setAttribute("transform","rotate("+phase*12+")");
-  seedLabel.textContent=stage==="saving"?"Сохранение":stage==="validating"?"Проверка":received?"Ответ получен":stage==="waiting"?"Ожидание Cloud.ru":"Подготовка главы";
+  seedLabel.textContent=stage==="saving"?"Сохранение":stage==="validating"?"Проверка":received?"Ответ получен":stage==="streaming"?chars+" симв. ответа":stage==="waiting"?"Ожидание Cloud.ru":"Подготовка главы";
   const sources=[...new Set([work.item.source,...(work.item.sources||[])])].map(key=>graph.byKey.get(key)).filter(n=>n&&items.get(n.key)?.getAttribute("visibility")!=="hidden");
   const count=Math.floor(dust.length*settings.particles/100*quality);
   dust.forEach((p,i)=>{if(i>=count||calm||!sources.length){p.setAttribute("display","none");return}
