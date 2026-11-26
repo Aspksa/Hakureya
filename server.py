@@ -179,8 +179,9 @@ class Handler(SimpleHTTPRequestHandler):
             with closing(connect()) as db:
                 return self.respond({"status":soul_chronicle.status(db),"graph":soul_chronicle.biography_graph(db)})
         if self.path == "/api/graph":
-            with closing(connect()) as db:
-                return self.respond(memory_graph.snapshot(db))
+            with closing(connect()) as db, db:
+                data=memory_graph.snapshot(db)
+            return self.respond(data)
         if self.path.split("?",1)[0] == "/api/avatar":
             path = ROOT / "data" / "avatar.png"
             if not path.is_file():
