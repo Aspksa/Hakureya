@@ -1,5 +1,6 @@
 """Local graph, backed exclusively by persisted records. No invented nodes."""
 import re
+import soul_chronicle
 from contextlib import closing
 
 KINDS = ("Запросы", "Знания", "Ответы", "Опыт")
@@ -17,6 +18,8 @@ def snapshot(db, limit=5000):
     notes = db.execute("SELECT id,kind,content,created FROM memory_notes ORDER BY id DESC LIMIT ?",(limit,)).fetchall()
     records = [{"key":f"m:{i}","group":0 if r=="user" else 2,"content":c,"created":t,"order":i} for i,r,c,t in reversed(rows) if r in ("user","assistant") and not (r=="assistant" and c=="Сообщение сохранено локально. Для ответа подключите Cloud.ru через меню аватара.")]
     records += [{"key":f"n:{i}","group":g,"content":c,"created":t,"order":i} for i,g,c,t in reversed(notes)]
+    extra, chronicle_edges = soul_chronicle.graph(db,limit) if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='chronicle_diary'").fetchone() else ([],[])
+    records += extra
     records.sort(key=lambda n:(n["created"] or "",n["key"][0],n["order"]))
     records=records[-limit:]
     edges=[]
@@ -41,11 +44,15 @@ def snapshot(db, limit=5000):
             recent.append(key)
             if len(recent)>8:
                 del recent[0]
+    visible={n["key"] for n in records}
+    edges.extend(e for e in chronicle_edges if e["a"] in visible and e["b"] in visible)
     for n in records:
         n["label"]=" ".join(n["content"].split())[:54]
         del n["content"]
         del n["order"]
     total=db.execute("SELECT COUNT(*) FROM messages WHERE role='user' OR (role='assistant' AND content != ?)",("Сообщение сохранено локально. Для ответа подключите Cloud.ru через меню аватара.",)).fetchone()[0]+db.execute("SELECT COUNT(*) FROM memory_notes").fetchone()[0]
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='chronicle_diary'").fetchone():
+        total+=db.execute("SELECT COUNT(*) FROM chronicle_diary").fetchone()[0]+db.execute("SELECT COUNT(*) FROM chronicle_drafts WHERE status='approved'").fetchone()[0]
     return {"records":records,"edges":edges,"total":total,"limited":total>len(records)}
 
 def add_note(db,kind,content):

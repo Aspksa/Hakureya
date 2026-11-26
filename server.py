@@ -6,6 +6,8 @@ import argparse, json, sqlite3, threading, webbrowser, os
 from contextlib import closing
 import memory_graph
 import soul_core
+import soul_chronicle
+import time, re
 import base64, binascii
 
 ROOT = Path(__file__).resolve().parent
@@ -13,6 +15,7 @@ DB = ROOT / "data" / "hakureya.sqlite3"
 API = "https://foundation-models.api.cloud.ru/v1/chat/completions"
 LOCK = threading.Lock()
 CONFIG = {"key": "", "model": ""}
+CHRONICLE = {"enabled": False, "last_activity": time.monotonic(), "epoch": 0}
 
 
 def connect():
@@ -37,7 +40,95 @@ def store(role, content):
             soul_core.observe_user(db,message_id,content)
         elif role == "assistant":
             soul_core.review_response(db,message_id,content)
+            soul_chronicle.collect(db)
         return message_id
+
+def generate_chronicle(background=False):
+    # Reserve quota and snapshot under lock; do not block chat during network I/O.
+    with LOCK:
+        if not CONFIG["key"] or (background and (not CHRONICLE["enabled"] or time.monotonic()-CHRONICLE["last_activity"]<1200)):
+            return "Cloud.ru не подключён или фоновый сон не разрешён."
+        with closing(connect()) as db, db:
+            soul_chronicle.collect(db)
+            reservation=soul_chronicle.reserve(db)
+            traits=soul_chronicle.profile(db)
+            previous=[{"title":p["title"],"story":p["story"][:1200],"tags":p["tags"]} for p in soul_chronicle.approved(db,2)]
+        if not reservation:
+            return "Нет новой записи дневника, есть ожидающий черновик, нарушена целостность канона или исчерпан дневной лимит."
+        key, model, epoch=CONFIG["key"],CONFIG["model"],CHRONICLE["epoch"]
+    try:
+        payload={"model":model,"messages":soul_chronicle.prompt(reservation,traits,previous),"max_tokens":1800,"stream":False}
+        req=Request(API,data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
+        with urlopen(req,timeout=60) as res:
+            result=json.loads(res.read(1_000_000))
+        raw=result["choices"][0]["message"]["content"]
+        if not isinstance(raw,str) or len(raw)>24000:
+            raise ValueError("invalid draft")
+        value=json.loads(raw)
+        with LOCK, closing(connect()) as db, db:
+            if CHRONICLE["epoch"]!=epoch:
+                soul_chronicle.fail(db,reservation)
+                return "Настройки изменились; черновик отброшен."
+            soul_chronicle.finish(db,reservation,value)
+        return "Черновик создан. Введите «летопись: черновик» для чтения и решения."
+    except (URLError,TimeoutError,ValueError,KeyError,IndexError,TypeError,OSError,sqlite3.Error):
+        with LOCK, closing(connect()) as db, db:
+            soul_chronicle.fail(db,reservation)
+        return "Черновик не создан: ответ модели не прошёл проверку или запрос завершился ошибкой. Дневная попытка учтена."
+
+def chronicle_command(content):
+    q=content.strip().casefold()
+    decision=re.fullmatch(r"летопись: (принять|отклонить) ([1-9][0-9]{0,8})",q)
+    if q not in soul_chronicle.COMMANDS and not decision and q!="летопись: главы":
+        return None
+    if q=="летопись: создать":
+        with LOCK, closing(connect()) as db, db:
+            soul_chronicle.control(db,"manual_request")
+        return generate_chronicle()
+    with LOCK, closing(connect()) as db, db:
+        if q=="летопись: включить сон":
+            if not CONFIG["key"]:
+                return "Сначала подключите Cloud.ru. Сон не включён."
+            CHRONICLE.update(enabled=True,epoch=CHRONICLE["epoch"]+1)
+            soul_chronicle.control(db,"background_enabled")
+            return "Сон включён до закрытия сервера: не чаще одной попытки UTC в сутки, после 20 минут тишины, только при новой записи дневника. В Cloud.ru передаются канон и счётчики, не текст чата. Отключение: летопись: выключить сон."
+        if q=="летопись: выключить сон":
+            CHRONICLE.update(enabled=False,epoch=CHRONICLE["epoch"]+1)
+            soul_chronicle.control(db,"background_disabled")
+            return "Сон отключён. Уже начатый сетевой запрос может завершиться, но его черновик будет отброшен."
+        if decision:
+            i=int(decision[2])
+            try:
+                ok=soul_chronicle.decide(db,i,decision[1]=="принять")
+            except ValueError:
+                ok=False
+            return "Решение сохранено." if ok else "Черновик не найден, повреждён или уже обработан."
+        if q=="летопись: дневник":
+            return soul_chronicle.diary_text(db)
+        if q=="летопись: черновик":
+            try:
+                p=soul_chronicle.latest_pending(db)
+            except ValueError:
+                return "Черновик повреждён; публикация заблокирована."
+            if not p:
+                return "Нет ожидающего черновика."
+            return f"Художественный черновик №{p['id']}: {p['title']}\n\n{p['story']}\n\nМодельные эмоции: {p['emotions']}\nПредлагаемые изменения характера: {p['traits']}\n\nлетопись: принять {p['id']} / летопись: отклонить {p['id']}"
+        if q=="летопись: главы":
+            rows=soul_chronicle.approved(db,5)
+            return "\n\n".join(f"Вымышленная глава №{p['id']}: {p['title']}\n{p['story']}" for p in rows) or "Новых утверждённых глав пока нет."
+        st=soul_chronicle.status(db)
+        return f"Канон: {st['canon_chapters']} глав, целостность: {st['canon_ok']}. Дневник: {st['diary_entries']}. Новые главы: {st['approved']}. Черновики: {st['pending']}. Сон: {'включён' if CHRONICLE['enabled'] else 'выключен'}. Параметры персонажа: {st['traits']}."
+
+def chronicle_worker(stop):
+    while not stop.wait(60):
+        try:
+            with LOCK, closing(connect()) as db, db:
+                soul_chronicle.collect(db)
+            if CHRONICLE["enabled"]:
+                generate_chronicle(background=True)
+        except (sqlite3.Error,ValueError,OSError):
+            # Keep foreground server available; no secret or prompt logging.
+            continue
 
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
@@ -71,6 +162,9 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if not self.local():
             return self.respond({"error":"Доступ только локально"},403)
+        if self.path == "/api/chronicle":
+            with closing(connect()) as db:
+                return self.respond({"status":soul_chronicle.status(db),"graph":soul_chronicle.biography_graph(db)})
         if self.path == "/api/graph":
             with closing(connect()) as db:
                 return self.respond(memory_graph.snapshot(db))
@@ -131,12 +225,18 @@ class Handler(SimpleHTTPRequestHandler):
                     with closing(connect()) as db, db:
                         soul_core.record_model(db,model.strip())
                     CONFIG.update(key=key.strip(), model=model.strip())
+                    CHRONICLE.update(enabled=False,epoch=CHRONICLE["epoch"]+1)
                 return self.respond({"connected":True})
             if self.path != "/api/chat":
                 return self.respond({"error":"Не найдено"},404)
             content = data.get("content")
             if not isinstance(content,str) or not content.strip() or len(content)>12000:
                 raise ValueError("Введите сообщение до 12000 символов")
+            with LOCK:
+                CHRONICLE["last_activity"]=time.monotonic()
+            command=chronicle_command(content)
+            if command is not None:
+                return self.respond({"reply":command,"connected":bool(CONFIG["key"])})
             with LOCK:
                 store("user",content.strip())
                 if not CONFIG["key"]:
@@ -155,6 +255,7 @@ class Handler(SimpleHTTPRequestHandler):
                 except (URLError, TimeoutError, ValueError, KeyError, IndexError, TypeError, OSError):
                     return self.respond({"error":"Cloud.ru не вернул ответ. Сообщение сохранено; проверьте модель и ключ."},502)
                 store("assistant",reply)
+                CHRONICLE["last_activity"]=time.monotonic()
                 return self.respond({"reply":reply,"connected":True})
         except (ValueError, UnicodeError, TypeError, binascii.Error) as e:
             return self.respond({"error":"Некорректные данные запроса"},400)
@@ -166,8 +267,12 @@ def main():
     args = parser.parse_args()
     if not (ROOT / "dist" / "index.html").is_file():
         raise SystemExit("Frontend not built: npm install && npm run build")
-    with closing(connect()):
-        pass
+    with closing(connect()) as db, db:
+        soul_chronicle.recover(db)
+        soul_chronicle.collect(db)
+    stop=threading.Event()
+    worker=threading.Thread(target=chronicle_worker,args=(stop,),daemon=True)
+    worker.start()
     with ThreadingHTTPServer(("127.0.0.1",args.port),Handler) as server:
         url = f"http://127.0.0.1:{server.server_address[1]}"
         print("Hakureya: "+url,flush=True)
@@ -177,6 +282,8 @@ def main():
             server.serve_forever()
         except KeyboardInterrupt:
             pass
+        finally:
+            stop.set()
 
 if __name__ == "__main__":
     main()
