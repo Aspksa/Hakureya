@@ -56,6 +56,7 @@ def init(db):
     db.execute("""CREATE TABLE IF NOT EXISTS universe_settings(
         id INTEGER PRIMARY KEY CHECK(id=1), chapter_pages INTEGER NOT NULL)""")
     db.execute("INSERT OR IGNORE INTO universe_settings VALUES(1,0)")
+    db.execute("CREATE INDEX IF NOT EXISTS universe_terms_chapter ON universe_terms(chapter,seq)")
 
 def chapter_pages(db):
     return db.execute("SELECT chapter_pages FROM universe_settings WHERE id=1").fetchone()[0]
@@ -93,7 +94,8 @@ def refresh(db,force=False):
         db.execute("DELETE FROM universe_scenes WHERE chapter=?",(n,))
         for seq,(a,b,heading,body) in enumerate(split(story),1):
             db.execute("INSERT INTO universe_scenes VALUES(?,?,?,?,?,?)",(n,seq,a,b,heading or title,body))
-            terms=Counter(o.tokens(body+" "+heading+" "+title))
+            allowed=o.tokens(body+" "+heading+" "+title)
+            terms=Counter(t for t in o.WORD.findall(o.normalized(body+" "+heading+" "+title)) if t in allowed)
             db.executemany("INSERT INTO universe_terms VALUES(?,?,?,?)",[(t,n,seq,w) for t,w in terms.items()])
         db.execute("INSERT OR REPLACE INTO universe_sources VALUES(?,?)",(n,digest))
         changed+=1
@@ -118,8 +120,9 @@ def search(db,query,limit=6,visible=True,arc=None):
     out=[]
     for (n,s),score in sorted(scores.items(),key=lambda x:(-x[1],-x[0][0],x[0][1])):
         if visible and not ev.readable(db,n):continue
-        row=db.execute("SELECT i.arc,s.title,s.body,s.start,s.end FROM universe_scenes s JOIN omega_index i ON i.number=s.chapter WHERE s.chapter=? AND s.seq=?",(n,s)).fetchone()
+        row=db.execute("SELECT i.arc,s.title,s.body,s.start,s.end,i.story FROM universe_scenes s JOIN omega_index i ON i.number=s.chapter WHERE s.chapter=? AND s.seq=?",(n,s)).fetchone()
         if not row or (arc and row[0]!=arc):continue
+        if not 0<=row[3]<row[4]<=len(row[5]) or row[5][row[3]:row[4]]!=row[2]:raise ValueError("scene source mismatch")
         out.append(dict(chapter=n,scene=s,title=row[1],text=row[2],start=row[3],end=row[4],score=score))
         if len(out)>=limit:break
     return out
@@ -181,11 +184,13 @@ def latest_plan(db):
 
 def overview(db,page=1):
     refresh(db)
+    li.refresh(db)
     rows=db.execute("SELECT number,arc,title,LENGTH(story) FROM omega_index ORDER BY number").fetchall()
     # Do not expose unread titles, character details or planned revelations.
     visible=[{"number":n,"volume":o.volume(n),"arc":arc,"title":title if ev.readable(db,n) else "Непрочитанная часть","chars":length} for n,arc,title,length in rows]
     actors,relations=li.registry(list(li.rows(db,visible=True)))
-    return {"chapters":len(rows),"chars":sum(r[3] for r in rows),"scenes":db.execute("SELECT COUNT(*) FROM universe_scenes").fetchone()[0],
+    volumes=Counter(o.volume(r[0]) for r in rows)
+    return {"volume_groups":[{"volume":v,"count":count} for v,count in sorted(volumes.items()) if any(item["volume"]==v for item in visible[(page-1)*50:page*50])],"chapters":len(rows),"chars":sum(r[3] for r in rows),"scenes":db.execute("SELECT COUNT(*) FROM universe_scenes").fetchone()[0],
             "volumes":len({o.volume(r[0]) for r in rows}),"actors":len(actors),"relations":len(relations),
             "items":visible[(page-1)*50:page*50],"pages":max(1,(len(rows)+49)//50),
             "chapter_pages":chapter_pages(db),
@@ -205,5 +210,25 @@ def report(db,mode,query=""):
     if mode=="knowledge":
         facts=[f for f in ev.state(db).values() if f["kind"] in ("knowledge","secret") and ev.readable(db,f["chapter"])]
         return "\n".join(f"{f['chapter']}: {f['subject']} — {f['detail']} | свидетели: {', '.join(f['knows']) or 'не подтверждены'}" for f in facts[-40:]) or "Нет доступных подтверждённых записей о знаниях."
+    if mode=="actor":
+        name=li.norm(query)
+        records=[(n,f) for n,f in li.rows(db,visible=True) if li.norm(f["subject"])==name or (f.get("object") and li.norm(f["object"])==name)]
+        return "\n\n".join(f"Глава {n}: {f['kind']} — {f['value']}\n«{f['quote']}»" for n,f in records[-30:]) or "Нет доступных свидетельств о персонаже."
+    if mode=="timeline":
+        data=overview(db)
+        return "\n".join(f"{r['number']}. {r['title']} · том {r['volume']} · {r['arc']}" for r in data["items"])
+    if mode=="atlas":
+        import soul_genesis
+        return soul_genesis.atlas(db)
+    if mode=="audit":
+        refresh(db)
+        for n,story in db.execute("SELECT number,story FROM omega_index"):
+            spans=db.execute("SELECT start,end,body FROM universe_scenes WHERE chapter=? ORDER BY seq",(n,)).fetchall()
+            end=0
+            for a,b,body in spans:
+                if a!=end or not a<b<=len(story) or body!=story[a:b]:return f"Индекс повреждён: глава {n}."
+                end=b
+            if end!=len(story):return f"Индекс неполон: глава {n}."
+        return "Целостность индекса сцен подтверждена; это не смысловая проверка."
     data=overview(db)
     return f"Литературная вселенная: {data['chapters']} опубликованных частей, {data['scenes']} сцен, {data['volumes']} томов, {data['chars']} знаков. Персонажей: {data['actors']}; отношений: {data['relations']}. Черновиков: {data['pending']}."
