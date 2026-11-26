@@ -54,6 +54,7 @@ export function publicationLinks(publication,graph){
  const k=publication.key,v=publication.volume;
  add(k,publication.segment,"#e7c46d");
  if(publication.first&&v>1)add("book:"+(v-1),"book:"+v,"#9ec8f0");
+ if(publication.details===false)return result;
  const linked=new Set([k]);
  for(const e of graph.edges)if(e.a===k||e.b===k){
   if(/(?:source|event|character|cause|relationship|story_continuation|cross_volume)/.test(e.kind)){
