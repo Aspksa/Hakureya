@@ -5,7 +5,7 @@ MAX_WIRE=1_000_000
 MAX_TEXT=24_000
 
 def read_response(response,on_progress):
-    content_type=response.headers.get("Content-Type","")
+    content_type=getattr(response,"headers",{}).get("Content-Type","")
     if not isinstance(content_type,str) or "text/event-stream" not in content_type.lower():
         raw=response.read(MAX_WIRE+1)
         if len(raw)>MAX_WIRE:raise ValueError("writer response too large")
@@ -30,8 +30,9 @@ def read_response(response,on_progress):
         if not isinstance(choices,list) or len(choices)>1:raise ValueError("unexpected writer choices")
         if not choices:return
         choice=choices[0]
-        if choice.get("index",0)!=0:raise ValueError("unexpected writer choice")
+        if not isinstance(choice,dict) or choice.get("index",0)!=0:raise ValueError("unexpected writer choice")
         delta=choice.get("delta") or {}
+        if not isinstance(delta,dict):raise ValueError("invalid writer delta")
         chunk=delta.get("content")
         if chunk is not None and not isinstance(chunk,str):raise ValueError("invalid writer fragment")
         if chunk:
