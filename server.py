@@ -246,7 +246,8 @@ def chronicle_command(content):
     q=aliases.get(q,q)
     lit_chars=re.fullmatch(r"реестр персонажей(?: ([1-9][0-9]{0,4}))?",q)
     lit_search=re.fullmatch(r"поиск по роману (.{2,180})",q)
-    if lit_chars or lit_search or q in ("литературная аналитика","литературные мозги","отношения персонажей","проверить литературную базу","восстановить литературный индекс"):
+    lit_dossier=re.fullmatch(r"литературное досье (.{2,60})",q)
+    if lit_chars or lit_search or lit_dossier or q in ("литературная аналитика","литературные мозги","отношения персонажей","проверить литературную базу","восстановить литературный индекс","похожие имена"):
         with LOCK, closing(connect()) as db, db:
             if not soul_chronicle.canon_ok(db) or soul_genesis.audit(db) or soul_evolution.audit(db) or soul_infinite.audit(db):return "Повреждены исходные литературные записи."
             if q=="проверить литературную базу":
@@ -256,6 +257,10 @@ def chronicle_command(content):
                 if db.execute("PRAGMA quick_check").fetchone()[0]!="ok":return "SQLite повреждена; восстановление индекса остановлено. Используйте проверенную резервную копию."
                 count=soul_intelligence.refresh(db,force=True)
                 return f"Индекс восстановлен из {count} опубликованных частей. Исходные главы не изменены."
+            if lit_dossier:return soul_intelligence.dossier(db,lit_dossier[1])
+            if q=="похожие имена":
+                pairs=soul_intelligence.possible_duplicates(db)
+                return "Возможные совпадения (не объединены):\n"+"\n".join(a+" / "+b for a,b in pairs) if pairs else "Похожих имён не обнаружено."
             if lit_chars:return soul_intelligence.characters_text(db,int(lit_chars[1] or 1))
             if lit_search:return soul_intelligence.search(db,lit_search[1])
             if q=="отношения персонажей":return soul_intelligence.relations_text(db)
