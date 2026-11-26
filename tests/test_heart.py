@@ -13,7 +13,7 @@ from test_omega import chapter
 def value():
     p=chapter()
     p["heart"]={"moments":[{"topic":"trust","title":"Совместное открытие архива",
-        "evidence":"Хакурэя открыла дверь серебряного архива.","before":"любопытство" if False else "удивление",
+        "evidence":"Хакурэя открыла дверь серебряного архива.","before":"удивление",
         "after":"доверие","cause":7,"effect":"На странице сиял неизвестный символ.",
         "thread":{"key":"archive-choice","action":"open","title":"Доверие в архиве"}}]}
     return p
