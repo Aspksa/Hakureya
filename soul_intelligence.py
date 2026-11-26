@@ -286,7 +286,7 @@ def prepare(db,plan):
     recent=data[-120:]
     facts,threads,_=inf.ledger(list(inf.published(db)))
     open_lines=[t for t in threads.values() if t["closed"] is None and last+1-t["chapter"]>=t["delay"]]
-    theme=plan.get("infinite",{}).get("selected") or plan.get("director") or plan.get("evolution",{}).get("chosen") or {}
+    theme=plan.get("universe") or plan.get("infinite",{}).get("selected") or plan.get("director") or plan.get("evolution",{}).get("chosen") or {}
     completed=[];result={}
     def brain(name,value):
         result[name]=value;completed.append(name)
