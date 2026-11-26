@@ -194,6 +194,8 @@ def overview(db,page=1):
             "volumes":len({o.volume(r[0]) for r in rows}),"actors":len(actors),"relations":len(relations),
             "items":visible[(page-1)*50:page*50],"pages":max(1,(len(rows)+49)//50),
             "chapter_pages":chapter_pages(db),
+            "actors_list":sorted(actors.values(),key=lambda x:(-x["last"],x["name"]))[:20],
+            "family":[r for r in relations.values() if r["kind"]=="family"][-20:],
             "lanes":dict(Counter(r[1] for r in rows)),
             "pending":db.execute("SELECT COUNT(*) FROM chronicle_drafts WHERE status='pending'").fetchone()[0]}
 
