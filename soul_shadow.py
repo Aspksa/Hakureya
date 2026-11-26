@@ -44,14 +44,15 @@ def completed(db):
     for did,n in db.execute("""SELECT x.draft_id,a.number FROM shadow_drafts x JOIN saga_arcs a ON a.draft_id=x.draft_id
        JOIN chronicle_drafts d ON d.id=x.draft_id WHERE d.status='approved' ORDER BY a.number"""):
         p=read(db,did)
-        if p and p[0]==len(result):result.append((did,n,p[0],p[1]))
+        if not p or p[0]!=len(result):raise ValueError("out-of-order published saga")
+        result.append((did,n,p[0],p[1]))
     return result
 
 def plan(db):
     done=completed(db); i=len(done)
     if i>=len(STEPS):return None
     topic,title,guide=STEPS[i]
-    return {"step":i,"topic":topic,"title":title,"guide":guide,"previous":[{"chapter":n,"excerpt":e} for _,n,_,e in done[-3:]]}
+    return {"step":i,"topic":topic,"title":title,"guide":guide,"court_roles":list(ROLES) if topic=="court" else [],"previous":[{"chapter":n,"excerpt":e} for _,n,_,e in done[-3:]]}
 
 def instruction(p):
     if not p:return ""
@@ -109,3 +110,11 @@ def graph(db):
         edges.extend([{"a":"shadow:topic:"+topic,"b":key,"kind":"shadow_event"},{"a":f"c:{did}","b":key,"kind":"shadow_source"},{"a":previous,"b":key,"kind":"shadow_sequence"}])
         previous=key
     return nodes,edges
+
+def guard(db,arc):
+    """Other literary branches must not prematurely solve the masked identity."""
+    i=len(completed(db))
+    if arc=="past":return " Не переноси будущие события саги в прошлое до знакомства."
+    if arc=="meeting":return " Не переноси события о неизвестном защитнике из будущего в первые дни знакомства."
+    if i<16:return " В побочных главах не раскрывай Хакурэе личность неизвестного защитника и не завершай его сюжет вне предусмотренного этапа."
+    return " В более поздних событиях личность защитника уже раскрыта; не возвращай эту тайну как новую."
