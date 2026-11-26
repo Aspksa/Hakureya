@@ -1,5 +1,6 @@
 """Local graph, backed exclusively by persisted records. No invented nodes."""
 import re
+import sqlite3
 import soul_chronicle
 import soul_omega
 from contextlib import closing
