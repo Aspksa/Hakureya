@@ -245,8 +245,14 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                         db.execute("DELETE FROM chronicle_attempts WHERE day=? AND status='reserved'",(reservation[0],))
                         if once:writer_volume.close_job(db,"error","Несогласованные сюжетные планы; платный запрос не отправлен.")
                         return "Несогласованные сюжетные планы; платный запрос не отправлен."
-                    soul_intellect.prepare(db,plan)
-                    soul_intelligence.prepare(db,plan)
+                    try:
+                        soul_intellect.prepare(db,plan)
+                        soul_intelligence.prepare(db,plan)
+                    except (ValueError,TypeError,KeyError,IndexError):
+                        db.execute("DELETE FROM writer_job_attempt WHERE day=?",(reservation[0],))
+                        db.execute("DELETE FROM chronicle_attempts WHERE day=? AND status='reserved'",(reservation[0],))
+                        if once:writer_volume.close_job(db,"error","Литературные свидетельства не прошли проверку; платный запрос не отправлен.")
+                        return "Литературный интеллект: проверьте свидетельства и связи модулей."
             previous=[]
             if plan:
                 previous=[{"number":n,"title":t,"story":s[-2200:]} for n,t,s in reversed(db.execute("SELECT number,title,story FROM omega_index WHERE arc=? AND number>13 ORDER BY number DESC LIMIT 2",(plan["arc"],)).fetchall())]
@@ -293,6 +299,7 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
         def preview(raw):
             writer_preview.push(activity,raw)
             body=writer_preview.fragment(activity)
+            graph_activity.prose(activity,len(body))
             now=time.monotonic()
             if body and len(body)>checkpoint[1] and (now-checkpoint[0]>=3 or len(body)-checkpoint[1]>=800):
                 with LOCK, closing(connect()) as db, db:
