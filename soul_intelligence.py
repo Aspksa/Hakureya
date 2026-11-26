@@ -298,7 +298,7 @@ def prepare(db,plan):
     brain("relations",{"recent":sorted(relations.values(),key=lambda x:x["last"],reverse=True)[:3],"guide":"Отношения меняются через события, без внезапного доверия или любви."})
     brain("magic",{"rules":[label for _,_,label in ge.RULES[:3]],"limits":[{"chapter":n,"subject":f["subject"],"value":f["value"]} for n,f in recent if f["kind"] in ("power","limit","law")][-2:]})
     brain("time",{"last":last,"volume":o.volume(last),"guide":"Отделяй порядок публикации от времени мира; не придумывай точный возраст или дату."})
-    recall=ge.recall(db,plan.get("guide","")+" "+theme.get("title",""),3)
+    recall=ge.recall(db,plan.get("guide","")+" "+theme.get("title",""),3,None if plan["arc"]=="future" else plan["arc"])
     brain("memory",[{"number":x["number"],"story":x["story"][:220]} for x in recall])
     m=metrics(db)
     last_story=db.execute("SELECT story FROM omega_index ORDER BY number DESC LIMIT 1").fetchone()
