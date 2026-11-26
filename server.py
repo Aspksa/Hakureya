@@ -578,6 +578,8 @@ def chronicle_worker(stop):
                         soul_novel.forecast(db)
                         soul_infinite.refresh_forecast(db)
                         soul_intelligence.refresh(db)
+                        repaired=soul_intelligence.sweep(db)
+                        if repaired:LOG.info("repaired derived literary records: %d",repaired)
                 enabled=CHRONICLE["enabled"] or soul_living.mode(db)!="off"
             with LOCK, closing(connect()) as db:
                 backed_up=db.execute("SELECT 1 FROM living_backups WHERE day=date('now')").fetchone()
