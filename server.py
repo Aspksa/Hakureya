@@ -74,6 +74,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                 soul_heart.enrich(db,plan)
                 plan["alternative"]=alternative
                 if shadow_plan:plan["shadow"]=shadow_plan
+                plan["shadow_guard"]=soul_shadow.guard(db,plan["arc"])
             previous=[]
             if plan:
                 previous=[{"number":n,"title":t,"story":s[:1800]} for n,t,s in reversed(db.execute("SELECT number,title,story FROM omega_index WHERE arc=? AND number>13 ORDER BY number DESC LIMIT 2",(plan["arc"],)).fetchall())]
