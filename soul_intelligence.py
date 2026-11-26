@@ -44,6 +44,7 @@ def init(db):
     db.execute("CREATE INDEX IF NOT EXISTS lit_subject ON lit_entries(subject,number)")
     db.execute("CREATE INDEX IF NOT EXISTS lit_kind ON lit_entries(kind,number)")
     db.execute("CREATE INDEX IF NOT EXISTS lit_object ON lit_entries(object,number)")
+    db.execute("CREATE TABLE IF NOT EXISTS lit_runs(day TEXT PRIMARY KEY, selected TEXT NOT NULL, context_bytes INTEGER NOT NULL, recalled TEXT NOT NULL)")
 
 def extra(db,did):
     row=db.execute("SELECT payload,source_hash,checksum FROM lit_extra WHERE draft_id=?",(did,)).fetchone()
@@ -102,7 +103,7 @@ def collect_chapter(db,n,story,did):
         if isinstance(name,str) and name.strip() and o.normalized(name) in o.normalized(quote):add("character",name,name,quote)
     if did is None:
         # Canonical roles are represented separately in the graph. Only actual exact-name mentions are indexed.
-        for name in ("Хакурэя",):
+        for name in ("Хакурэя","Герой"):
             match=re.search(re.escape(name),story,re.I)
             if match:
                 pos=match.start();mention(name,story[max(0,pos-25):pos+65])
@@ -125,7 +126,8 @@ def collect_chapter(db,n,story,did):
         data=mod.read(db,did)
         if not data:continue
         for f in data["facts"]:
-            q=f.get("quote",f.get("evidence",""));name=f["subject"];mention(name,q)
+            q=f.get("quote",f.get("evidence",""));name=f["subject"]
+            if f["kind"] in ("biography","trait","voice","goal","relationship","age","identity","fear"):mention(name,q)
             add(f["kind"],name,f.get("value",f.get("detail","")),q,cause=f.get("cause"))
     gp=gu.read(db,did)
     if gp:
@@ -207,8 +209,9 @@ def registry(data):
             name=f["subject"];key=norm(name)
             a=actors.setdefault(key,{"id":actor_key(name),"name":name,"first":n,"last":n,"count":0})
             a["last"]=n;appearance[key].add(n)
-        if f["kind"] in RELATIONS:
-            k=(norm(f["subject"]),norm(f["object"]),f["kind"])
+        if f["kind"] in RELATIONS and f["object"]:
+            a,b=sorted((norm(f["subject"]),norm(f["object"])))
+            k=(a,b,f["kind"])
             rel=relations.setdefault(k,{"a":f["subject"],"b":f["object"],"kind":f["kind"],"first":n,"last":n,"count":0})
             rel["last"]=n;rel["count"]+=1
     for key,a in actors.items():a["count"]=len(appearance[key])
@@ -284,8 +287,12 @@ def prepare(db,plan):
         candidate={**selected,k:v}
         if len(o.dump(candidate).encode("utf-8"))<=budget:selected[k]=v
     brain("coordinator",{"included":list(selected),"bytes":len(o.dump(selected).encode("utf-8"))})
-    plan["intelligence"]={"context":selected,"completed":completed,"bytes":result["coordinator"]["bytes"]}
+    plan["intelligence"]={"context":selected,"completed":completed,"bytes":result["coordinator"]["bytes"],"recalled":[x["number"] for x in selected.get("memory",[])]}
     return plan
+
+def record_run(db,day,plan):
+    p=plan.get("intelligence")
+    if p:db.execute("INSERT OR IGNORE INTO lit_runs VALUES(?,?,?,?)",(day,o.dump(list(p["context"])),p["bytes"],o.dump(p["recalled"])))
 
 def instruction(plan):
     p=plan.get("intelligence")
@@ -300,9 +307,11 @@ def instruction(plan):
 
 def report(db):
     refresh(db);m=metrics(db,True)
+    run=db.execute("SELECT context_bytes,recalled FROM lit_runs ORDER BY day DESC LIMIT 1").fetchone()
     return ("Литературная аналитика · доступные публикации\n"+
         "\n".join(f"{label}: {m[k]}" for k,label in (("chapters","Частей"),("volumes","Томов"),("words","Слов"),("characters","Имен с подтверждением"),("relations","Связей с подтверждением"),("events","Записанных событий"),("cross_volume","Межтомовых причин"),("warnings","Предупреждений редактора"),("token_days","Дней с отчётом Cloud.ru"),("input_tokens","Входных токенов"),("output_tokens","Выходных токенов")))+
         "\nОригинальность (эвристика): "+str(m["originality"] if m["originality"] is not None else "нет данных")+
+        "\nПоследний подготовленный контекст: "+(str(run[0])+" байт; источников памяти "+str(len(json.loads(run[1]))) if run else "нет данных")+
         "\nВетки: "+", ".join(f"{k}: {v}" for k,v in m["arcs"].items())+
         "\nЗабытые герои (8+ частей): "+(", ".join(x["name"] for x in m["forgotten"]) or "нет данных")+
         "\nТипы свидетельств: "+", ".join(f"{k}: {v}" for k,v in sorted(m["kinds"].items()))+
