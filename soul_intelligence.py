@@ -131,17 +131,20 @@ def collect_chapter(db,n,story,did):
     if gp:
         relmap={"доверие":"trust","дружба":"friend","соперничество":"rival","спор":"conflict","сотрудничество":"ally","забота":"friend"}
         names={x[0]:x[1] for x in gu.CAST};names.update(empress="Хакурэя",hero="Герой")
-        for f in gp["memories"]:
+        for f in gp[1]["memories"]:
             q=f["evidence"];name=names[f["actor"]];other=names.get(f["other"],"")
             mention(name,q);mention(other,q)
             if other and f["relation"] in relmap and o.normalized(name) in o.normalized(q) and o.normalized(other) in o.normalized(q):add(relmap[f["relation"]],name,f["summary"],q,other)
     dp=de.read(db,did)
     if dp:
-        for f in dp["facts"]:
+        for f in dp[1]["facts"]:
             q=f["evidence"];name=de.ACTORS[f["subject"]][0] if f["subject"] else "событие";other=de.ACTORS[f["other"]][0] if f.get("other") else ""
             mention(name,q);mention(other,q)
             if f["kind"]=="alliance" and other and o.normalized(name) in o.normalized(q) and o.normalized(other) in o.normalized(q):add("ally",name,f["detail"],q,other,f["cause"])
             else:add(f["kind"],name,f["detail"],q,cause=f["cause"])
+    hp=heart.read(db,did)
+    if hp:
+        for f in hp["moments"]:add("love_moment","история любви",f["title"],f["evidence"],cause=f["cause"])
     lp=living.record(db,did)
     if lp:
         for f in lp["facts"]:
@@ -230,8 +233,10 @@ def metrics(db,visible=False):
     usage=db.execute("SELECT COUNT(*),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0) FROM cloud_writer_usage").fetchone()
     kinds=Counter(f["kind"] for _,f in data)
     gaps_profile=[]
+    actor_fields=defaultdict(set)
+    for _,f in data:actor_fields[norm(f["subject"])].add(f["kind"])
     for key,a in actors.items():
-        fields={f["kind"] for _,f in data if norm(f["subject"])==key}
+        fields=actor_fields[key]
         missing=sorted({"biography","goal","voice","trait"}-fields)
         if missing:gaps_profile.append({"name":a["name"],"missing":missing})
     rapid=[]
@@ -260,14 +265,17 @@ def prepare(db,plan):
     brain("plot",{"theme":theme.get("theme",plan["arc"]),"open":[{"chapter":t["chapter"],"value":t["value"]} for t in open_lines[:2]],"guide":"Соблюдай обязательный текущий этап, не раскрывай ранние тайны."})
     forgotten=sorted((a for a in actors.values() if last-a["last"]>=8),key=lambda a:a["last"])
     active=sorted(actors.values(),key=lambda a:a["last"],reverse=True)[:3]
-    brain("characters",{"recent":active,"forgotten":forgotten[:2],"guide":"Новый персонаж — отличимое имя, самостоятельная цель, голос, биография и причина появления; проверь существующие имена."})
+    profiles=[{"chapter":n,"name":f["subject"],"kind":f["kind"],"value":f["value"][:100]} for n,f in recent if f["kind"] in ("biography","goal","voice","trait")][-3:]
+    brain("characters",{"recent":active,"forgotten":forgotten[:2],"profiles":profiles,"guide":"Новый персонаж — отличимое имя, самостоятельная цель, голос, биография и причина появления; проверь существующие имена."})
     brain("relations",{"recent":sorted(relations.values(),key=lambda x:x["last"],reverse=True)[:3],"guide":"Отношения меняются через события, без внезапного доверия или любви."})
     brain("magic",{"rules":[label for _,_,label in ge.RULES[:3]],"limits":[{"chapter":n,"subject":f["subject"],"value":f["value"]} for n,f in recent if f["kind"] in ("power","limit","law")][-2:]})
     brain("time",{"last":last,"volume":o.volume(last),"guide":"Отделяй порядок публикации от времени мира; не придумывай точный возраст или дату."})
     recall=ge.recall(db,plan.get("guide","")+" "+theme.get("title",""),3)
     brain("memory",[{"number":x["number"],"story":x["story"][:220]} for x in recall])
     m=metrics(db)
-    brain("editor",{"warnings":m["warnings"],"originality":m["originality"],"guide":"Не повторяй диалог и сцену; действие, выбор и последствия вместо одинаковых эпитетов."})
+    last_story=db.execute("SELECT story FROM omega_index ORDER BY number DESC LIMIT 1").fetchone()
+    sample=romance.profile("",last_story[0]) if last_story else {}
+    brain("editor",{"warnings":m["warnings"],"originality":m["originality"],"last_scene_words":sample.get("words",0),"guide":"Не повторяй диалог и сцену; действие, выбор и последствия вместо одинаковых эпитетов."})
     brain("analytics",{"chapters":m["chapters"],"characters":m["characters"],"cross_volume":m["cross_volume"],"profile_gaps":m["profile_gaps"][:2],"rapid_relations":m["rapid"][:1],"guide":"Если уместно, дай второстепенному герою собственную цель и свяжи давнее событие с текущим."})
     brain("twist",{"causes":[{"chapter":n,"cause":f["cause"],"value":f["value"][:100]} for n,f in recent if f["cause"] is not None][-2:],"guide":"Поворот должен опираться на улику, а не отменять прежние события."})
     # Coordinator selects an explicit capped set, without cutting JSON in the middle.
