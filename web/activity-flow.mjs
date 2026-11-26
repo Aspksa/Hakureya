@@ -12,6 +12,8 @@ export function flowPaths(item, graph){
  return [];
 }
 export function pointOn(points,t){
+ if(t<=0)return {x:points[0].x,y:points[0].y};
+ if(t>=1){const p=points[points.length-1];return {x:p.x,y:p.y}}
  const lengths=points.slice(1).map((p,i)=>Math.hypot(p.x-points[i].x,p.y-points[i].y));
  const total=lengths.reduce((a,b)=>a+b,0);
  let d=Math.max(0,Math.min(1,t))*total;
