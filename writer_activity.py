@@ -49,4 +49,5 @@ def context_keys(db,plan,previous):
     for item in plan.get("infinite",{}).get("facts",[]):
         if type(item.get("chapter")) is int and (item["chapter"]<=13 or ev.readable(db,item["chapter"])):
             actor(item.get("subject"));chapter(item["chapter"])
+    for n in plan.get("intelligence",{}).get("recalled",[]):chapter(n)
     return keys[:16]
