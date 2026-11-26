@@ -184,3 +184,14 @@ class ServerTest(unittest.TestCase):
             self.assertIn("страница 1",self.request("chat",{"content":"Остановить чтение"})["reply"])
             self.assertEqual(self.request("chat",{"content":"Читать книгу"})["reply"],first)
             remote.assert_not_called()
+
+
+    def test_guardians_chat_local(self):
+        with patch.object(server,"urlopen") as remote:
+            reply=self.request("chat",{"content":"Девять хранительниц"})["reply"]
+            self.assertIn("Рэйка",reply)
+            self.assertIn("Амацука",reply)
+            self.assertIn("Холод",self.request("chat",{"content":"летопись: хранительница Рэйка"})["reply"])
+            self.request("config",{"key":"test-key","model":"test-model","consent":True})
+            self.assertIn("Ожидает развития Тени",self.request("chat",{"content":"Продолжи историю хранительниц"})["reply"])
+            remote.assert_not_called()
