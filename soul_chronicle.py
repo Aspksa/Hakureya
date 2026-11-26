@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import soul_lore
 
 BATCH = 5
-TAGS = ("познание","доверие","достоинство","самообладание","сотрудничество","ответственность","любознательность","нежность")
+TAGS = ("познание","доверие","достоинство","самообладание","сотрудничество","ответственность","любознательность","нежность","любовь","прошлое","встреча","сила","прощение","надежда")
 TRAITS = ("patience","curiosity","warmth")
 BASE = {"patience":50,"curiosity":50,"warmth":50}
 COMMANDS = ("летопись: статус","летопись: дневник","летопись: черновик","летопись: создать","летопись: включить сон","летопись: выключить сон")
@@ -22,6 +22,7 @@ def init(db):
     db.execute("""CREATE TABLE IF NOT EXISTS chronicle_attempts (
         day TEXT PRIMARY KEY, diary_id INTEGER NOT NULL, status TEXT NOT NULL,
         created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
+    db.execute("""CREATE TABLE IF NOT EXISTS saga_arcs (draft_id INTEGER PRIMARY KEY, arc TEXT NOT NULL, anchor INTEGER NOT NULL, parent_id INTEGER, number INTEGER UNIQUE)""")
     db.execute("""CREATE TABLE IF NOT EXISTS chronicle_controls (
         id INTEGER PRIMARY KEY, action TEXT NOT NULL, created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
 
@@ -83,16 +84,20 @@ def pending_diary(db):
         (SELECT 1 FROM chronicle_attempts a WHERE a.diary_id=d.id AND a.status='reserved')
         ORDER BY id DESC LIMIT 1""").fetchone()
 
-def reserve(db, now=None):
+def reserve(db, now=None, allow_story=False):
     """Persist attempt BEFORE network call; failures also consume daily quota."""
     if not canon_ok(db):
         return None
-    if db.execute("SELECT 1 FROM chronicle_drafts WHERE status='pending'").fetchone():
+    if db.execute("SELECT 1 FROM chronicle_drafts WHERE status='pending'").fetchone() or db.execute("SELECT 1 FROM chronicle_attempts WHERE status='reserved'").fetchone():
         return None
     day=(now or datetime.now(timezone.utc)).date().isoformat()
     row=pending_diary(db)
     if row is None:
-        return None
+        if not allow_story:
+            return None
+        # Negative identifiers denote fictional writing seeds, not observed diary rows.
+        seed=db.execute("SELECT MIN(diary_id) FROM chronicle_attempts").fetchone()[0]
+        row=(min(0,seed or 0)-1,encode({"fictional_seed":True}))
     cur=db.execute("INSERT OR IGNORE INTO chronicle_attempts(day,diary_id,status) VALUES(?,?,'reserved')",(day,row[0]))
     return (day,row[0],json.loads(row[1])) if cur.rowcount else None
 
@@ -183,7 +188,7 @@ def graph(db,limit=5000):
     for a in chapters:
         key=f"c:{a['id']}"
         records.append({"key":key,"group":4,"content":"Вымысел: "+a["title"]+" "+" ".join(a["tags"]),"created":a["created"],"order":a["id"]})
-        edges.append({"a":f"d:{a['diary_id']}","b":key,"kind":"chronicle"})
+        if a["diary_id"]>0: edges.append({"a":f"d:{a['diary_id']}","b":key,"kind":"chronicle"})
     # Link chapters sharing an approved tag, bounded to one preceding chapter per tag.
     prior={}
     for a in chapters:
@@ -210,8 +215,9 @@ def biography_graph(db):
             edges.append({"a":key,"b":t,"kind":"theme"})
     for a in approved(db,5000):
         key=f"c:{a['id']}";nodes.append({"key":key,"kind":"fictional_continuation","label":a["title"]})
-        d=f"d:{a['diary_id']}";nodes.append({"key":d,"kind":"observed_diary","label":d})
-        edges.append({"a":d,"b":key,"kind":"inspiration_not_fact"})
+        if a["diary_id"]>0:
+            d=f"d:{a['diary_id']}";nodes.append({"key":d,"kind":"observed_diary","label":d})
+            edges.append({"a":d,"b":key,"kind":"inspiration_not_fact"})
         for tag in a["tags"]:
             t="theme:"+tag
             if t not in seen:
@@ -276,4 +282,16 @@ def constellation(db,limit=5000):
     if p:
         pending={"key":f"draft:{p['id']}","group":4,"content":"Черновик (не канон): "+p["title"],"kind":"draft","created":"","order":10**9}
         edges.append({"a":f"c:{chapters[-1]['id']}" if chapters else "canon:13","b":pending["key"],"kind":"draft"})
+    # Saga arcs are thematic subdivisions within the existing biography constellation.
+    import soul_saga
+    for key,label in soul_saga.ARC_LABELS.items():
+        node("arc:"+key,label,"theme")
+    for key,anchor in soul_saga.ANCHORS.items():
+        edges.append({"a":f"canon:{anchor}","b":"arc:"+key,"kind":"story_arc"})
+    for did,arc,anchor,parent,number in db.execute("SELECT draft_id,arc,anchor,parent_id,number FROM saga_arcs"):
+        if arc not in soul_saga.ARC_LABELS: continue
+        target=f"c:{did}" if number is not None else f"draft:{did}"
+        edges.append({"a":"arc:"+arc,"b":target,"kind":"story_arc"})
+        edges.append({"a":f"canon:{anchor}","b":target,"kind":"story_anchor"})
+        if parent is not None: edges.append({"a":f"c:{parent}","b":target,"kind":"story_continuation"})
     return records,edges,pending
