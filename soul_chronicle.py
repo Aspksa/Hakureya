@@ -216,7 +216,7 @@ def _decide(db, draft_id, approve):
     if not row or row[3]!="pending":
         return False
     if approve:
-        if not canon_ok(db) or row[0]!=soul_lore.metadata()["sha256"]:
+        if not canon_ok(db) or not soul_lore.compatible_draft(db,row[0]):
             return False
         unpack(row[1],row[2])
         soul_romance.report(db,draft_id)
