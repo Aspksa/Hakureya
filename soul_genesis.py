@@ -268,6 +268,7 @@ def select_variant(db,option):
     row=db.execute("SELECT id,checksum FROM chronicle_drafts WHERE status='pending'").fetchone()
     if not row or not c.canon_ok(db):return False
     did,before=row
+    if db.execute("SELECT 1 FROM shadow_drafts WHERE draft_id=?",(did,)).fetchone():return False
     selected=db.execute("SELECT payload,checksum FROM genesis_variants WHERE draft_id=? AND option=?",(did,option)).fetchone()
     if not selected or o.digest(selected[0])!=selected[1]:return False
     p=json.loads(selected[0]);base=c.validate(p["base"])
