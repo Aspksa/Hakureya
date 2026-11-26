@@ -286,12 +286,15 @@ def graph_notices(db,records):
     notices=concerns(db,rows(db,limit=120))
     by_chapter=defaultdict(list)
     for x in notices:by_chapter[x["chapter"]].append(x["detail"])
+    warnings={}
+    for n,notes in by_chapter.items():
+        row=db.execute("SELECT draft_id FROM omega_index WHERE number=?",(n,)).fetchone()
+        if row:warnings[f"c:{row[0]}" if row[0] is not None else f"canon:{n}"]=notes
     for node in records:
-        key=node["key"]
-        if key.startswith("c:") and key[2:].isdigit():
-            row=db.execute("SELECT number FROM omega_index WHERE draft_id=?",(int(key[2:]),)).fetchone()
-            if row and row[0] in by_chapter:
-                node["review_warnings"]=by_chapter[row[0]][:3]
+        if node["key"] in warnings:node["review_warnings"]=warnings[node["key"]][:3]
+        if node["key"].startswith("draft:") and node["key"][6:].isdigit():
+            issues=draft_concerns(db,int(node["key"][6:]))
+            if issues:node["review_warnings"]=(node.get("review_warnings",[])+[x["detail"] for x in issues])[:6]
 
 
 def module_audit(db):
@@ -316,3 +319,27 @@ def draft_concerns(db,did):
     n=db.execute("SELECT COALESCE(MAX(number),13)+1 FROM omega_index").fetchone()[0]
     records=[dict(f,chapter=n,id=evidence_id(n,f),actor_id=li.actor_key(f["subject"])) for f in facts]
     return concerns(db,records,False)
+
+
+def identity_graph(db,existing,volume=None):
+    nodes=[];edges=[]
+    present={n["key"] for n in existing}
+    for ident,name,origin,quote,check in db.execute("SELECT id,name,origin_chapter,quote,checksum FROM intellect_identity ORDER BY origin_chapter DESC LIMIT 100"):
+        if not visible(db,origin) or o.digest(o.dump([ident,name,origin,quote]))!=check:continue
+        row=db.execute("SELECT story,draft_id FROM omega_index WHERE number=?",(origin,)).fetchone()
+        if not row or quote not in row[0]:continue
+        links=[]
+        for n, in db.execute("""SELECT DISTINCT e.chapter FROM intellect_assignments a JOIN intellect_evidence e ON e.id=a.evidence_id
+            WHERE a.identity_id=? ORDER BY e.chapter DESC LIMIT 100""",(ident,)):
+            if not visible(db,n) or volume is not None and o.volume(n)!=volume:continue
+            chapter=db.execute("SELECT draft_id FROM omega_index WHERE number=?",(n,)).fetchone()
+            if chapter:
+                k=f"canon:{n}" if chapter[0] is None else f"c:{chapter[0]}"
+                links.append({"a":k,"b":ident,"kind":"lit_appearance"})
+        if volume is not None and not links and o.volume(origin)!=volume:continue
+        nodes.append(dict(key=ident,group=4,content=name+" · отдельная личность ("+str(origin)+")",kind="lit_character",created="",order=len(nodes),infinite_group=ident))
+        edges.extend(links)
+        edges.append(dict(a="brain:characters",b=ident,kind="lit_character"))
+        source=f"canon:{origin}" if row[1] is None else f"c:{row[1]}"
+        edges.append(dict(a=source,b=ident,kind="lit_source"))
+    return nodes,edges
