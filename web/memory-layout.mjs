@@ -18,7 +18,8 @@ export function layout(snapshot){
  const nodes=[{key:"root",group:-1,x:0,y:0,r:3.6,label:"hakureya"}],edges=[],byKey=new Map([[ "root",nodes[0] ]]);
  const count=categories.map(()=>0),radius=categories.map(()=>.035),valid=(Array.isArray(snapshot.records)?snapshot.records:[]).filter(n=>Number.isInteger(n.group)&&n.group>=0&&n.group<categories.length&&typeof n.key==="string");
  const occupied=categories.map(()=>new Set());
- const bio=[];
+ const bio=[],heart=[];
+ const heartTopics=["meeting","tenderness","trust","memory","letters","adventure"];
  for(const n of valid){
   if(byKey.has(n.key))continue;
   const g=n.group;
@@ -28,10 +29,12 @@ export function layout(snapshot){
   occupied[g].add(slot);count[g]++;
   const p=cell(slot);
   const nested=g===4&&["past","meeting","love","future"].includes(n.sector)&&Number.isSafeInteger(n.book)&&n.book>=0&&n.book<=1000000&&Number.isSafeInteger(n.chapter_slot)&&n.chapter_slot>=-1&&n.chapter_slot<=12;
-  if(!nested)radius[g]=Math.max(radius[g],Math.hypot(p.x,p.y)+.035);
-  const r=n.kind==="epoch"?3.6:n.kind==="book_segment"?3:n.kind==="fictional_chapter"?2.7:n.kind==="draft"?2.1:n.kind==="theme"?1.7:1.5;
+  const heartNode=g===4&&(n.heart_topic==="root"||heartTopics.includes(n.heart_topic))&&Number.isSafeInteger(n.heart_slot)&&n.heart_slot>=-1;
+  if(!nested&&!heartNode)radius[g]=Math.max(radius[g],Math.hypot(p.x,p.y)+.035);
+  const r=n.kind==="heart_root"?4.2:n.kind==="heart_topic"?3.1:n.kind==="heart_moment"?1.8:n.kind==="epoch"?3.6:n.kind==="book_segment"?3:n.kind==="fictional_chapter"?2.7:n.kind==="draft"?2.1:n.kind==="theme"?1.7:1.5;
   const item={...n,slot,x:p.x,y:p.y,r};nodes.push(item);byKey.set(item.key,item);
   if(nested)bio.push(item);
+  if(heartNode)heart.push(item);
   edges.push({a:"hub:"+g,b:item.key,kind:"category"});
  }
  // Four epoch galaxies surround the permanent biography hub. Each volume occupies a hex cell;
@@ -41,6 +44,19 @@ export function layout(snapshot){
   for(const n of bio){const i=sectors.indexOf(n.sector);const book=n.book===0?{x:0,y:0}:cell(n.book-1);const local=n.book===0||n.chapter_slot===-1?{x:0,y:0}:cell(n.chapter_slot);n.x=book.x*7+local.x;n.y=book.y*7+local.y;extent[i]=Math.max(extent[i],Math.hypot(n.x,n.y)+.06)}
   const central=radius[4];const spacing=Math.max(central,...extent)+.10;
   for(const n of bio){const i=sectors.indexOf(n.sector),angle=-Math.PI/2+i*Math.PI/2;const distance=central+extent[i]+spacing; n.x+=Math.cos(angle)*distance;n.y+=Math.sin(angle)*distance;radius[4]=Math.max(radius[4],Math.hypot(n.x,n.y)+.04)}
+ }
+ // Dedicated Heart constellation inside biography, outside existing epoch envelopes.
+ if(heart.length){
+  const ext=heartTopics.map(()=>.045);
+  for(const n of heart){const i=heartTopics.indexOf(n.heart_topic);if(i<0||n.heart_slot<0){n.x=0;n.y=0;continue}
+   const p=cell(n.heart_slot);n.x=p.x;n.y=p.y;ext[i]=Math.max(ext[i],Math.hypot(p.x,p.y)+.045)}
+  const ring=2*Math.max(...ext)+.09;
+  const area=ring+Math.max(...ext)+.045;
+  const distance=radius[4]+area+.10;
+  const cx=distance/Math.SQRT2,cy=distance/Math.SQRT2;
+  for(const n of heart){const i=heartTopics.indexOf(n.heart_topic),angle=-Math.PI/2+i*Math.PI/3;
+   n.x+=cx+(i>=0?Math.cos(angle)*ring:0);n.y+=cy+(i>=0?Math.sin(angle)*ring:0)}
+  radius[4]=Math.max(radius[4],distance+area);
  }
  let spread=1;
  for(let i=0;i<centers.length;i++){
