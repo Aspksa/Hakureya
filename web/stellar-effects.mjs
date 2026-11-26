@@ -4,6 +4,8 @@ export function stellarKind(node){
  const k=String(node.kind||""),key=String(node.key||"");
  if(key==="root"||key==="cloud:api")return "core";
  if(/^(?:c:|canon:|book:|segment:|novel:epoch:)/.test(key)||/^(fictional_chapter|book|book_segment|epoch|novel_chapter|novel_epoch)$/.test(k))return "chapter";
+ if(k==="dynasty_mystery")return "magic";
+ if(k==="dynasty_root"||k==="dynasty_saga")return "chapter";
  if(k==="draft"||k==="director_saga")return "chapter";
  if(k==="director_turn")return "magic";
  if(/love|^heart_/.test(k)||key.startsWith("heart:")||key==="arc:love")return "love";
