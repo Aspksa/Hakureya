@@ -21,6 +21,7 @@ async function refreshActivity(){
   let data;try{const response=await fetch("/api/activity",{cache:"no-store",signal:controller.signal});if(!response.ok)throw Error("activity");data=await response.json()}finally{clearTimeout(timeout)}
   if(document.hidden)return;
   activityActive=data.active.length>0;
+  if(writerDialog.open){const session=writerSession;void api("writer").then(st=>{if(session===writerSession&&writerDialog.open&&!writerSave.disabled)renderWriter(st)}).catch(()=>{})}
   live?.setActivity(data);
   const revision=data.session+":"+data.revision;
   if(revision!==activityRevision){activityRevision=revision;const signature=JSON.stringify([data.session,data.active.map((a:any)=>[a.id,a.stage,a.target]),data.recent.map((a:any)=>[a.id,a.stage,a.target])]);if(signature!==activityGraphSignature){activityGraphSignature=signature;if(!activityActive||selectedVolume===null)void refreshGraph()}}
@@ -44,7 +45,7 @@ async function init(){try{const data=await api("history");for(const m of data.me
 const cloudModel=$("model") as HTMLInputElement,cloudKey=$("key") as HTMLInputElement;
 const modelList=$("model-list") as HTMLSelectElement,modelListLabel=$("model-list-label");
 const loadModels=$("load-models") as HTMLButtonElement,saveConfig=$("save") as HTMLButtonElement;
-const configStatus=$("config-status"),cloudConsent=$("consent") as HTMLInputElement;
+const configStatus=$("config-status"),cloudConsent=$("consent") as HTMLInputElement,rememberCloud=$("remember-cloud") as HTMLInputElement;
 let configSession=0;
 function setConfigPending(pending:boolean){loadModels.disabled=saveConfig.disabled=pending}
 $("settings").onclick=()=>{
@@ -57,6 +58,15 @@ $("settings").onclick=()=>{
  config.showModal();
 };
 $("config-close").onclick=()=>config.close();
+$("forget-cloud").onclick=async()=>{try{await api("config/forget",{});cloudKey.value="";rememberCloud.checked=false;$("status").textContent="Cloud.ru отключён";configStatus.textContent="Ключ удалён, автономный писатель остановлен."}catch(e){configStatus.textContent=String(e)}};
+const writerDialog=$("writer-dialog") as HTMLDialogElement,writerMode=$("writer-mode") as HTMLSelectElement,writerInterval=$("writer-interval") as HTMLSelectElement,writerConsent=$("writer-consent") as HTMLInputElement,writerNow=$("writer-now") as HTMLInputElement;
+const writerStatus=$("writer-status"),writerSave=$("writer-save") as HTMLButtonElement;
+let writerSession=0;
+function renderWriter(data:any){writerStatus.textContent=[data.reason,"Последняя глава: "+data.published+" · Черновики: "+data.pending,"Модель: "+(data.model||"не выбрана"),"Cloud.ru: "+(data.connected?"подключён":"не подключён")+(data.saved_connection?" · есть защищённое подключение":""),data.budget].join("\n")}
+$("writer-open").onclick=async()=>{menu.hidden=true;const session=++writerSession;writerConsent.checked=false;writerNow.checked=false;writerSave.disabled=true;writerStatus.textContent="Загрузка…";writerDialog.showModal();try{const data=await api("writer");if(session!==writerSession||!writerDialog.open)return;writerMode.value=data.mode;writerInterval.value=String(data.interval);renderWriter(data);writerSave.disabled=false}catch(e){if(session===writerSession)writerStatus.textContent=String(e)}};
+$("writer-close").onclick=()=>{writerSession++;writerDialog.close()};
+$("writer-form").onsubmit=async e=>{e.preventDefault();if(writerSave.disabled)return;writerSave.disabled=true;const session=writerSession;try{const data=await api("writer",{mode:writerMode.value,interval:Number(writerInterval.value),consent:writerConsent.checked,start_now:writerNow.checked});if(session!==writerSession||!writerDialog.open)return;renderWriter(data);writerNow.checked=false;writerConsent.checked=false}catch(e){if(session===writerSession)writerStatus.textContent=String(e)}finally{if(session===writerSession)writerSave.disabled=false}};
+
 config.onclose=()=>{if(!config.open)cloudKey.value=""};
 modelList.onchange=()=>{if(modelList.value)cloudModel.value=modelList.value};
 cloudModel.oninput=()=>{if(!modelListLabel.hidden)modelList.value=cloudModel.value.trim()};
@@ -95,7 +105,7 @@ $("config-form").onsubmit=async e=>{
  setConfigPending(true);
  configStatus.textContent="";
  try{
-  await api("config",{model:cloudModel.value,key:cloudKey.value,consent:cloudConsent.checked});
+  await api("config",{model:cloudModel.value,key:cloudKey.value,consent:cloudConsent.checked,...(rememberCloud.checked?{remember:true}:{})});
   $("status").textContent="Cloud.ru подключён";
   if(session===configSession&&config.open)config.close();
  }catch(e){
