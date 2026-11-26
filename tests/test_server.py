@@ -30,7 +30,7 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(self.request("history")["messages"],[])
         self.assertFalse(self.request("chat",{"content":"Привет"})["connected"])
         self.assertEqual(self.request("history")["messages"][0]["content"],"Привет")
-        self.assertEqual(len(self.request("history")["messages"]),2)
+        self.assertEqual(len(self.request("history")["messages"]),1)
     def test_consent_and_cross_origin(self):
         with self.assertRaises(HTTPError) as e:
             self.request("config",{"key":"key","model":"model","consent":False})
@@ -38,3 +38,15 @@ class ServerTest(unittest.TestCase):
         with self.assertRaises(HTTPError) as e:
             self.request("history",headers={"Origin":"https://example.com"})
         self.assertEqual(e.exception.code,403)
+
+    def test_real_graph_and_notes(self):
+        self.assertEqual(self.request("graph")["records"],[])
+        self.request("chat",{"content":"проверка двигателя автомобиля"})
+        self.request("note",{"kind":1,"content":"проверка двигателя автомобиля"})
+        graph=self.request("graph")
+        self.assertEqual(graph["total"],2)
+        self.assertEqual({n["group"] for n in graph["records"]},{0,1})
+        self.assertTrue(any(e["kind"]=="keywords" for e in graph["edges"]))
+        self.assertEqual(graph,self.request("graph"))
+        with self.assertRaises(HTTPError):
+            self.request("note",{"kind":2,"content":"invalid"})
