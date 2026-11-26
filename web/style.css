@@ -184,3 +184,5 @@ dialog button:hover{background:#d5b38b12}
 #universe-dialog button:disabled{opacity:.35}
 .universe-exports{margin-top:16px;justify-content:flex-start}.universe-exports a{color:#d9bd82;padding:8px 0;margin-right:12px}
 @media(max-width:480px){#universe-dialog{padding:15px}#universe-list{grid-template-columns:1fr}}
+
+#writer-dialog{max-height:88dvh;overflow:auto}#writer-preview-text{white-space:pre-wrap;overflow-wrap:anywhere;max-height:28dvh;overflow:auto;font:inherit;color:#e3d5ba;background:#ffffff06;padding:10px;border-radius:8px}
