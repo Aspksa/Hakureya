@@ -33,7 +33,7 @@ class LoreTest(unittest.TestCase):
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM soul_events WHERE kind='lore_installed'").fetchone()[0],1)
         prompt=soul_core.system_prompt(self.db,"other-model","первая встреча")
         self.assertIn("Не обращайся к пользователю как к хозяину",prompt)
-        self.assertIn("Твоё",prompt.replace("твоё","Твоё"))
+        self.assertIn("Ты сам был исключением",prompt)
         self.assertIn("Канонические главы V–VI",prompt)
         self.assertIn("не к реальным воспоминаниям пользователя",prompt)
         self.assertEqual(soul_core.snapshot(self.db)["lore"]["chapters"],13)
