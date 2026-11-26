@@ -183,6 +183,9 @@ def eligible(db,did):
     import soul_immortal
     im=soul_immortal.read(db,did)
     if im and (im["quality"]["warnings"] or (im.get("required") and im["step"] is None)):return False
+    import soul_infinite
+    inf=soul_infinite.read(db,did)
+    if inf and (inf["quality"]["warnings"] or (inf["required"] and not inf["step"])):return False
     m=o.metadata(db,did);review=r.report(db,did)
     return bool(m and review and m["score"]>=85 and not m["warnings"] and review["originality_heuristic"]>=80 and not review["warnings"] and review["words"]>=350)
 
