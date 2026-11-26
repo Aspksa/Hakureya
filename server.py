@@ -24,6 +24,7 @@ import soul_evolution
 import soul_immortal
 import soul_novel
 import soul_infinite
+import soul_intelligence
 import graph_activity
 import writer_activity
 import time, re
@@ -120,6 +121,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                     soul_immortal.enrich(db,plan)
                     soul_novel.enrich(db,plan)
                     soul_infinite.context(db,plan)
+                    soul_intelligence.prepare(db,plan)
             previous=[]
             if plan:
                 previous=[{"number":n,"title":t,"story":s[-2200:]} for n,t,s in reversed(db.execute("SELECT number,title,story FROM omega_index WHERE arc=? AND number>13 ORDER BY number DESC LIMIT 2",(plan["arc"],)).fetchall())]
@@ -141,7 +143,9 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
 
 def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan):
     try:
-        graph_activity.update(activity,"context")
+        for brain in plan.get("intelligence",{}).get("completed",[]):
+            graph_activity.update(activity,"brain:"+brain,"brain:"+brain)
+        graph_activity.update(activity,"context","root")
         payload={"model":model,"messages":soul_chronicle.prompt(reservation,traits,previous,plan),"max_tokens":cloud_writer.LIMIT,"stream":False}
         req=Request(API,data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
         graph_activity.update(activity,"waiting")
@@ -240,6 +244,23 @@ def chronicle_command(content):
     aliases.update({"девять хранительниц":"летопись: хранительницы","хранительницы":"летопись: хранительницы","продолжи историю хранительниц":"летопись: создать хранительниц","план хранительниц":"летопись: план хранительниц"})
     aliases.update({"за пределами девяти небес":"летопись: судьба","план судьбы":"летопись: план судьбы","новые герои":"летопись: новые герои","продолжи судьбу":"летопись: создать судьбу","история силы":"летопись: судьба сила","путешествия":"летопись: судьба путешествия","развитие императрицы":"летопись: судьба развитие"})
     q=aliases.get(q,q)
+    lit_chars=re.fullmatch(r"реестр персонажей(?: ([1-9][0-9]{0,4}))?",q)
+    lit_search=re.fullmatch(r"поиск по роману (.{2,180})",q)
+    if lit_chars or lit_search or q in ("литературная аналитика","литературные мозги","отношения персонажей","проверить литературную базу","восстановить литературный индекс"):
+        with LOCK, closing(connect()) as db, db:
+            if not soul_chronicle.canon_ok(db) or soul_genesis.audit(db) or soul_evolution.audit(db) or soul_infinite.audit(db):return "Повреждены исходные литературные записи."
+            if q=="проверить литературную базу":
+                check=db.execute("PRAGMA quick_check").fetchone()[0]
+                return "SQLite: "+check+". Производный индекс: "+soul_intelligence.audit_text(db)
+            if q=="восстановить литературный индекс":
+                if db.execute("PRAGMA quick_check").fetchone()[0]!="ok":return "SQLite повреждена; восстановление индекса остановлено. Используйте проверенную резервную копию."
+                count=soul_intelligence.refresh(db,force=True)
+                return f"Индекс восстановлен из {count} опубликованных частей. Исходные главы не изменены."
+            if lit_chars:return soul_intelligence.characters_text(db,int(lit_chars[1] or 1))
+            if lit_search:return soul_intelligence.search(db,lit_search[1])
+            if q=="отношения персонажей":return soul_intelligence.relations_text(db)
+            if q=="литературные мозги":return "Локальные модули: "+", ".join(label for _,label in soul_intelligence.BRAINS)+". Один запрос Cloud.ru; данные подготовлены локально."
+            return soul_intelligence.report(db)
     inf_forecast=re.fullmatch(r"план романа 1000(?: ([1-9]|1[0-9]|20))?",q)
     inf_timeline=re.fullmatch(r"хронология романа(?: ([1-9][0-9]{0,4}))?",q)
     inf_encyclopedia=re.fullmatch(r"энциклопедия романа(?: ([1-9][0-9]{0,4}))?",q)
@@ -530,6 +551,7 @@ def chronicle_worker(stop):
                     if not (soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)+soul_evolution.audit(db)+soul_immortal.audit(db)+soul_novel.audit(db)+soul_infinite.audit(db)):
                         soul_novel.forecast(db)
                         soul_infinite.refresh_forecast(db)
+                        soul_intelligence.refresh(db)
                 enabled=CHRONICLE["enabled"] or soul_living.mode(db)!="off"
             with LOCK, closing(connect()) as db:
                 backed_up=db.execute("SELECT 1 FROM living_backups WHERE day=date('now')").fetchone()
