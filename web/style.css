@@ -31,3 +31,77 @@
 #config select:focus-visible{outline:1px solid #ec849f;outline-offset:3px}
 #config #load-models{align-self:flex-start;border:1px solid #534343;padding:6px 8px}
 #config button:disabled{opacity:.55;cursor:default}
+
+
+/* Large, readable desktop UI. The same canvas-free dark background remains. */
+:root{--chat-width:clamp(600px,42vw,700px);--reading-width:min(820px,60vw);--ui-font:system-ui,"Segoe UI",sans-serif}
+html,body{font:15px/1.6 var(--ui-font)}
+#stage{background:radial-gradient(ellipse at 50% 48%,#0c0b0b 0%,#080808 72%);transition:right .24s ease-out}
+#graph{font-family:var(--ui-font)}
+#info{font-size:13px;color:#c7abae;max-width:calc(100% - 32px);overflow-wrap:anywhere}
+#replay{font-size:25px;min-width:44px;min-height:44px}
+.label{font-size:14px;stroke-width:2.8px;letter-spacing:0;font-weight:500;fill-opacity:.98;paint-order:stroke}
+.root-label{font-size:15px;font-weight:650;letter-spacing:.10em}
+.active-label{font-size:15px;letter-spacing:0;font-weight:600;stroke-width:2px}
+#avatar{width:clamp(120px,14vw,200px);height:clamp(150px,18vw,255px)}
+#chat{width:min(var(--chat-width),100%);padding:24px clamp(24px,3vw,40px) 24px;gap:16px;background:linear-gradient(90deg,#0a0909,#0b0a0a);box-shadow:none;font:16px/1.65 var(--ui-font);min-height:0}
+#chat header{font-size:19px;line-height:1.5;font-weight:600}
+#close{font-size:28px;min-width:44px;min-height:44px}
+#messages{min-height:0;font-size:17px;line-height:1.75;gap:24px;padding:12px 2px;scrollbar-width:thin;scrollbar-color:#66504c transparent}
+.message.user{font-weight:500}
+.message.assistant{color:#e7e1dc}
+#composer{padding:12px 14px;border-radius:9px;background:#171414}
+#prompt{font:16px/1.55 var(--ui-font);min-height:50px}
+#composer button{font-size:25px;min-width:42px;min-height:44px}
+#status{font-size:13px;line-height:1.5}
+#menu{font-size:15px;max-width:calc(100vw - 28px)}
+#menu button{min-height:44px;padding:11px 14px}
+dialog{width:min(520px,calc(100vw - 32px));max-width:100%;max-height:calc(100dvh - 40px);overflow:auto;padding:26px;font:16px/1.55 var(--ui-font)}
+dialog h2{font-size:24px;margin:0 0 4px}
+dialog p{font-size:15px;margin:0 0 10px;color:#d3c6bd}
+dialog input:not([type=checkbox]),#config select,#note-kind{font:16px/1.5 var(--ui-font);min-height:46px;padding:10px}
+dialog input[type=checkbox]{width:19px;height:19px;accent-color:#c8a388;flex:none}
+#config label:has(input[type=checkbox]){flex-direction:row;align-items:flex-start;gap:10px}
+dialog button{min-height:44px;padding:9px 12px;font-size:16px;color:#e6c5a7}
+dialog button:hover{background:#d5b38b12}
+#config-status{font-size:14px;overflow-wrap:anywhere}
+#chat.reading{width:min(var(--reading-width),100%);padding:22px clamp(24px,3vw,44px) 22px;box-shadow:none;background:linear-gradient(90deg,#0a0909,#100e0d)}
+#chat.book-focus{width:100%;padding-inline:clamp(20px,8vw,120px);background:#0e0c0b}
+#book{gap:14px}
+#book-page{max-width:64ch;font:var(--book-font,21px)/var(--book-spacing,1.8) Georgia,"Times New Roman",serif;padding:22px 4px 38px}
+#book-title{font-size:clamp(30px,1.65em,48px);line-height:1.25}
+#book-kicker{font-size:14px;letter-spacing:.12em}
+#book-toolbar,#book-footer{font-size:15px}
+#book-toolbar button{min-width:44px;min-height:44px;font-size:16px}
+#book-footer button{min-width:56px;min-height:52px;font-size:38px}
+#book-footer progress{height:4px}
+#book-status,#book-end{font-size:14px}
+#book-footer>div{max-width:400px}
+@media(min-width:1050px){
+ #stage.chat-open{right:var(--chat-width)}
+ #stage.chat-open.book-open{right:var(--reading-width)}
+ #stage.book-full{right:0}
+ #avatar[aria-expanded=true]{right:calc(var(--chat-width) + 12px);width:115px;height:150px}
+ #stage.book-open~#avatar[aria-expanded=true]{right:calc(var(--reading-width) + 12px)}
+ #stage.book-full~#avatar[aria-expanded=true]{visibility:hidden}
+}
+@media(max-width:1049px){
+ #chat{width:min(650px,100%)}
+ #chat.reading{width:min(820px,100%)}
+ #chat.book-focus{width:100%}
+ #avatar[aria-expanded=true]{visibility:hidden}
+ #chat{z-index:5}
+}
+@media(max-width:600px){
+ #avatar{width:105px;height:132px;bottom:12px}
+ #chat,#chat.reading{width:100%;padding:14px 18px 18px}
+ #chat header{font-size:18px}
+ #messages{font-size:16px}
+ #book-toolbar{gap:3px}
+ #book-toolbar button{min-width:40px;font-size:15px;padding:4px}
+ #book-page{padding-top:10px}
+ #book-title{font-size:clamp(29px,1.55em,42px)}
+ #book-footer button{min-width:50px;min-height:50px}
+ dialog{padding:20px}
+}
+@media(prefers-reduced-motion:reduce){#stage{transition:none}}
