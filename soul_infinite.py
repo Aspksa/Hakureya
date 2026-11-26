@@ -238,3 +238,166 @@ def validate_approval(db,did):
     raw,h=db.execute("SELECT payload,checksum FROM chronicle_drafts WHERE id=?",(did,)).fetchone()
     story=c.unpack(raw,h)["story"]
     check_facts(db,story,p["facts"],list(published(db)),latest(db)+1)
+
+
+# Additional proposals are varied by setting, conflict, lens, and volume phase.
+# A forecast never asserts that a future event occurred.
+SETTINGS=("небесная библиотека","пограничный город","дом в человеческом мире","дворцовый сад","звёздная пристань","архив забытых цивилизаций","морское побережье","совет правителей","обсерватория","праздник в другом мире","мастерская","перевал между мирами","древний храм","неизвестная долина","зал переговоров","корабль исследователей","семейный дворец","небесная школа","рынок ремесленников","мир зеркал")
+CONFLICTS=("неожиданное последствие обещания","противоречивое свидетельство","цена добровольного выбора","доверие бывшему противнику","исчезновение важной улики","ошибка в толковании закона","соперничество без вражды","столкновение обязанностей","проверка границ дара","маленькая тайна повседневности","случайное недоразумение","возвращение давнего долга")
+LENSES=("Хакурэя","герой","одна хранительница","небесный дипломат","местный житель","бывший противник","новый свидетель","друг семьи","учёный","другой участник события")
+def forecast(db):
+    import soul_living
+    n=latest(db)
+    base=soul_living.queue(db,limit=118)
+    items=[dict(x) for x in base["items"] if x["theme"]=="fixed"]
+    for p in ev.candidates(db,list(ev.published(db))):
+        if p["scene"]:items.append({"title":p["title"],"theme":p["theme"],"guide":p["guide"]})
+    done=sum(p["step"] is not None for _,_,p in im.published(db))
+    for i,phase in im.ORDER[done:]:
+        if i<10:
+            _,title,theme,guide=im.SAGAS[i];title+=" — "+im.PHASES[phase]
+        else:title,guide=im.DAILY[i-10];theme="love"
+        items.append({"title":title,"theme":theme,"guide":guide})
+    items.extend(remaining(db))
+    for i in range(len(items),1000):
+        serial=(n+i)*37
+        place=SETTINGS[serial%len(SETTINGS)]
+        conflict=CONFLICTS[(serial//len(SETTINGS))%len(CONFLICTS)]
+        lens=LENSES[(serial//(len(SETTINGS)*len(CONFLICTS)))%len(LENSES)]
+        theme=BEATS[(i+n)%len(BEATS)][0]
+        items.append({"theme":theme,"title":place.capitalize()+" — "+conflict,"guide":"Возможная сцена: "+lens+"; "+conflict+". Не утверждай её заранее.","lens":lens})
+    for i,p in enumerate(items):
+        number=n+i+1
+        pos=(number-14)%12
+        p.update(number=number,volume=o.volume(number),pace=PACINGS[i%3],
+                 phase_volume="завязка" if pos<3 else "развитие" if pos<9 else "кульминация и последствия",
+                 proposal=True)
+    raw=o.dump({"version":VERSION,"based_on":n,"items":items})
+    db.execute("INSERT INTO infinite_forecast VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,checksum=excluded.checksum WHERE checksum!=excluded.checksum",(raw,o.digest(raw)))
+    return json.loads(raw)
+
+def source_visible(db,n):
+    return n<=13 or ev.readable(db,n)
+
+def public_rows(db):
+    return [(n,did,p) for n,did,p in published(db) if source_visible(db,n)]
+
+def source_key(db,n):
+    row=db.execute("SELECT draft_id FROM omega_index WHERE number=?",(n,)).fetchone()
+    if not row:return None
+    return f"c:{row[0]}" if row[0] is not None else f"canon:{n}"
+
+def history_text(db,page=1):
+    rows=db.execute("SELECT number,title,draft_id FROM omega_index ORDER BY number").fetchall()
+    lines=[]
+    for n,title,did in rows:
+        if not source_visible(db,n):continue
+        m=o.metadata(db,did) if did else None
+        events=m["data"]["events"] if m else []
+        lines.append(f"Глава {n} · том {o.volume(n)}: {title}"+(" — "+"; ".join(x["summary"] for x in events) if events else ""))
+    return "Хронология публикаций (не календарь мира):\n"+"\n".join(lines[(page-1)*25:page*25]) if lines[(page-1)*25:page*25] else "Нет доступных событий на этой странице."
+
+def encyclopedia(db,page=1):
+    # Reuse actual world portraits, and augment with visible character ledger only.
+    names={}
+    for n,did in db.execute("SELECT number,draft_id FROM omega_index WHERE draft_id IS NOT NULL ORDER BY number"):
+        if not source_visible(db,n):continue
+        m=o.metadata(db,did)
+        if m:
+            for e in m["data"]["events"]:
+                for name in e["characters"]:names[o.normalized(name)]=(name,n)
+        w=ge.world(db,did)
+        if w:
+            for p in w["characters"]:names[o.normalized(p["name"])]=(p["name"],n)
+    for n,_,p in public_rows(db):
+        for f in p["facts"]:
+            if f["kind"] not in ("clue","reveal","prophecy","interpretation","law","consequence"):names[o.normalized(f["subject"])]=(f["subject"],n)
+    names.setdefault(o.normalized("Хакурэя"),("Хакурэя",13))
+    names.setdefault(o.normalized("Герой"),("Герой",13))
+    values=sorted(names.values(),key=lambda p:o.normalized(p[0]))
+    return "Энциклопедия опубликованных персонажей:\n"+"\n".join(f"{name} — последнее доступное свидетельство: глава {n}" for name,n in values[(page-1)*25:page*25]) if values[(page-1)*25:page*25] else "Нет записей на этой странице."
+
+def character_text(db,name):
+    key=o.normalized(name);lines=[]
+    for n,did in db.execute("SELECT number,draft_id FROM omega_index WHERE draft_id IS NOT NULL ORDER BY number"):
+        if not source_visible(db,n):continue
+        w=ge.world(db,did)
+        if not w:continue
+        for p in w["characters"]:
+            if o.normalized(p["name"])==key:
+                lines.append(f"Глава {n}: {p['portrait']}; мотив: {p['motive']}; происхождение: {p['lineage']}. «{p['evidence']}»")
+    facts,_,_=ledger(public_rows(db))
+    labels={"identity":"Личность","origin":"Происхождение","age":"Возраст","location":"Местоположение","voice":"Голос","knowledge":"Знание/незнание","relationship":"Отношения","trait":"Характер","goal":"Цель","biography":"Биография","power":"Сила","limit":"Предел","law":"Закон","letter":"Письмо","tradition":"Традиция"}
+    visible=[x for x in facts.values() if o.normalized(x["subject"])==key and x["kind"] in labels]
+    for f in sorted(visible,key=lambda x:x["chapter"]):
+        lines.append(f"Глава {f['chapter']}: {labels[f['kind']]} — {f['value']} «{f['quote']}»")
+    if not any(f["kind"]=="age" for f in visible):lines.append("Точный возраст: не установлен в доступных записях.")
+    if not any(f["kind"]=="knowledge" for f in visible):lines.append("Знания: нет подтверждённой записи; это не означает незнания.")
+    return "Персонаж: "+name+"\n\n"+"\n\n".join(lines[-24:])
+
+def threads_text(db):
+    _,threads,_=ledger(public_rows(db))
+    lines=[f"{t['subject']} · {t['kind']}: {t['value']} (глава {t['chapter']}, "+("закрыто в главе "+str(t["closed"]) if t["closed"] else "открыто")+")" for t in threads.values()]
+    for k,t in heart.threads(db).items():
+        if source_visible(db,t["opened"]) and (t["closed"] is None or not source_visible(db,t["closed"])):
+            lines.append(f"Любовная линия: {t['title']} (глава {t['opened']})")
+    for f in ev.state(db,[(n,did,p) for n,did,p in ev.published(db) if source_visible(db,n)]).values():
+        if f["kind"] in ("promise","conflict","thread") and f["state"]=="open":lines.append(f"{f['subject']}: {f['detail']} (глава {f['chapter']})")
+    for k,t in o.mysteries(db).items():
+        if source_visible(db,t["opened"]) and (t["closed"] is None or not source_visible(db,t["closed"])):lines.append(f"Загадка: {t['question']} (глава {t['opened']})")
+    return "Реестр доступных сюжетных линий:\n"+"\n".join(lines[:40]) if lines else "Нет доступных открытых линий."
+
+def quality_text(db):
+    rows=public_rows(db)[-12:]
+    return "Формальные литературные показатели (не оценка смысла):\n"+"\n".join(
+       f"Глава {n}: эмоции {p['quality']['emotion_markers']}, решения {p['quality']['decision_markers']}, диалог {p['quality']['dialogue_lines']}, напряжение {p['quality']['tension']}/100"
+       for n,_,p in rows) if rows else "Отчётов о доступных главах ещё нет."
+
+def graph(db):
+    # Reuse canonical protagonist, love and guardian hubs; keep new nodes bounded and spoiler-filtered.
+    nodes=[];edges=[];seen=set();last_hero="character:hero"
+    guardians={o.normalized(x[1]):"guardian:"+x[0] for x in gu.CAST}
+    def node(k,label,kind):
+        if k not in seen:
+            seen.add(k);nodes.append({"key":k,"group":4,"kind":kind,"content":label,"created":"","order":len(nodes)})
+    def edge(a,b,kind):
+        if a and b and a!=b:edges.append({"a":a,"b":b,"kind":kind})
+    def hub(name):
+        key=o.normalized(name)
+        if key in ("герой","герой легенды"):return "character:hero"
+        if key in ("хакурэя","императрица"):return "character:empress"
+        if key in guardians:return guardians[key]
+        k="infinite:character:"+o.digest(key)[:20]
+        node(k,name,"infinite_character");edge("infinite:root",k,"infinite_character")
+        return k
+    node("infinite:root","Бесконечная судьба","infinite_root")
+    edge("evolution:root","infinite:root","infinite_branch")
+    edge("infinite:root","character:hero","infinite_hero")
+    for n in (5,6,9,10,11,12,13):edge(f"canon:{n}","character:hero","infinite_hero")
+    if audit(db):return nodes,edges
+    for n,did,p in public_rows(db)[-100:]:
+        if p["step"]:
+            k=f"infinite:stage:{p['step']}"
+            node(k,stage(p["step"])["title"],"infinite_stage")
+            edge("infinite:root",k,"infinite_branch");edge(f"c:{did}",k,"infinite_source")
+            if stage(p["step"])["theme"]=="love":edge("heart:root",k,"infinite_love")
+        for j,f in enumerate(p["facts"]):
+            k=f"infinite:fact:{did}:{j}";subject=hub(f["subject"])
+            kind="infinite_hero" if subject=="character:hero" else "infinite_love" if f["kind"] in ("letter","tradition","relationship") and subject=="character:empress" else "infinite_fact"
+            node(k,f["value"],kind)
+            edge(subject,k,kind);edge(f"c:{did}",k,"infinite_source")
+            if kind=="infinite_hero":
+                edge(last_hero,k,"infinite_hero");last_hero=k
+            if kind=="infinite_love":edge("heart:root",k,"infinite_love")
+            if f["cause"] is not None and source_visible(db,f["cause"]):
+                edge(source_key(db,f["cause"]),k,"infinite_cross_volume" if o.volume(f["cause"])!=o.volume(n) else "infinite_cause")
+    # Real older literary causes also connect volumes without duplicating the event node.
+    for n,did in db.execute("SELECT number,draft_id FROM omega_index WHERE draft_id IS NOT NULL ORDER BY number DESC LIMIT 120"):
+        if not source_visible(db,n):continue
+        m=o.metadata(db,did)
+        if not m:continue
+        for e in m["data"]["events"]:
+            cause=e["cause"]
+            if cause is not None and source_visible(db,cause) and o.volume(cause)!=o.volume(n):
+                edge(source_key(db,cause),f"c:{did}","infinite_cross_volume")
+    return nodes,edges
