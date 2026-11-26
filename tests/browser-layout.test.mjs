@@ -110,7 +110,7 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
    if(width>=1050){assert.ok(chat.width>=600&&chat.width<=700);assert.ok(Math.abs(chat.width+chat.graph-width)<2)}else assert.equal(chat.width,width);
    await evaluate("document.querySelector('#command-plus').click()");
    assert.equal(await evaluate("document.querySelector('#command-dialog').open"),true);
-   assert.equal(await evaluate("document.querySelectorAll('#command-results .command-item').length"),163);
+   assert.equal(await evaluate("document.querySelectorAll('#command-results .command-item').length"),172);
    const palette=await evaluate("(()=>{const r=document.querySelector('#command-dialog').getBoundingClientRect();return {w:r.width,h:r.height}})()");
    assert.ok(palette.w<=width&&palette.h<=height,JSON.stringify(palette));
    await evaluate("(()=>{const s=document.querySelector('#command-search');s.value='статус развития';s.dispatchEvent(new Event('input',{bubbles:true}));return true})()");

@@ -53,5 +53,6 @@ def context_keys(db,plan,previous):
         add("dynasty:root")
         for item in plan["dynasty"]["prior"]:chapter(item.get("number"))
     for item in plan.get("director",{}).get("recall",[]):chapter(item.get("number"))
+    for item in plan.get("universe",{}).get("refs",[]):chapter(item.get("chapter"))
     for n in plan.get("intelligence",{}).get("recalled",[]):chapter(n)
     return keys[:16]

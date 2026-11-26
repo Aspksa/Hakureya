@@ -22,6 +22,7 @@ import soul_living
 import cloud_writer
 import cloud_vault
 import writer_stream
+import writer_preview
 import writer_volume
 import soul_evolution
 import soul_immortal
@@ -30,6 +31,8 @@ import soul_infinite
 import soul_intelligence
 import soul_director
 import soul_dynasty
+import soul_universe
+import soul_export
 import graph_activity
 import writer_activity
 import instance_guard
@@ -87,7 +90,7 @@ def writer_status(db):
             "saved_connection":(DB.parent/"cloud.dpapi").is_file(),"can_remember":cloud_vault.supported(),
             "interval":idle//60,"wait_seconds":wait,"pending":pending,
             "published":soul_reader.latest(db),"attempt":attempt,
-            "target_pages":pages,"published_chars":chars,"page_chars":writer_volume.PAGE_CHARS,"attempts_today":len(attempts),
+            "chapter_pages":soul_universe.chapter_pages(db),"target_pages":pages,"published_chars":chars,"page_chars":writer_volume.PAGE_CHARS,"attempts_today":len(attempts),
             "daily_limit":writer_volume.limit(db),"max_tokens":cloud_writer.LIMIT,"reason":reason,
             "budget":soul_evolution.budget_text(db,day[:7])}
 
@@ -209,6 +212,11 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                     soul_infinite.context(db,plan)
                     soul_dynasty.context(db,plan)
                     soul_director.context(db,plan)
+                    try:
+                        soul_universe.coordinate(db,plan)
+                    except ValueError:
+                        db.execute("DELETE FROM chronicle_attempts WHERE day=? AND status='reserved'",(reservation[0],))
+                        return "Несогласованные сюжетные планы; платный запрос не отправлен."
                     soul_intelligence.prepare(db,plan)
             previous=[]
             if plan:
@@ -223,6 +231,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                     return "Литературный запрос остановлен: проверьте денежный лимит или тариф модели."
                 soul_evolution.reserve_cost(db,reservation[0],model,cost)
                 soul_intelligence.record_run(db,reservation[0],plan)
+                soul_universe.record(db,reservation[0],plan)
                 visual_sources=writer_activity.context_keys(db,plan,previous)
         if not reservation:
             return "Есть незавершённая попытка или ожидающий черновик, нарушена целостность канона либо исчерпан дневной лимит."
@@ -238,8 +247,11 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
         payload={"model":model,"messages":soul_chronicle.prompt(reservation,traits,previous,plan),"max_tokens":cloud_writer.LIMIT,"stream":True,"stream_options":{"include_usage":True}}
         req=Request(API,data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
         graph_activity.update(activity,"waiting")
-        with urlopen(req,timeout=60) as res:
-            result=writer_stream.read_response(res,lambda chars,chunks:graph_activity.progress(activity,chars,chunks))
+        try:
+            with urlopen(req,timeout=60) as res:
+                result=writer_stream.read_response(res,lambda chars,chunks:graph_activity.progress(activity,chars,chunks),lambda raw:writer_preview.push(activity,raw))
+        finally:
+            writer_preview.clear(activity)
         graph_activity.update(activity,"received","hub:4")
         graph_activity.update(activity,"validating","hub:4")
         with LOCK, closing(connect()) as db, db:
@@ -334,6 +346,17 @@ def chronicle_command(content):
     aliases.update({"девять хранительниц":"летопись: хранительницы","хранительницы":"летопись: хранительницы","продолжи историю хранительниц":"летопись: создать хранительниц","план хранительниц":"летопись: план хранительниц"})
     aliases.update({"за пределами девяти небес":"летопись: судьба","план судьбы":"летопись: план судьбы","новые герои":"летопись: новые герои","продолжи судьбу":"летопись: создать судьбу","история силы":"летопись: судьба сила","путешествия":"летопись: судьба путешествия","развитие императрицы":"летопись: судьба развитие"})
     q=aliases.get(q,q)
+    universe_commands={"литературная вселенная":"overview","координатор сюжета":"plan","матрица знаний":"knowledge","восстановить индекс сцен":"repair","проверить индекс сцен":"audit","хронология вселенной":"timeline","атлас вселенной":"atlas"}
+    scene_query=re.fullmatch(r"поиск сцены (.{2,180})",q)
+    actor_query=re.fullmatch(r"история персонажа (.{2,80})",q)
+    if q in universe_commands or scene_query or actor_query:
+        with LOCK, closing(connect()) as db, db:
+            if not soul_chronicle.canon_ok(db):return "Целостность канона нарушена."
+            try:
+                if scene_query:return soul_universe.report(db,"search",scene_query[1])
+                if actor_query:return soul_universe.report(db,"actor",actor_query[1])
+                return soul_universe.report(db,universe_commands[q])
+            except (ValueError,TypeError,KeyError,sqlite3.Error):return "Литературный индекс недоступен."
     if q=="продолжи династию":
         with LOCK, closing(connect()) as db, db:soul_chronicle.control(db,"manual_request")
         return generate_chronicle(dynasty=True)
@@ -713,9 +736,31 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if not self.local():
             return self.respond({"error":"Доступ только локально"},403)
+        export_match=re.fullmatch(r"/api/universe/export/(epub|docx|html)",self.path)
+        if export_match:
+            try:
+                with LOCK, closing(connect()) as db:
+                    raw,mime,filename=soul_export.export(db,export_match[1])
+                self.send_response(200)
+                self.send_header("Content-Type",mime)
+                self.send_header("Cache-Control","no-store")
+                self.send_header("Content-Length",str(len(raw)))
+                if filename:self.send_header("Content-Disposition",'attachment; filename="'+filename+'"')
+                self.end_headers();self.wfile.write(raw)
+                return
+            except (ValueError,TypeError,KeyError,sqlite3.Error):return self.respond({"error":"Экспорт недоступен"},409)
+        universe_match=re.fullmatch(r"/api/universe(?:/([1-9][0-9]{0,5}))?",self.path)
+        if universe_match:
+            try:
+                with LOCK, closing(connect()) as db, db:
+                    if not soul_chronicle.canon_ok(db):return self.respond({"error":"Канон повреждён"},409)
+                    return self.respond(soul_universe.overview(db,int(universe_match[1] or 1)))
+            except (ValueError,TypeError,KeyError,sqlite3.Error):return self.respond({"error":"Индекс недоступен"},503)
         if self.path == "/api/writer":
             with LOCK, closing(connect()) as db:
                 return self.respond(writer_status(db))
+        if self.path == "/api/writer/preview":
+            return self.respond(writer_preview.snapshot())
         if self.path == "/api/activity":
             return self.respond(graph_activity.snapshot())
         if self.path == "/api/chronicle":
@@ -773,7 +818,9 @@ class Handler(SimpleHTTPRequestHandler):
                 mode=data.get("mode")
                 interval=data.get("interval")
                 pages=data.get("target_pages",0)
-                if type(pages) is not int or pages not in (0,15):return self.respond({"error":"Недопустимый объём."},400)
+                chapter_pages=data.get("chapter_pages")
+                if chapter_pages is not None and (type(chapter_pages) is not int or chapter_pages not in (0,5,10,15,20,30)):return self.respond({"error":"Недопустимый размер главы."},400)
+                if type(pages) is not int or pages not in writer_volume.GOALS:return self.respond({"error":"Недопустимый объём."},400)
                 if mode not in ("off","draft","auto") or type(interval) is not int or interval not in (20,30,60,120):
                     return self.respond({"error":"Недопустимый режим или интервал."},400)
                 if (mode!="off" or pages) and data.get("consent") is not True:
@@ -789,6 +836,7 @@ class Handler(SimpleHTTPRequestHandler):
                         soul_evolution.set_budget(db,model,budget["input"]*100,budget["output"]*100,budget["monthly"]*100)
                     if pages and not writer_volume.budget_ready(db,model):return self.respond({"error":"Для увеличенного объёма задайте бюджет и тарифы модели писателя."},400)
                     writer_volume.set_target(db,pages)
+                    if chapter_pages is not None:soul_universe.set_chapter_pages(db,chapter_pages)
                     soul_living.set_mode(db,mode)
                     db.execute("UPDATE immortal_preferences SET idle=? WHERE id=1",(interval*60,))
                     CHRONICLE.update(enabled=False,epoch=CHRONICLE["epoch"]+1)
