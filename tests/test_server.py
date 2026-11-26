@@ -252,3 +252,22 @@ class ServerTest(unittest.TestCase):
             self.assertIn("остановлен",self.request("chat",{"content":"Продолжи сагу"})["reply"])
             self.assertIn("4000",self.request("chat",{"content":"Формат главы большая"})["reply"])
             remote.assert_not_called()
+
+
+    def test_book_reader_api_is_offline(self):
+        with patch.object(server,"urlopen") as remote:
+            self.assertIsNone(self.request("reader")["reader"])
+            first=self.request("chat",{"content":"Читать с начала"})["reader"]
+            self.assertEqual(first["chapter"],1)
+            self.assertEqual(first["page"],1)
+            self.assertNotIn("Художественный канон",first["text"])
+            next_page=self.request("reader",{"action":"next"})["reader"]
+            self.assertNotEqual(next_page,first)
+            self.assertEqual(self.request("reader",{"action":"back"})["reader"],first)
+            self.assertEqual(self.request("reader")["reader"],first)
+            self.assertIsNone(self.request("reader",{"action":"pause"})["reader"])
+            self.assertEqual(self.request("reader",{"action":"resume"})["reader"],first)
+            self.assertIn("Императрица человеческого мира",self.request("chat",{"content":"Новые саги"})["reply"])
+            self.assertEqual(self.request("graph/volume/1")["volume"],1)
+            self.assertIn("30 минут",self.request("chat",{"content":"Интервал писателя 30"})["reply"])
+            remote.assert_not_called()
