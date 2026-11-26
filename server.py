@@ -33,6 +33,7 @@ import soul_director
 import soul_dynasty
 import soul_universe
 import soul_intellect
+import soul_atlas
 import soul_export
 import graph_activity
 import writer_activity
@@ -855,7 +856,14 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == "/api/chronicle":
             with closing(connect()) as db:
                 return self.respond({"status":soul_chronicle.status(db),"graph":soul_chronicle.biography_graph(db)})
-        volume_match=re.fullmatch(r"/api/graph/volume/([1-9][0-9]{0,5})",self.path)
+        atlas_match=re.fullmatch(r"/api/graph/atlas(?:/([1-9][0-9]{0,6})/([1-9][0-9]{0,6}))?",self.path)
+        if atlas_match:
+            try:
+                with closing(connect()) as db:
+                    bounds=[int(atlas_match[i]) for i in (1,2)] if atlas_match[1] else []
+                    return self.respond(soul_atlas.snapshot(db,*bounds))
+            except (ValueError,TypeError,KeyError,sqlite3.Error):return self.respond({"error":"Область атласа недоступна"},400)
+        volume_match=re.fullmatch(r"/api/graph/volume/([1-9][0-9]{0,6})",self.path)
         if volume_match:
             try:
                 with closing(connect()) as db:
