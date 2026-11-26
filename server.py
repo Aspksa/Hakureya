@@ -342,12 +342,16 @@ def chronicle_command(content):
     aliases.update({"девять хранительниц":"летопись: хранительницы","хранительницы":"летопись: хранительницы","продолжи историю хранительниц":"летопись: создать хранительниц","план хранительниц":"летопись: план хранительниц"})
     aliases.update({"за пределами девяти небес":"летопись: судьба","план судьбы":"летопись: план судьбы","новые герои":"летопись: новые герои","продолжи судьбу":"летопись: создать судьбу","история силы":"летопись: судьба сила","путешествия":"летопись: судьба путешествия","развитие императрицы":"летопись: судьба развитие"})
     q=aliases.get(q,q)
-    universe_commands={"литературная вселенная":"overview","координатор сюжета":"plan","матрица знаний":"knowledge","восстановить индекс сцен":"repair"}
+    universe_commands={"литературная вселенная":"overview","координатор сюжета":"plan","матрица знаний":"knowledge","восстановить индекс сцен":"repair","проверить индекс сцен":"audit","хронология вселенной":"timeline","атлас вселенной":"atlas"}
     scene_query=re.fullmatch(r"поиск сцены (.{2,180})",q)
-    if q in universe_commands or scene_query:
+    actor_query=re.fullmatch(r"история персонажа (.{2,80})",q)
+    if q in universe_commands or scene_query or actor_query:
         with LOCK, closing(connect()) as db, db:
             if not soul_chronicle.canon_ok(db):return "Целостность канона нарушена."
-            try:return soul_universe.report(db,"search",scene_query[1]) if scene_query else soul_universe.report(db,universe_commands[q])
+            try:
+                if scene_query:return soul_universe.report(db,"search",scene_query[1])
+                if actor_query:return soul_universe.report(db,"actor",actor_query[1])
+                return soul_universe.report(db,universe_commands[q])
             except (ValueError,TypeError,KeyError,sqlite3.Error):return "Литературный индекс недоступен."
     if q=="продолжи династию":
         with LOCK, closing(connect()) as db, db:soul_chronicle.control(db,"manual_request")
