@@ -30,7 +30,8 @@ test("stored star keeps relative position on insertion and eviction",()=>{
 test("actual stages yield distinct transport paths, no synthetic activity",()=>{
  const graph=layout({records:[{key:"d:1",group:3,slot:0},{key:"draft:1",group:4,slot:1}],edges:[]});
  const req={kind:"chronicle",source:"d:1",target:"draft:1",stage:"waiting"};
- const outbound=flowPaths(req,graph)[0];assert.equal(outbound.points[0].key,"d:1");
+ const outbound=flowPaths(req,graph)[0];assert.equal(outbound.points[0].key,"root");
+ assert.equal(flowPaths({...req,stage:"context"},graph)[0].points[0].key,"d:1");
  const done=flowPaths({...req,stage:"done"},graph)[0];assert.equal(done.points.at(-1).key,"draft:1");
  assert.deepEqual(pointOn(done.points,1),{x:done.points.at(-1).x,y:done.points.at(-1).y});
  assert.equal(flowPaths({...req,stage:"error"},graph)[0].color,"#ed657d");
