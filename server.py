@@ -212,8 +212,8 @@ def chronicle_command(content):
             if evolution_volume:return soul_evolution.annotation(db,int(evolution_volume[1]))
             if evolution_format:
                 fmt=evolution_format[1]
-                if not soul_romance.start_cycle(db,fmt,"future"):return "Сначала завершите открытый цикл или обработайте черновик."
-                return "Открыт литературный цикл: "+fmt+". Цель "+str(soul_romance.FORMATS[fmt])+" слов, последовательными частями. Суточный лимит не изменён."
+                if not soul_romance.start_cycle(db,fmt,"future",soul_evolution.FORMATS[fmt]):return "Сначала завершите открытый цикл или обработайте черновик."
+                return "Открыт литературный цикл: "+fmt+". Цель "+str(soul_evolution.FORMATS[fmt])+" слов, последовательными частями. Суточный лимит не изменён."
             if evolution_budget:
                 model=cloud_writer.selected(db) or CONFIG["model"]
                 if not model:return "Сначала выберите модель писателя."
@@ -278,7 +278,7 @@ def chronicle_command(content):
         return generate_chronicle(arc=soul_saga.ALIASES.get(create_match[1]),alternative=create_match[1]=="варианты",shadow=create_match[1]=="сагу",guardians=create_match[1]=="хранительниц",destiny=create_match[1]=="судьбу")
     with LOCK, closing(connect()) as db, db:
         if q=="летопись: аудит":
-            issues=soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)
+            issues=soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)+soul_evolution.audit(db)
             return "Проверка целостности (не семантическая проверка): "+("\n"+"\n".join(issues) if issues else "нарушений не найдено.")
         if (destiny_read or q in destiny_commands or guardian_profile or q in guardian_commands or q in simple_commands or heart_read or q in heart_commands or romance_start or romance_read or q in romance_commands or genesis_read or genesis_arc or q in genesis_commands or omega_read or omega_search or q in omega_commands or read_match or q in ("летопись: содержание","летопись: последняя","летопись: главы")) and not soul_chronicle.canon_ok(db):
             return "Целостность исходной летописи нарушена; чтение заблокировано."
