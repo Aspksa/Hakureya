@@ -60,7 +60,7 @@ def generate_chronicle(background=False, arc=None, alternative=False):
             if cycle and arc and arc!=cycle["arc"]:
                 return "Сначала завершите открытый художественный цикл или продолжите его сюжетную линию."
             if cycle: arc=cycle["arc"]
-            reservation=soul_chronicle.reserve(db,allow_story=True) if not soul_genesis.audit(db) else None
+            reservation=soul_chronicle.reserve(db,allow_story=True) if not (soul_genesis.audit(db)+soul_heart.audit(db)) else None
             traits=soul_chronicle.profile(db)
             plan=soul_genesis.enrich(db,soul_omega.enrich_plan(db,soul_saga.plan(db,arc))) if reservation else None
             if plan:
@@ -74,7 +74,7 @@ def generate_chronicle(background=False, arc=None, alternative=False):
         if not reservation:
             return "Есть незавершённая попытка или ожидающий черновик, нарушена целостность канона либо исчерпан дневной лимит."
         key, model, epoch=CONFIG["key"],CONFIG["model"],CHRONICLE["epoch"]
-    with graph_activity.track("chronicle",(f"d:{reservation[1]}" if reservation[1]>0 else "arc:"+plan["arc"])) as activity:
+    with graph_activity.track("chronicle",(f"d:{reservation[1]}" if reservation[1]>0 else ("heart:root" if plan["arc"]=="love" else "arc:"+plan["arc"]))) as activity:
         return execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
 
 def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan):
@@ -134,7 +134,7 @@ def chronicle_command(content):
         return generate_chronicle(arc=soul_saga.ALIASES.get(create_match[1]),alternative=create_match[1]=="варианты")
     with LOCK, closing(connect()) as db, db:
         if q=="летопись: аудит":
-            issues=soul_genesis.audit(db)
+            issues=soul_genesis.audit(db)+soul_heart.audit(db)
             return "Проверка целостности (не семантическая проверка): "+("\n"+"\n".join(issues) if issues else "нарушений не найдено.")
         if (heart_read or q in heart_commands or romance_start or romance_read or q in romance_commands or genesis_read or genesis_arc or q in genesis_commands or omega_read or omega_search or q in omega_commands or read_match or q in ("летопись: содержание","летопись: последняя","летопись: главы")) and not soul_chronicle.canon_ok(db):
             return "Целостность исходной летописи нарушена; чтение заблокировано."
