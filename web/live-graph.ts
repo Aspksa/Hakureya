@@ -36,7 +36,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   const priority=(key:string)=>key==="root"?0:key===active?1:key.startsWith("hub:")?2:graph.byKey.get(key)?.kind?.endsWith("_root")?3:4;
   for(const [key,t] of [...labels].sort((a,b)=>priority(a[0])-priority(b[0])||a[0].localeCompare(b[0]))){
    const n=graph.byKey.get(key),px=x+n.x*s*k,py=y+n.y*s*k;
-   const width=Math.min(290,Math.max(48,(n.label?.length||0)*7.5)),box={l:px-width/2-5,r:px+width/2+5,t:py+15,b:py+37};
+   const width=Math.max(48,t.getComputedTextLength?.()||((n.label?.length||0)*7.5)),baseline=key==="root"?37:24,box={l:px-width/2-5,r:px+width/2+5,t:py+baseline-16,b:py+baseline+5};
    const visible=items.get(key)?.getAttribute("visibility")!=="hidden"&&box.l>=2&&box.r<=w-2&&box.t>=2&&box.b<=h-2&&!(key===active&&key!=="root")&&!boxes.some(q=>box.l<q.r&&box.r>q.l&&box.t<q.b&&box.b>q.t);
    t.setAttribute("visibility",visible?"visible":"hidden");
    if(visible)boxes.push(box);
@@ -63,7 +63,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   redrawSelection();
  }
  function invalidate(){if(!raf&&!disposed&&!document.hidden)raf=requestAnimationFrame(frame)}
- function resize(){const nw=Math.max(1,svg.clientWidth),nh=Math.max(1,svg.clientHeight);if(nw!==w||nh!==h){focusMotion=null;panX=panY=0;}w=nw;h=nh;s=Math.max(1,Math.min(w,h));desired=baseFit();if(!receivedSnapshot||motion.matches)fit=desired;svg.setAttribute("viewBox","0 0 "+w+" "+h);starEls.forEach((e,i)=>{e.setAttribute("cx",String(starData[i].x*w));e.setAttribute("cy",String(starData[i].y*h))});place();glyphScale=NaN;invalidate()}
+ function resize(){const nw=Math.max(1,svg.clientWidth),nh=Math.max(1,svg.clientHeight);if(nw===w&&nh===h)return;focusMotion=null;panX=panY=0;zoom=1;active="";level=-1;w=nw;h=nh;s=Math.max(1,Math.min(w,h));desired=baseFit();fit=desired;svg.setAttribute("viewBox","0 0 "+w+" "+h);starEls.forEach((e,i)=>{e.setAttribute("cx",String(starData[i].x*w));e.setAttribute("cy",String(starData[i].y*h))});place();glyphScale=NaN;invalidate()}
  function reveal(n:number){
   const visible=new Set(graph.nodes.slice(0,n).map(x=>x.key));graph.nodes.forEach(x=>items.get(x.key)?.setAttribute("visibility",visible.has(x.key)?"visible":"hidden"));drawnEdges.forEach((e,i)=>edgeEls[i]?.setAttribute("visibility",visible.has(e.a)&&visible.has(e.b)?"visible":"hidden"));shown=n;
  }
@@ -100,11 +100,11 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
    const glyph=el("g",{},g);glyphs.set(n.key,glyph);
    if(births.has(n.key))g.setAttribute("opacity",".08");
    const root=n.key==="root",r=n.r;
-   if(!dense||major)el("circle",{r:r*(root?5:4.5),fill:"url(#glow"+(n.group+1)+")",opacity:root?1:.9},glyph);
+   if(!dense||major)el("circle",{r:r*(root?5:4.5),fill:"url(#glow"+(n.group+1)+")",opacity:root?1:.9,"pointer-events":"none"},glyph);
    if(root){el("circle",{r:r*2.3,fill:"none",stroke:"#ddcda9","stroke-opacity":.48,"stroke-width":.8},glyph);el("circle",{r:r*3.05,fill:"none",stroke:"#e5ceb0","stroke-opacity":.17,"stroke-width":.7},glyph)}
    if(n.kind==="draft"){el("circle",{r:r*1.7,fill:"none",stroke:col,"stroke-dasharray":"2 2","stroke-width":1},glyph)}
    else{el("circle",{r:r,fill:col,opacity:.91},glyph);if(!dense||major)el("circle",{r:r*.42,fill:"#fff9eb"},glyph)}
-   el("circle",{r:Math.max(7,r*1.6),fill:"transparent"},glyph);
+   el("circle",{r:Math.max(dense&&!major?4:7,r*1.6),fill:"transparent"},glyph);
    if(n.key==="root"||n.key.startsWith("hub:")||n.kind==="epoch"||n.kind==="heart_root"||n.kind==="heart_topic"||n.kind==="shadow_root"||n.kind==="shadow_topic"||n.kind==="guardian_root"||n.kind==="guardian_character"||n.kind==="destiny_root"||n.kind==="destiny_topic"||n.kind==="destiny_character"||n.kind==="living_root"||n.kind==="living_topic"||n.kind==="evolution_root"||n.kind==="evolution_subject"||n.kind==="immortal_root"||n.kind==="immortal_saga"||n.kind==="realm"){
     if(!root)el("path",{d:"M-9 0H9M0 -9V9",stroke:col,"stroke-width":.8,opacity:.65},glyph);
     const t=el("text",{x:0,y:root?37:24,"text-anchor":"middle",fill:col,class:root?"label root-label":"label"},glyph);t.textContent=n.label;labels.set(n.key,t);
