@@ -1,11 +1,12 @@
 import "./style.css";
 import {mountGraph} from "./live-graph";
 const $=(id:string)=>document.getElementById(id)!;
-const live=mountGraph($("graph") as unknown as SVGSVGElement,$("info"));
+let selectedVolume:number|null=null;
+const live=mountGraph($("graph") as unknown as SVGSVGElement,$("info"),volume=>{selectedVolume=volume;void refreshGraph()});
 let busy=false;
-$("replay").onclick=()=>live.replay();$("reset").onclick=()=>{live.replay();$("menu").hidden=true};
+$("replay").onclick=()=>{selectedVolume=null;void refreshGraph().then(()=>live.replay())};$("reset").onclick=()=>{selectedVolume=null;void refreshGraph().then(()=>live.replay());$("menu").hidden=true};
 let graphRequest=0;
-async function refreshGraph(){const id=++graphRequest;try{const data=await api("graph");if(id===graphRequest)live.render(data)}catch{if(id===graphRequest)$("info").textContent="Память недоступна"}}
+async function refreshGraph(){const id=++graphRequest;try{const data=await api(selectedVolume===null?"graph":"graph/volume/"+selectedVolume);if(id===graphRequest)live.render(data)}catch{if(id===graphRequest)$("info").textContent="Область недоступна · ↻ для общей карты"}}
 let activityBusy=false,activityRevision="",activityTimer=0,activityActive=false;
 async function refreshActivity(){
  if(document.hidden||activityBusy)return;
