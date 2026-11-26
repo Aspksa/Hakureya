@@ -192,3 +192,5 @@ dialog button:hover{background:#d5b38b12}
 #writer-error{display:block;color:#ffad9a;white-space:pre-wrap;line-height:1.45}#writer-error:empty{display:none}#writer-stop:not([hidden]){border-color:#b88866;color:#edc4aa}
 
 #atlas-open,#atlas-back{position:absolute;z-index:5;right:16px;top:104px;width:36px;height:36px;border:1px solid #c9a76544;border-radius:50%;background:#151312b8;color:#ead6a1;font-size:19px;cursor:pointer}#atlas-back{top:148px}#atlas-open[aria-pressed="true"]{color:#fff3ca;border-color:#e7c46d}#atlas-back[hidden]{display:none}
+
+#network-open{position:absolute;z-index:5;right:16px;top:192px;width:36px;height:36px;border:1px solid #c9a76555;border-radius:50%;background:#151312b8;color:#ead6a1;font-size:21px;cursor:pointer}#network-open[aria-pressed="true"]{color:#fff3ca;border-color:#e7c46d;box-shadow:0 0 15px #e7c46d33}
