@@ -65,7 +65,14 @@ def connect():
                 db.execute("CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, role TEXT NOT NULL, content TEXT NOT NULL, created TEXT DEFAULT CURRENT_TIMESTAMP)")
                 memory_graph.init(db)
                 soul_core.init(db)
-                soul_intelligence.refresh(db)
+                # An invalid derived record must not make the diagnostics or reader unavailable.
+                db.execute("SAVEPOINT initial_index")
+                try:
+                    soul_intelligence.refresh(db)
+                    db.execute("RELEASE initial_index")
+                except (ValueError,TypeError,KeyError,IndexError) as error:
+                    db.execute("ROLLBACK TO initial_index");db.execute("RELEASE initial_index")
+                    LOG.warning("initial literary index failure: %s",type(error).__name__)
                 db.commit()
                 INITIALIZED.add(path)
         return db
@@ -742,7 +749,7 @@ class Handler(SimpleHTTPRequestHandler):
                     with closing(connect()) as db, db:
                         soul_core.record_model(db,model)
                     CONFIG.update(key=key, model=model)
-                    CHRONICLE.update(enabled=False,epoch=CHRONICLE["epoch"]+1)
+                    CHRONICLE.update(enabled=False,epoch=CHRONICLE["epoch"]+1,config_epoch=CHRONICLE.get("config_epoch",0)+1)
                 return self.respond({"connected":True})
             if self.path != "/api/chat":
                 return self.respond({"error":"Не найдено"},404)
@@ -761,7 +768,7 @@ class Handler(SimpleHTTPRequestHandler):
             try:
                 with LOCK:
                     user_id=store("user",content.strip())
-                    key,model,epoch=CONFIG["key"],CONFIG["model"],CHRONICLE["epoch"]
+                    key,model,epoch=CONFIG["key"],CONFIG["model"],CHRONICLE.get("config_epoch",0)
                     if not key:
                         return self.respond({"reply":"Сообщение сохранено локально. Для ответа подключите Cloud.ru через меню аватара.","connected":False})
                     with closing(connect()) as db:
@@ -780,7 +787,7 @@ class Handler(SimpleHTTPRequestHandler):
                         graph_activity.update(activity,"error")
                         return self.respond({"error":"Cloud.ru не вернул ответ. Сообщение сохранено; проверьте модель и ключ."},502)
                     with LOCK:
-                        if CHRONICLE["epoch"]!=epoch:
+                        if CHRONICLE.get("config_epoch",0)!=epoch:
                             graph_activity.update(activity,"discarded")
                             return self.respond({"error":"Настройки изменились; ответ отброшен."},409)
                         answer_id=store("assistant",reply)
