@@ -339,6 +339,8 @@ def prepare(db,plan):
     network.finish("memory",list(refs.values())[-3:])
     inputs=network.begin("editor")
     m=metrics(db)
+    if scope is not None:
+        m={**m,"chapters":len(scope),"cross_volume":sum(f["cause"] is not None and f["cause"] in scope and o.volume(f["cause"])!=o.volume(n) for n,f in data),"warnings":0,"originality":None,"profile_gaps":[],"rapid":[]}
     last_story=db.execute("SELECT story FROM omega_index WHERE number=?",(inputs["time"]["scope_last"],)).fetchone()
     sample=romance.profile("",last_story[0]) if last_story else {}
     network.finish("editor",{"warnings":m["warnings"],"originality":m["originality"],"last_scene_words":sample.get("words",0),
@@ -354,7 +356,7 @@ def prepare(db,plan):
         "editor_sources":inputs["editor"]["check_sources"],"guide":"Если уместно, дай второстепенному герою собственную цель и свяжи давнее событие с текущим."})
     inputs=network.begin("twist")
     preferred={x["number"] for x in inputs["memory"]}|set(inputs["analytics"]["editor_sources"])|{x["chapter"] for x in inputs["plot"]["open"]}
-    causes=[{"chapter":n,"cause":f["cause"],"value":f["value"][:100]} for n,f in recent if f["cause"] is not None and f["cause"]<n<=inputs["time"]["scope_last"]]
+    causes=[{"chapter":n,"cause":f["cause"],"value":f["value"][:100]} for n,f in recent if f["cause"] is not None and f["cause"]<n<=inputs["time"]["scope_last"] and (scope is None or f["cause"] in scope)]
     causes.sort(key=lambda f:(f["cause"] in preferred,f["chapter"]),reverse=True)
     network.finish("twist",{"causes":causes[:2],"guide":"Поворот должен опираться на улику, а не отменять прежние события."})
     inputs=network.begin("coordinator")
