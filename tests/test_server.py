@@ -128,3 +128,27 @@ class ServerTest(unittest.TestCase):
                 self.request("chat",{"content":"Ошибка"})
         self.assertEqual(self.request("activity")["active"],[])
         self.assertTrue(any(e["stage"]=="error" for e in self.request("activity")["recent"]))
+
+
+    def test_saga_reading_and_writing_without_diary(self):
+        from test_chronicle import draft
+        with patch.object(server,"urlopen") as remote:
+            self.assertIn("Глава V.",self.request("chat",{"content":"прочитай главу 5"})["reply"])
+            self.assertIn("оглавление",self.request("chat",{"content":"оглавление"})["reply"])
+            remote.assert_not_called()
+        self.request("config",{"key":"test-key","model":"test-model","consent":True})
+        fake=MagicMock()
+        fake.__enter__.return_value.read.return_value=json.dumps({"choices":[{"message":{"content":json.dumps(draft(),ensure_ascii=False)}}]}).encode()
+        with patch.object(server,"urlopen",return_value=fake) as remote:
+            result=self.request("chat",{"content":"продолжи нашу историю любви"})
+            self.assertIn("Черновик создан",result["reply"])
+            self.assertIn("История любви",result["reply"])
+            self.assertIn(draft()["story"].strip(),result["reply"])
+            sent=json.loads(remote.call_args.args[0].data)
+            self.assertIn("романтическую связь",sent["messages"][0]["content"])
+            self.assertIn("Глава 14",self.request("chat",{"content":"летопись: принять 1"})["reply"])
+            self.assertIn("Новое открытие",self.request("chat",{"content":"летопись: читать 14"})["reply"])
+            self.assertEqual(remote.call_count,1)
+        graph=self.request("graph")
+        self.assertTrue(any(e["a"]=="arc:love" and e["b"]=="c:1" for e in graph["edges"]))
+        self.assertFalse(any(n["key"].startswith("d:") for n in graph["records"]))
