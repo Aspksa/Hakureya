@@ -41,8 +41,9 @@ def init(db):
     db.execute("CREATE TABLE IF NOT EXISTS genesis_edits(id INTEGER PRIMARY KEY, draft_id INTEGER NOT NULL, before_hash TEXT NOT NULL, after_hash TEXT NOT NULL, chosen INTEGER NOT NULL, created TEXT DEFAULT CURRENT_TIMESTAMP)")
     db.execute("CREATE TABLE IF NOT EXISTS genesis_world(draft_id INTEGER PRIMARY KEY, payload TEXT NOT NULL, checksum TEXT NOT NULL)")
     # Index is derived only from approved chapter archive. Incremental on content checksum.
-    db.execute("DELETE FROM genesis_terms WHERE number NOT IN (SELECT number FROM omega_index)")
-    db.execute("DELETE FROM genesis_docs WHERE number NOT IN (SELECT number FROM omega_index)")
+    if db.execute("SELECT 1 FROM genesis_docs WHERE number NOT IN (SELECT number FROM omega_index) LIMIT 1").fetchone():
+        db.execute("DELETE FROM genesis_terms WHERE number NOT IN (SELECT number FROM omega_index)")
+        db.execute("DELETE FROM genesis_docs WHERE number NOT IN (SELECT number FROM omega_index)")
     for n,title,story,check in db.execute("""SELECT i.number,i.title,i.story,i.checksum FROM omega_index i
         LEFT JOIN genesis_docs g ON g.number=i.number AND g.fingerprint=i.checksum WHERE g.number IS NULL""").fetchall():
         words=Counter(o.WORD.findall(o.normalized(story)))
@@ -172,6 +173,10 @@ def audit(db):
     import soul_chronicle as c
     issues=[]
     if not c.canon_ok(db):issues.append("Нарушен исходный канон")
+    import soul_saga
+    for n,title,story in soul_saga.canonical_chapters():
+        row=db.execute("SELECT title,story FROM omega_index WHERE number=?",(n,)).fetchone()
+        if row!=(title,story):issues.append(f"Канон {n}: несовпадение индекса")
     for did,n,raw,h in db.execute("SELECT d.id,a.number,d.payload,d.checksum FROM chronicle_drafts d JOIN saga_arcs a ON a.draft_id=d.id WHERE d.status='approved'"):
         try:p=c.unpack(raw,h)
         except (ValueError,TypeError):issues.append(f"Глава {n}: повреждён текст");continue
@@ -207,6 +212,15 @@ def graph(db):
         key="law:"+k;add(key,label,"law");edges.append({"a":f"canon:{n}","b":key,"kind":"world_law"})
     for i in range(1,10):
         key=f"realm:{i}";add(key,f"Небесное царство {i}","realm");edges.append({"a":"canon:2","b":key,"kind":"world_realm"})
+    # Each recent book/epoch intersection has its own physical constellation hub.
+    segments={}
+    for n,arc,did in db.execute("SELECT number,arc,draft_id FROM omega_index ORDER BY number DESC LIMIT 145"):
+        v=o.volume(n); key=f"segment:{arc}:{v}"
+        if key not in segments and len(segments)<32:
+            add(key,f"Том {v} · {o.ERA[arc]}","book_segment")
+            segments[key]=True;edges.append({"a":"era:"+arc,"b":key,"kind":"book"})
+        if key in segments:
+            edges.append({"a":key,"b":f"c:{did}" if did is not None else f"canon:{n}","kind":"book_chapter"})
     for p in state(db)["places"][-30:]:
         key="place:"+o.digest(o.normalized(p["name"]))[:20];add(key,p["name"],"place")
         row=db.execute("SELECT draft_id FROM omega_index WHERE number=?",(p["chapter"],)).fetchone()
@@ -217,7 +231,7 @@ def graph(db):
 
 def save_variants(db,did,base,lit,world_data,alt,plan):
     """Keep alternative draft as a separate, validated proposal in the same paid call."""
-    if alt is None:return
+    if alt is None or not plan.get("alternative"):return
     import soul_chronicle as c
     try:
         other=c.validate(alt)
