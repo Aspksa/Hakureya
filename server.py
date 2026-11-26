@@ -171,8 +171,10 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                 return "Сначала завершите открытый художественный цикл или продолжите его сюжетную линию."
             if cycle: arc=cycle["arc"]
             if soul_dynasty.audit(db):return "Записи Династии повреждены; написание остановлено."
+            if soul_dynasty.continuing(db) and (cycle or alternative or shadow or guardians or destiny or arc not in (None,"future")):
+                return "Сначала завершите текущую главу Династии."
             dynasty_lane=False
-            if not cycle and not alternative and not (shadow or guardians or destiny) and (dynasty or arc is None):
+            if not cycle and not alternative and not (shadow or guardians or destiny) and (dynasty or arc is None or soul_dynasty.continuing(db)):
                 dynasty_lane=soul_dynasty.choose_lane(db,explicit=dynasty)
             if dynasty and not dynasty_lane:return "Династия: сначала завершите текущую литературную главу/цикл либо все этапы уже пройдены."
             if dynasty_lane:arc="future"
@@ -193,6 +195,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                 soul_heart.enrich(db,plan)
                 plan["alternative"]=alternative
                 plan["dynasty_lane"]=dynasty_lane
+                plan["dynasty_guard"]=soul_dynasty.guard(db,plan)
                 if shadow_plan:plan["shadow"]=shadow_plan
                 if destiny_plan:plan["destiny"]=destiny_plan
                 if guardian_plan:plan["guardians"]=guardian_plan
@@ -332,10 +335,12 @@ def chronicle_command(content):
     aliases.update({"за пределами девяти небес":"летопись: судьба","план судьбы":"летопись: план судьбы","новые герои":"летопись: новые герои","продолжи судьбу":"летопись: создать судьбу","история силы":"летопись: судьба сила","путешествия":"летопись: судьба путешествия","развитие императрицы":"летопись: судьба развитие"})
     q=aliases.get(q,q)
     if q=="продолжи династию":return generate_chronicle(dynasty=True)
-    if q in ("династия вечности","план династии"):
+    if q in ("династия вечности","план династии","история горничной","история сестры"):
         with LOCK, closing(connect()) as db, db:
             if not soul_chronicle.canon_ok(db) or soul_dynasty.audit(db):return "Литературные записи повреждены."
-            return soul_dynasty.status(db) if q=="династия вечности" else soul_dynasty.plan_text(db)
+            if q=="династия вечности":return soul_dynasty.status(db)
+            if q=="план династии":return soul_dynasty.plan_text(db)
+            return soul_dynasty.character_text(db,"maid" if q=="история горничной" else "sister")
     director_commands={"сюжетный режиссёр":"decision","сюжетный режиссер":"decision","сюжетные циклы":"cycles","качество сюжета":"quality","план трёх томов":"forecast","план трех томов":"forecast","аннотация последнего тома":"annotation"}
     if q in director_commands:
         with LOCK, closing(connect()) as db, db:
