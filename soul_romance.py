@@ -6,7 +6,7 @@ from collections import Counter
 import soul_omega as o
 
 VERSION=1
-FORMATS={"обычная":1500,"большая":3000,"романтическая":6000}
+FORMATS={"короткая":750,"обычная":2000,"большая":4000,"романтическая":3000}
 # Separate story structure from vocabulary. These are local thematic heuristics.
 MOTIFS={
  "прикосновение":("прикоснов","ладон","объят","обня"),
