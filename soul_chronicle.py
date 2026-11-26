@@ -189,6 +189,19 @@ def recover(db):
     db.execute("UPDATE chronicle_attempts SET status='interrupted' WHERE status='reserved'")
 
 def decide(db, draft_id, approve):
+    # The caller may handle a validation error and still commit its outer transaction.
+    # Keep approval, numbering and all derived updates indivisible in that case.
+    db.execute("SAVEPOINT chronicle_decision")
+    try:
+        result=_decide(db,draft_id,approve)
+        db.execute("RELEASE chronicle_decision")
+        return result
+    except BaseException:
+        db.execute("ROLLBACK TO chronicle_decision")
+        db.execute("RELEASE chronicle_decision")
+        raise
+
+def _decide(db, draft_id, approve):
     row=db.execute("SELECT canon_hash,payload,checksum,status FROM chronicle_drafts WHERE id=?",(draft_id,)).fetchone()
     if not row or row[3]!="pending":
         return False
