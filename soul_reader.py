@@ -93,3 +93,28 @@ def move(db,action,n=None):
         if prev is None:return "Предыдущая глава недоступна. Закладка сохранена."
         return display(db,chapter-1,len(prev[0])-1,prev)
     raise ValueError("unknown reader action")
+
+def view(db):
+    """Render exactly the existing bookmark; no implicit move or model request."""
+    row=bookmark(db)
+    if not row or not row[3]:return None
+    n,p,check,_=row
+    loaded=load(db,n)
+    if loaded is None or loaded[1]!=check or not 0<=p<len(loaded[0]):return None
+    pages=loaded[0]
+    index=db.execute("SELECT title FROM omega_index WHERE number=?",(n,)).fetchone()
+    if not index:return None
+    body=pages[p]
+    if p==0:
+        # Strip only known wrapper headings; original stored text and pagination remain unchanged.
+        if n<=13:body=re.sub(r"^Художественный канон\n\n### Глава [IVX]+\. [^\n]+\n*", "",body,count=1)
+        else:body=re.sub(r"^Художественная глава [0-9]+\. [^\n]+\n[^\n]+\n\n", "",body,count=1)
+    volume=soul_omega.volume(n)
+    count=db.execute("SELECT COUNT(*) FROM omega_index WHERE number BETWEEN ? AND ?",
+        (1 if volume==1 else 14+(volume-2)*12,13 if volume==1 else 25+(volume-2)*12)).fetchone()[0]
+    ordinal=n if volume==1 else (n-14)%12+1
+    return {"chapter":n,"title":index[0],"volume":volume,"page":p+1,"pages":len(pages),
+      "text":body.strip(),"chapter_progress":(p+1)/len(pages),
+      "volume_progress":min(1,(ordinal-1+(p+1)/len(pages))/max(1,count)),
+      "can_back":n>1 or p>0,"can_next":n<latest(db) or p+1<len(pages),
+      "last_published":n==latest(db) and p+1==len(pages)}
