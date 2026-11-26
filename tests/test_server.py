@@ -54,6 +54,23 @@ class ServerTest(unittest.TestCase):
             self.assertIn("завершите текущую главу Династии",self.request("chat",{"content":"летопись: цикл обычная"})["reply"])
             self.assertEqual(remote.call_count,1)
 
+    def test_writer_transport_failure_releases_reservation(self):
+        from http.client import IncompleteRead
+        self.request("config",{"key":"test-key","model":"test-model","consent":True})
+        def interrupted(response,progress,preview):
+            preview('{"story":"Полученный фрагмент')
+            raise IncompleteRead(b"")
+        with patch.object(server,"urlopen",return_value=MagicMock()) as remote, patch.object(server.writer_stream,"read_response",side_effect=interrupted):
+            reply=self.request("chat",{"content":"Продолжи династию"})["reply"]
+            self.assertIn("Черновик не создан",reply)
+            self.assertEqual(remote.call_count,1)
+            with closing(server.connect()) as db:
+                self.assertEqual(db.execute("SELECT status FROM chronicle_attempts").fetchone()[0],"failed")
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM chronicle_drafts").fetchone()[0],0)
+            self.assertIn("Полученный фрагмент",self.request("chat",{"content":"Восстановить фрагмент"})["reply"])
+            self.assertIn("Укажите запрос",self.request("chat",{"content":"Поиск сцены"})["reply"])
+            self.assertEqual(remote.call_count,1)
+
     def test_universe_local_panel_and_export(self):
         with patch.object(server,"urlopen") as remote:
             data=self.request("universe/1")
