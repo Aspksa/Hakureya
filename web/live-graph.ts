@@ -42,7 +42,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement){
   if(level===next||replayAt)return;
   level=next;
   const visible=new Set<string>();
-  for(const n of graph.nodes){const major=n.key==="root"||n.key.startsWith("hub:")||n.key.startsWith("canon:")||n.kind==="epoch"||n.kind==="book"||n.kind==="book_segment"||n.kind==="draft"||n.kind==="heart_root"||n.kind==="heart_topic"||n.kind==="shadow_root"||n.kind==="shadow_topic"||n.kind==="guardian_root"||n.kind==="guardian_character"||n.kind==="destiny_root"||n.kind==="destiny_topic"||n.kind==="destiny_character"||n.key===active||recentChapterKeys.has(n.key);
+  for(const n of graph.nodes){const major=n.key==="root"||n.key.startsWith("hub:")||n.key.startsWith("canon:")||n.kind==="epoch"||n.kind==="book"||n.kind==="book_segment"||n.kind==="draft"||n.kind==="heart_root"||n.kind==="heart_topic"||n.kind==="shadow_root"||n.kind==="shadow_topic"||n.kind==="guardian_root"||n.kind==="guardian_character"||n.kind==="destiny_root"||n.kind==="destiny_topic"||n.kind==="destiny_character"||n.kind==="realm"||n.key===active||recentChapterKeys.has(n.key);
    const show=next===2||n.group!==4||major||(next===1&&n.kind==="fictional_chapter");
    if(show)visible.add(n.key);items.get(n.key)?.setAttribute("visibility",show?"visible":"hidden");}
   drawnEdges.forEach((e,i)=>edgeEls[i]?.setAttribute("visibility",visible.has(e.a)&&visible.has(e.b)&&(next===2||e.kind!=="keywords")?"visible":"hidden"));
@@ -63,13 +63,13 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement){
   const dense=graph.nodes.length>800;
   for(const n of graph.nodes){
    const g=el("g",{class:"node","data-key":n.key},dots),col=n.kind.startsWith("destiny_")?"#b8c9e8":n.kind.startsWith("guardian_")?(["#dcf0ff","#a1e7bd","#b5a9e9","#dcc7ff","#ed9772","#f0d496","#eea8cb","#a9d8e4","#fff0d0"][["reika","seirana","mikage","tokihana","akatsuki","shiori","yumeka","meirin","amatsuka"].indexOf(n.guardian_actor)]||"#e4d8ac"):n.kind.startsWith("shadow_")?"#d9c799":n.kind.startsWith("heart_")?"#f2a9c9":colors[n.group+1];items.set(n.key,g);
-   const major=n.key==="root"||n.key.startsWith("hub:")||n.kind==="fictional_chapter"||n.kind==="book"||n.kind==="epoch"||n.kind==="book_segment"||n.kind==="heart_root"||n.kind==="heart_topic"||n.kind==="shadow_root"||n.kind==="shadow_topic"||n.kind==="guardian_root"||n.kind==="guardian_character"||n.kind==="destiny_root"||n.kind==="destiny_topic"||n.kind==="destiny_character";
+   const major=n.key==="root"||n.key.startsWith("hub:")||n.kind==="fictional_chapter"||n.kind==="book"||n.kind==="epoch"||n.kind==="book_segment"||n.kind==="heart_root"||n.kind==="heart_topic"||n.kind==="shadow_root"||n.kind==="shadow_topic"||n.kind==="guardian_root"||n.kind==="guardian_character"||n.kind==="destiny_root"||n.kind==="destiny_topic"||n.kind==="destiny_character"||n.kind==="realm";
    if(births.has(n.key))g.setAttribute("opacity",".08");
    if(!dense||major)el("circle",{r:n.r*6.2,fill:"url(#glow"+(n.group+1)+")"},g);
    if(n.kind==="draft"){el("circle",{r:n.r*2,fill:"none",stroke:col,"stroke-dasharray":"2 2","stroke-width":.8},g)}
    else{el("circle",{r:n.r*.9,fill:col,opacity:.74},g);if(!dense||major)el("circle",{r:n.r*.36,fill:"#fff9eb"},g)}
    if(!dense||major)el("circle",{r:Math.max(4,n.r*2.5),fill:"transparent"},g);
-   if(n.key==="root"||n.key.startsWith("hub:")||n.kind==="epoch"||n.kind==="heart_root"||n.kind==="heart_topic"||n.kind==="shadow_root"||n.kind==="shadow_topic"||n.kind==="guardian_root"||n.kind==="guardian_character"||n.kind==="destiny_root"||n.kind==="destiny_topic"||n.kind==="destiny_character"){
+   if(n.key==="root"||n.key.startsWith("hub:")||n.kind==="epoch"||n.kind==="heart_root"||n.kind==="heart_topic"||n.kind==="shadow_root"||n.kind==="shadow_topic"||n.kind==="guardian_root"||n.kind==="guardian_character"||n.kind==="destiny_root"||n.kind==="destiny_topic"||n.kind==="destiny_character"||n.kind==="realm"){
     el("path",{d:"M-11 0H11M0 -11V11M-5 -5L5 5M-5 5L5 -5",stroke:col,"stroke-width":.55,opacity:.75},g);
     const t=el("text",{x:0,y:14,"text-anchor":"middle",fill:col,class:"label"},g);t.textContent=n.label;
    }
