@@ -96,9 +96,9 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
    await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))");
    assert.equal(await evaluate("document.querySelector('#stage').classList.contains('stellar-cinema')"),false);
    if(width===1920){
-    activity={session:"test",revision:2,active:[{id:"fixture-writer",kind:"chronicle",source:"root",target:"root",stage:"streaming",response_chars:240,chunks:3,sources:["root"],events:[{seq:1,stage:"context",target:"root"},{seq:2,stage:"streaming",target:"root"}]}],recent:[]};
+    activity={session:"test",revision:2,active:[{id:"fixture-writer",kind:"chronicle",source:"root",target:"root",stage:"streaming",response_chars:240,prose_chars:180,chunks:3,sources:["root"],events:[{seq:1,stage:"context",target:"root"},{seq:2,stage:"streaming",target:"root"}]}],recent:[]};
     await waitFor(()=>evaluate("!document.querySelector('.stellar-ledger').hidden && document.querySelector('.stellar-ledger .stellar-current')?.textContent.includes('поступает текст')"));
-    assert.ok(await evaluate("document.querySelector('.stellar-ledger').textContent.includes('240 символов ответа')"));
+    assert.ok(await evaluate("document.querySelector('.stellar-ledger').textContent.includes('180 знаков прозы')"));
     activity={session:"test",revision:3,active:[],recent:[]};
     await waitFor(()=>evaluate("document.querySelector('.stellar-ledger').hidden"));
    }
