@@ -71,5 +71,7 @@ class ImmortalTest(unittest.TestCase):
         self.db.executemany("INSERT INTO omega_index VALUES(?,'future','Synthetic','Text','fixture',NULL)",((n,) for n in range(14,100001)))
         with patch.object(s,"read",return_value="Художественная глава 999. Text\n\nText"):
             g=im.volume_graph(self.db,8000)
-        self.assertEqual(len(g["records"]),13)
+        self.assertEqual(sum(x["kind"]=="fictional_chapter" for x in g["records"]),12)
+        self.assertEqual(sum(x["kind"]=="lit_brain" for x in g["records"]),10)
+        self.assertEqual(len(g["records"]),24)
         self.assertTrue(all(x["group"]==4 for x in g["records"]))
