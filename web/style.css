@@ -27,3 +27,7 @@
 #book-volume{opacity:.48}
 #book-status{font:11px system-ui,sans-serif;color:#e0b59d;min-height:1em}
 @media(max-width:600px){#chat.reading{padding:14px 18px 18px;z-index:5}#book-page{padding-top:10px}#book-toolbar{gap:4px}}
+#config select{width:100%;min-width:0;background:#090909;color:inherit;font:inherit;border:1px solid #534343;padding:8px}
+#config select:focus-visible{outline:1px solid #ec849f;outline-offset:3px}
+#config #load-models{align-self:flex-start;border:1px solid #534343;padding:6px 8px}
+#config button:disabled{opacity:.55;cursor:default}

@@ -18,14 +18,27 @@ def selected(db):
 def choose(db,model):
     db.execute("INSERT OR REPLACE INTO cloud_writer VALUES(1,?)",(model,))
 
-def list_models(key,opener):
-    req=Request(MODELS_URL,headers={"Authorization":"Bearer "+key,"Accept":"application/json"})
+def list_models(key,opener,*,chat_only=False):
+    req=Request(MODELS_URL,headers={"Accept":"application/json"})
+    if key:
+        req.add_unredirected_header("Authorization","Bearer "+key)
     with opener(req,timeout=15) as response:
         raw=response.read(2_000_001)
     if len(raw)>2_000_000:raise ValueError("large model list")
     data=json.loads(raw)["data"]
     if not isinstance(data,list):raise ValueError("bad model list")
-    return sorted({x["id"] for x in data if isinstance(x,dict) and isinstance(x.get("id"),str) and 0<len(x["id"])<=200 and all(32<=ord(c)<127 for c in x["id"])})
+    ids=set()
+    for entry in data:
+        if not isinstance(entry,dict):
+            continue
+        model=entry.get("id")
+        if not isinstance(model,str) or not 0<len(model)<=200 or not all(32<=ord(c)<127 for c in model):
+            continue
+        metadata=entry.get("metadata")
+        if chat_only and isinstance(metadata,dict) and metadata.get("type") not in (None,"llm","image+text-to-text"):
+            continue
+        ids.add(model)
+    return sorted(ids)
 
 def match(ids,requested):
     exact=[x for x in ids if x.casefold()==requested.casefold()]
