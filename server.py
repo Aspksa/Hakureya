@@ -22,6 +22,7 @@ import soul_living
 import cloud_writer
 import cloud_vault
 import writer_stream
+import writer_preview
 import writer_volume
 import soul_evolution
 import soul_immortal
@@ -246,8 +247,11 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
         payload={"model":model,"messages":soul_chronicle.prompt(reservation,traits,previous,plan),"max_tokens":cloud_writer.LIMIT,"stream":True,"stream_options":{"include_usage":True}}
         req=Request(API,data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
         graph_activity.update(activity,"waiting")
-        with urlopen(req,timeout=60) as res:
-            result=writer_stream.read_response(res,lambda chars,chunks:graph_activity.progress(activity,chars,chunks))
+        try:
+            with urlopen(req,timeout=60) as res:
+                result=writer_stream.read_response(res,lambda chars,chunks:graph_activity.progress(activity,chars,chunks),lambda raw:writer_preview.push(activity,raw))
+        finally:
+            writer_preview.clear(activity)
         graph_activity.update(activity,"received","hub:4")
         graph_activity.update(activity,"validating","hub:4")
         with LOCK, closing(connect()) as db, db:
@@ -755,6 +759,8 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == "/api/writer":
             with LOCK, closing(connect()) as db:
                 return self.respond(writer_status(db))
+        if self.path == "/api/writer/preview":
+            return self.respond(writer_preview.snapshot())
         if self.path == "/api/activity":
             return self.respond(graph_activity.snapshot())
         if self.path == "/api/chronicle":
