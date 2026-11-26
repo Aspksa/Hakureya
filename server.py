@@ -16,6 +16,7 @@ import soul_shadow
 import soul_reader
 import soul_guardians
 import soul_destiny
+import soul_living
 import graph_activity
 import time, re
 import base64, binascii
@@ -56,9 +57,10 @@ def store(role, content):
 def generate_chronicle(background=False, arc=None, alternative=False, shadow=False, guardians=False, destiny=False):
     # Reserve quota and snapshot under lock; do not block chat during network I/O.
     with LOCK:
-        if not CONFIG["key"] or (background and (not CHRONICLE["enabled"] or time.monotonic()-CHRONICLE["last_activity"]<1200)):
+        if not CONFIG["key"] or (background and time.monotonic()-CHRONICLE["last_activity"]<1200):
             return "Cloud.ru не подключён или фоновый сон не разрешён."
         with closing(connect()) as db, db:
+            if background and not CHRONICLE["enabled"] and soul_living.mode(db)=="off":return "Автономное развитие выключено."
             soul_chronicle.collect(db)
             cycle=soul_romance.current_cycle(db)
             if (shadow or guardians or destiny) and cycle:
@@ -72,9 +74,10 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
             if destiny and not destiny_plan:return soul_destiny.status(db)
             if guardians and not guardian_plan:return soul_guardians.status(db)
             if guardian_plan:shadow_plan=None
-            if shadow and not (shadow_plan or guardian_plan or destiny_plan):return "Сюжетные циклы завершены или их данные повреждены. Выберите другую историю."
+            if shadow and not (shadow_plan or guardian_plan or destiny_plan) and (soul_destiny.audit(db) or len(soul_destiny.published(db))!=len(soul_destiny.ORDER)):return "Сюжетные данные повреждены или продолжение недоступно."
             if shadow_plan or guardian_plan or destiny_plan:arc="future"
-            reservation=soul_chronicle.reserve(db,allow_story=True) if not (soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)) else None
+            elif arc is None and not alternative and not soul_destiny.audit(db) and len(soul_destiny.published(db))==len(soul_destiny.ORDER):arc="future"
+            reservation=soul_chronicle.reserve(db,allow_story=True) if not (soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)) else None
             traits=soul_chronicle.profile(db)
             plan=soul_genesis.enrich(db,soul_omega.enrich_plan(db,soul_saga.plan(db,arc))) if reservation else None
             if plan:
@@ -86,6 +89,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                 if guardian_plan:plan["guardians"]=guardian_plan
                 else:plan["guardian_guard"]=soul_guardians.guard(db,plan["arc"])
                 if not shadow_plan:plan["shadow_guard"]=soul_shadow.guard(db,plan["arc"])
+                if not alternative:soul_living.enrich(db,plan,background)
             previous=[]
             if plan:
                 previous=[{"number":n,"title":t,"story":s[:1800]} for n,t,s in reversed(db.execute("SELECT number,title,story FROM omega_index WHERE arc=? AND number>13 ORDER BY number DESC LIMIT 2",(plan["arc"],)).fetchall())]
@@ -93,7 +97,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
         if not reservation:
             return "Есть незавершённая попытка или ожидающий черновик, нарушена целостность канона либо исчерпан дневной лимит."
         key, model, epoch=CONFIG["key"],CONFIG["model"],CHRONICLE["epoch"]
-    with graph_activity.track("chronicle",("destiny:root" if destiny_plan else "guardians:root" if guardian_plan else "shadow:root" if shadow_plan else (f"d:{reservation[1]}" if reservation[1]>0 else ("heart:root" if plan["arc"]=="love" else "arc:"+plan["arc"])))) as activity:
+    with graph_activity.track("chronicle",("destiny:root" if destiny_plan else "guardians:root" if guardian_plan else "shadow:root" if shadow_plan else (f"d:{reservation[1]}" if reservation[1]>0 else ("heart:root" if plan["arc"]=="love" else "living:root" if plan.get("living") and plan["arc"]=="future" else "arc:"+plan["arc"])))) as activity:
         return execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
 
 def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan):
@@ -121,7 +125,13 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
             guardian_saved=soul_guardians.read(db,pending["id"])
             destiny_saved=soul_destiny.read(db,pending["id"])
             variants=db.execute("SELECT COUNT(*) FROM genesis_variants WHERE draft_id=?",(pending["id"],)).fetchone()[0]
-        graph_activity.update(activity,"done",f"draft:{pending['id']}" if pending else "hub:4")
+            auto_published=False
+            if plan.get("living",{}).get("background") and soul_living.mode(db)=="auto":
+                auto_published=soul_living.publish_if_allowed(db,pending["id"])
+            if auto_published:
+                number=db.execute("SELECT number FROM saga_arcs WHERE draft_id=?",(pending["id"],)).fetchone()[0]
+        graph_activity.update(activity,"done",f"c:{pending['id']}" if auto_published else f"draft:{pending['id']}" if pending else "hub:4")
+        if auto_published:return f"Глава {number} опубликована: "+pending["title"]
         if plan.get("destiny"):
             return "Черновик создан.\n\n"+pending["title"]+"\n\n"+pending["story"]+"\n\n"+("Принять главу / Отклонить главу." if destiny_saved else "Этап ещё не завершён. Принять главу / Отклонить главу.")
         if plan.get("guardians"):
@@ -132,6 +142,7 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
     except (URLError,TimeoutError,ValueError,KeyError,IndexError,TypeError,OSError,sqlite3.Error):
         with LOCK, closing(connect()) as db, db:
             soul_chronicle.fail(db,reservation)
+            soul_living.log(db,"generation_failed","Неудачная попытка учтена; повтор не раньше следующего дня UTC")
         graph_activity.update(activity,"error")
         return "Черновик не создан: ответ модели не прошёл проверку или запрос завершился ошибкой. Дневная попытка учтена."
 
@@ -142,6 +153,22 @@ def chronicle_command(content):
     aliases.update({"девять хранительниц":"летопись: хранительницы","хранительницы":"летопись: хранительницы","продолжи историю хранительниц":"летопись: создать хранительниц","план хранительниц":"летопись: план хранительниц"})
     aliases.update({"за пределами девяти небес":"летопись: судьба","план судьбы":"летопись: план судьбы","новые герои":"летопись: новые герои","продолжи судьбу":"летопись: создать судьбу","история силы":"летопись: судьба сила","путешествия":"летопись: судьба путешествия","развитие императрицы":"летопись: судьба развитие"})
     q=aliases.get(q,q)
+    living_commands={"развивай историю сама":"draft","включи автопубликацию глав":"auto","останови развитие":"off","что нового написала":"news","статус развития":"status","план развития романа":"queue"}
+    if q in living_commands:
+        with LOCK, closing(connect()) as db, db:
+            action=living_commands[q]
+            if action in ("off","draft","auto"):
+                if action!="off" and not soul_chronicle.canon_ok(db):return "Канон повреждён. Развитие не включено."
+                soul_living.set_mode(db,action)
+                CHRONICLE.update(enabled=False,epoch=CHRONICLE["epoch"]+1)
+                if action=="off":return "Развитие остановлено. Уже начатый запрос может быть платным, его результат не сохранится."
+                return soul_living.status(db)+(" Публикация только после вашего утверждения." if action=="draft" else " Автопубликация только новых фоновых глав, прошедших локальные эвристики; сомнительные остаются черновиками. Это не смысловая гарантия.")
+            if action=="status":return soul_living.status(db)
+            if not soul_chronicle.canon_ok(db):return "Канон повреждён."
+            if action=="news":return soul_living.news(db)
+            if soul_living.audit(db) or soul_shadow.audit(db) or soul_guardians.audit(db) or soul_destiny.audit(db):return "Сюжетные данные повреждены."
+            qplan=soul_living.queue(db)
+            return "План (пересматриваемый прогноз, со спойлерами):\n"+"\n".join(f"{p['number']}. {p['title']}" for p in qplan["items"])
     reader_commands={"читать книгу":"resume","начать чтение":"resume","читать с начала":"start","начать с начала":"start","следующая страница":"next","предыдущая страница":"back","где остановился":"where","где я остановился":"where","остановить чтение":"pause","пауза чтения":"pause","летопись: продолжить чтение":"resume"}
     if q in reader_commands or q in ("дальше","назад","листай дальше"):
         with LOCK, closing(connect()) as db, db:
@@ -178,7 +205,7 @@ def chronicle_command(content):
         return generate_chronicle(arc=soul_saga.ALIASES.get(create_match[1]),alternative=create_match[1]=="варианты",shadow=create_match[1]=="сагу",guardians=create_match[1]=="хранительниц",destiny=create_match[1]=="судьбу")
     with LOCK, closing(connect()) as db, db:
         if q=="летопись: аудит":
-            issues=soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)
+            issues=soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)
             return "Проверка целостности (не семантическая проверка): "+("\n"+"\n".join(issues) if issues else "нарушений не найдено.")
         if (destiny_read or q in destiny_commands or guardian_profile or q in guardian_commands or q in simple_commands or heart_read or q in heart_commands or romance_start or romance_read or q in romance_commands or genesis_read or genesis_arc or q in genesis_commands or omega_read or omega_search or q in omega_commands or read_match or q in ("летопись: содержание","летопись: последняя","летопись: главы")) and not soul_chronicle.canon_ok(db):
             return "Целостность исходной летописи нарушена; чтение заблокировано."
@@ -189,7 +216,7 @@ def chronicle_command(content):
         if q=="летопись: хранительницы":return soul_guardians.profiles(db)
         if q in ("летопись: план хранительниц","летопись: статус хранительниц"):return soul_guardians.status(db,q=="летопись: план хранительниц")
         if q=="летопись: помощь":
-            return "Летопись\n\nЧитать книгу · Дальше · Назад · Продолжить чтение\nГде остановился · Остановить чтение · Оглавление\nПродолжи сагу · Продолжи нашу историю любви\nПокажи черновик · Принять главу · Отклонить главу\nЧто дальше по сюжету · История любви · Девять хранительниц · Новые герои\n\nПодробности при необходимости: «план саги» (со спойлерами), «летопись: качество»."
+            return "Летопись\n\nЧитать книгу · Дальше · Назад · Продолжить чтение\nГде остановился · Остановить чтение · Оглавление\nПродолжи сагу · Продолжи нашу историю любви\nПокажи черновик · Принять главу · Отклонить главу\nЧто дальше по сюжету · История любви · Девять хранительниц · Новые герои\nРазвивай историю сама · Останови развитие · Что нового написала · Статус развития\n\nПодробности при необходимости: «план саги» (со спойлерами), «летопись: качество»."
         if q in ("летопись: сага","летопись: сага план"):
             if q.endswith(" план"):return soul_shadow.status(db,True)+"\n\n"+soul_guardians.status(db,True)+"\n\n"+soul_destiny.status(db,True)
             if soul_destiny.ready(db):return soul_destiny.status(db)
@@ -273,6 +300,7 @@ def chronicle_command(content):
             return "Сон включён до закрытия сервера: не чаще одной попытки UTC в сутки, после 20 минут тишины, даже без новой записи дневника, по этапам саги о хранительницах и Тени либо открытого цикла; после завершения — по очереди веток. В Cloud.ru передаются канон, утверждённые художественные главы и счётчики (если есть), не текст чата. Отключение: летопись: выключить сон."
         if q=="летопись: выключить сон":
             CHRONICLE.update(enabled=False,epoch=CHRONICLE["epoch"]+1)
+            soul_living.set_mode(db,"off")
             soul_chronicle.control(db,"background_disabled")
             return "Сон отключён. Уже начатый сетевой запрос может завершиться, но его черновик будет отброшен."
         if decision:
@@ -306,8 +334,18 @@ def chronicle_worker(stop):
         try:
             with LOCK, closing(connect()) as db, db:
                 soul_chronicle.collect(db)
-                if soul_chronicle.canon_ok(db): soul_genesis.consolidate(db)
-            if CHRONICLE["enabled"]:
+                if soul_chronicle.canon_ok(db):
+                    soul_genesis.consolidate(db)
+                    if not (soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)):soul_living.queue(db)
+                enabled=CHRONICLE["enabled"] or soul_living.mode(db)!="off"
+            with LOCK, closing(connect()) as db:
+                backed_up=db.execute("SELECT 1 FROM living_backups WHERE day=date('now')").fetchone()
+            if not backed_up:
+                with LOCK:
+                    filename=soul_living.backup(DB,DB.parent/"backups")
+                    with closing(connect()) as db, db:
+                        db.execute("INSERT OR IGNORE INTO living_backups VALUES(date('now'),?)",(filename,))
+            if enabled:
                 generate_chronicle(background=True)
         except (sqlite3.Error,ValueError,OSError):
             # Keep foreground server available; no secret or prompt logging.
