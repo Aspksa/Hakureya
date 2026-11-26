@@ -182,7 +182,7 @@ def eligible(db,did):
         if k in p["required"] and not mod.read(db,did):return False
     import soul_immortal
     im=soul_immortal.read(db,did)
-    if im and (im["quality"]["warnings"] or (im["step"] is None and soul_immortal.ready(db) and sum(p["step"] is not None for _,_,p in soul_immortal.published(db))<len(soul_immortal.ORDER))):return False
+    if im and (im["quality"]["warnings"] or (im.get("required") and im["step"] is None)):return False
     m=o.metadata(db,did);review=r.report(db,did)
     return bool(m and review and m["score"]>=85 and not m["warnings"] and review["originality_heuristic"]>=80 and not review["warnings"] and review["words"]>=350)
 
