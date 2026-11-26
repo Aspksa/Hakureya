@@ -13,6 +13,7 @@ let busy=false;
 $("replay").onclick=()=>{selectedVolume=null;void refreshGraph().then(()=>live?.replay())};$("reset").onclick=()=>{selectedVolume=null;void refreshGraph().then(()=>live?.replay());$("menu").hidden=true};
 let graphRequest=0;
 async function refreshGraph(){const id=++graphRequest;try{const data=await api(selectedVolume===null?"graph":"graph/volume/"+selectedVolume);if(id===graphRequest)ensureGraph()?.render(data)}catch(e){console.error("Hakureya graph refresh",e);if(id===graphRequest)$("info").textContent="Область недоступна · ↻ для общей карты"}}
+let writerPollBusy=false,previewPollBusy=false;
 let activityBusy=false,activityRevision="",activityTimer=0,activityActive=false,activityGraphSignature="";
 async function refreshActivity(){
  if(document.hidden||activityBusy)return;
@@ -22,8 +23,8 @@ async function refreshActivity(){
   let data;try{const response=await fetch("/api/activity",{cache:"no-store",signal:controller.signal});if(!response.ok)throw Error("activity");data=await response.json()}finally{clearTimeout(timeout)}
   if(document.hidden)return;
   activityActive=data.active.length>0;
-  if(writerDialog.open&&writerPreviewOpt.checked){const session=writerSession;void api("writer/preview").then(st=>{if(session===writerSession&&writerDialog.open&&writerPreviewOpt.checked){writerPreviewText.textContent=st.active?(st.story||"Ожидание художественного текста…"):"Нет поступающего текста";writerPreviewText.scrollTop=writerPreviewText.scrollHeight}}).catch(()=>{})}
-  if(writerDialog.open){const session=writerSession;void api("writer").then(st=>{if(session===writerSession&&writerDialog.open&&!writerSave.disabled)renderWriter(st)}).catch(()=>{})}
+  if(writerDialog.open&&writerPreviewOpt.checked&&!previewPollBusy){previewPollBusy=true;const session=writerSession;void api("writer/preview").then(st=>{if(session===writerSession&&writerDialog.open&&writerPreviewOpt.checked){writerPreviewText.textContent=st.active?(st.story||"Ожидание художественного текста…"):(st.story?"Последний полученный фрагмент (не утверждён):\n"+st.story:"Нет поступающего текста");writerPreviewText.scrollTop=writerPreviewText.scrollHeight}}).catch(()=>{}).finally(()=>{previewPollBusy=false})}
+  if(writerDialog.open&&!writerPollBusy){writerPollBusy=true;const session=writerSession;void api("writer").then(st=>{if(session===writerSession&&writerDialog.open&&!writerSave.disabled)renderWriter(st)}).catch(()=>{}).finally(()=>{writerPollBusy=false})}
   live?.setActivity(data);
   const revision=data.session+":"+data.revision;
   if(revision!==activityRevision){activityRevision=revision;const signature=JSON.stringify([data.session,data.active.map((a:any)=>[a.id,a.stage,a.target]),data.recent.map((a:any)=>[a.id,a.stage,a.target])]);if(signature!==activityGraphSignature){activityGraphSignature=signature;if(!activityActive||selectedVolume===null)void refreshGraph()}}
@@ -135,7 +136,7 @@ async function renderUniverse(){
   }
  }catch(e){if(serial===universeSerial)$("universe-summary").textContent=String(e)}
 }
-function universeCommand(value:string){if(prompt.value.trim()&&prompt.value!==value&&!window.confirm("Заменить текущий текст?"))return;universeDialog.close();toggle(true);prompt.value=value;prompt.focus()}
+function universeCommand(value:string){if(busy)return;if(prompt.value.trim()&&prompt.value!==value&&!window.confirm("Заменить текущий текст?"))return;universeDialog.close();toggle(true);prompt.value=value;prompt.focus();if(!value.endsWith(" ")){const form=$("composer") as HTMLFormElement;form.requestSubmit()}}
 $("universe-open").onclick=()=>{menu.hidden=true;universePage=1;universeDialog.showModal();void renderUniverse()};
 $("universe-close").onclick=()=>{universeSerial++;universeDialog.close()};
 $("universe-prev").onclick=()=>{if(universePage>1){universePage--;void renderUniverse()}};
@@ -353,7 +354,7 @@ $("book-smaller").onclick=()=>{font=Math.max(16,font-1);readerStyle()};
 $("book-larger").onclick=()=>{font=Math.min(32,font+1);readerStyle()};
 $("book-spacing").onclick=()=>{spacing=spacing>=2.15?1.5:Math.min(2.2,Math.round((spacing+.15)*100)/100);readerStyle()};
 $("book-focus").onclick=()=>{focused=!focused;chat.classList.toggle("book-focus",focused);syncGraphViewport();scheduleReflow();$("book-focus").setAttribute("aria-pressed",String(focused))};
-document.addEventListener("keydown",e=>{if(book.hidden||chat.hidden||config.open||e.altKey||e.ctrlKey||e.metaKey||e.shiftKey||e.repeat||window.getSelection()?.toString())return;if(e.target instanceof HTMLInputElement||e.target instanceof HTMLTextAreaElement||e.target instanceof HTMLButtonElement)return;if(e.key==="ArrowRight"||e.key==="ArrowLeft"){e.preventDefault();void turn(e.key==="ArrowRight"?"next":"back")}});
+document.addEventListener("keydown",e=>{if(book.hidden||chat.hidden||config.open||writerDialog.open||commandDialog.open||universeDialog.open||note.open||e.altKey||e.ctrlKey||e.metaKey||e.shiftKey||e.repeat||window.getSelection()?.toString())return;if(e.target instanceof HTMLInputElement||e.target instanceof HTMLTextAreaElement||e.target instanceof HTMLButtonElement)return;if(e.key==="ArrowRight"||e.key==="ArrowLeft"){e.preventDefault();void turn(e.key==="ArrowRight"?"next":"back")}});
 let touch:{x:number,y:number}|null=null;
 scroll.addEventListener("touchstart",e=>{touch=e.touches.length===1?{x:e.touches[0].clientX,y:e.touches[0].clientY}:null},{passive:true});
 scroll.addEventListener("touchcancel",()=>{touch=null},{passive:true});

@@ -5,6 +5,7 @@ from time import monotonic
 
 LOCK=Lock()
 ACTIVE={}
+LAST=None
 LIMIT=24000
 
 def story_prefix(raw):
@@ -60,12 +61,19 @@ def push(key,raw):
     with LOCK:
         ACTIVE[key]=(monotonic(),prose)
 
+def fragment(key):
+    with LOCK:
+        return ACTIVE.get(key,(0,""))[1]
+
 def clear(key):
-    with LOCK:ACTIVE.pop(key,None)
+    global LAST
+    with LOCK:
+        item=ACTIVE.pop(key,None)
+        if item and item[1]:LAST=(monotonic(),item[1])
 
 def snapshot():
     with LOCK:
-        if not ACTIVE:return {"active":False,"story":""}
+        if not ACTIVE:return {"active":False,"story":LAST[1] if LAST and monotonic()-LAST[0]<120 else ""}
         _,(when,story)=max(ACTIVE.items(),key=lambda x:x[1][0])
         if monotonic()-when>120:return {"active":False,"story":""}
         return {"active":True,"story":story}

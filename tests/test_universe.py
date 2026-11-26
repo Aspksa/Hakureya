@@ -81,3 +81,53 @@ class UniverseTests(unittest.TestCase):
         self.assertEqual(writer_preview.snapshot()["story"],"сцена")
         writer_preview.clear("t")
         self.assertFalse(writer_preview.snapshot()["active"])
+
+    def test_missing_term_and_corrupt_publication_recovery(self):
+        u.refresh(self.db)
+        self.db.execute("DELETE FROM universe_terms WHERE chapter=5 AND seq=1")
+        self.assertIn("Поисковый индекс повреждён",u.report(self.db,"audit"))
+        u.report(self.db,"repair")
+        self.assertIn("подтверждена",u.report(self.db,"audit"))
+        before=self.db.execute("SELECT story FROM omega_index WHERE number=5").fetchone()[0]
+        self.db.execute("UPDATE omega_index SET story='not canon' WHERE number=5")
+        with self.assertRaises(ValueError):u.refresh(self.db)
+        self.assertIn("повреждён",u.report(self.db,"audit"))
+        u.report(self.db,"repair")
+        self.assertEqual(self.db.execute("SELECT story FROM omega_index WHERE number=5").fetchone()[0],before)
+        self.db.execute("DELETE FROM omega_index WHERE number=6")
+        self.assertIn("неполон",u.report(self.db,"audit"))
+        u.report(self.db,"repair")
+        self.assertIn("подтверждена",u.report(self.db,"audit"))
+
+    def test_relevant_excerpt_and_partial_recovery(self):
+        story="Начало главы. "*100+"\n\nМаюри увидела человека впервые."
+        snippet=u.focused_excerpt(story,"Маюри человек")
+        self.assertIn("Маюри",snippet)
+        self.assertIn(snippet,story)
+        u.save_fragment(self.db,"2026-01-01","Неоконченная сцена","interrupted")
+        self.assertIn("Неоконченная сцена",u.fragment_text(self.db))
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM chronicle_drafts").fetchone()[0],0)
+
+    def test_old_bookmark_recovery(self):
+        import soul_reader as r
+        r.display(self.db,5,0)
+        self.db.execute("UPDATE book_reader SET source_hash='old-edition'")
+        self.assertIn("Издание обновилось",r.move(self.db,"resume"))
+        self.assertEqual(r.document(self.db)["chapter"],5)
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM reader_migrations").fetchone()[0],1)
+
+    def test_inline_export(self):
+        self.assertEqual(soul_export.inline_html("**Свет** и *снег* & лёд"),"<strong>Свет</strong> и <em>снег</em> &amp; лёд")
+
+    def test_preview_retained_without_claim_of_publication(self):
+        writer_preview.push("fragment-test",'{"story":"Новая сцена')
+        writer_preview.clear("fragment-test")
+        st=writer_preview.snapshot()
+        self.assertFalse(st["active"])
+        self.assertEqual(st["story"],"Новая сцена")
+
+    def test_writer_cooldown(self):
+        self.assertEqual(writer_volume.cooldown(self.db,1800),0)
+        reservation=c.reserve(self.db,allow_story=True)
+        self.assertIsNotNone(reservation)
+        self.assertGreater(writer_volume.cooldown(self.db,1800),1700)

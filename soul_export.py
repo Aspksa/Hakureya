@@ -10,13 +10,19 @@ MAX_CHARS=15_000_000
 
 def chapters(db):
     if not c.canon_ok(db):raise ValueError("canon integrity")
-    numbers=[n for n, in db.execute("SELECT number FROM omega_index ORDER BY number")]
-    total=0
+    import soul_novel
+    numbers=list(range(1,14))+[n for n, in db.execute("SELECT a.number FROM saga_arcs a JOIN chronicle_drafts d ON a.draft_id=d.id WHERE a.number IS NOT NULL AND d.status='approved' ORDER BY a.number")]
+    total=0;seen=set()
     for n in numbers:
-        source=reader.source(db,n)
-        total+=len(source["body"])
+        if n in seen:continue
+        group=soul_novel.group_for(db,n)
+        nums=[r["number"] for r in group] if group else [n]
+        sources=[reader.source(db,k) for k in nums]
+        body="\n\n".join(s["body"] for s in sources)
+        total+=len(body)
         if total>MAX_CHARS:raise ValueError("export too large")
-        yield n,source["title"],source["body"]
+        seen.update(nums)
+        yield nums[0],sources[0]["title"],body
 
 def paragraphs(body):
     for line in body.splitlines():
@@ -27,12 +33,23 @@ def paragraphs(body):
         elif line=="---":yield "separator","⁂"
         else:yield "text",line
 
+def inline_parts(text):
+    pattern=r"(\*\*[^*\n]+\*\*|(?<!\*)\*[^*\n]+\*(?!\*))"
+    for part in re.split(pattern,text):
+        if part.startswith("**") and part.endswith("**") and len(part)>4:yield "bold",part[2:-2]
+        elif part.startswith("*") and part.endswith("*") and len(part)>2:yield "italic",part[1:-1]
+        elif part:yield "",part
+
+def inline_html(text):
+    tags={"bold":"strong","italic":"em"}
+    return "".join(f"<{tags[k]}>{escape(v)}</{tags[k]}>" if k else escape(v) for k,v in inline_parts(text))
+
 def html_section(n,title,body):
     out=[f'<section id="ch{n}"><h1>{n}. {escape(title)}</h1>']
     for kind,line in paragraphs(body):
         if not line:continue
         tag="h2" if kind=="heading" else "p"
-        out.append(f'<{tag} class="{kind}">{escape(line)}</{tag}>')
+        out.append(f'<{tag} class="{kind}">{inline_html(line)}</{tag}>')
     out.append("</section>")
     return "\n".join(out)
 
@@ -68,7 +85,8 @@ def epub(rows):
 def docx(rows):
     def p(value,style="",page=False):
         props=('<w:pStyle w:val="'+style+'"/>' if style else '')+('<w:pageBreakBefore/>' if page else '')
-        return '<w:p>'+('<w:pPr>'+props+'</w:pPr>' if props else '')+'<w:r><w:t xml:space="preserve">'+escape(value)+'</w:t></w:r></w:p>'
+        runs="".join('<w:r>'+('<w:rPr><w:b/></w:rPr>' if k=="bold" else '<w:rPr><w:i/></w:rPr>' if k=="italic" else '')+'<w:t xml:space="preserve">'+escape(v)+'</w:t></w:r>' for k,v in inline_parts(value))
+        return '<w:p>'+('<w:pPr>'+props+'</w:pPr>' if props else '')+runs+'</w:p>'
     out=[p("HAKUREYA","Title"),p("Летопись Белоснежной Императрицы")]
     for n,title,body in rows:
         out.append(p(f"{n}. {title}","Heading1",True))

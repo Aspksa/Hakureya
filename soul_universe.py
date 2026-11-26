@@ -10,8 +10,9 @@ import soul_evolution as ev
 import soul_dynasty as dy
 import soul_intelligence as li
 
-VERSION=1
+VERSION=2
 SCENE_LIMIT=2200
+MAX_CONTEXT_BYTES=128_000
 # Additional scene directions attached to existing milestones, not a second saga.
 DYNASTY_LENSES={
 11: "Раскрой жизнь Маюри до обвинения, её собственную цель, последнюю ночь в темнице. Не завершай приговор до подтверждающего события.",
@@ -56,7 +57,64 @@ def init(db):
     db.execute("""CREATE TABLE IF NOT EXISTS universe_settings(
         id INTEGER PRIMARY KEY CHECK(id=1), chapter_pages INTEGER NOT NULL)""")
     db.execute("INSERT OR IGNORE INTO universe_settings VALUES(1,0)")
+    db.execute("""CREATE TABLE IF NOT EXISTS universe_fragments(attempt TEXT PRIMARY KEY,body TEXT NOT NULL,reason TEXT NOT NULL,checksum TEXT NOT NULL)""")
     db.execute("CREATE INDEX IF NOT EXISTS universe_terms_chapter ON universe_terms(chapter,seq)")
+    fresh=not db.execute("SELECT 1 FROM sqlite_master WHERE name='universe_dirty'").fetchone()
+    db.execute("CREATE TABLE IF NOT EXISTS universe_dirty(chapter INTEGER PRIMARY KEY)")
+    if fresh:db.execute("INSERT OR IGNORE INTO universe_dirty SELECT number FROM omega_index")
+    for action,ref in (("INSERT","NEW"),("UPDATE","NEW"),("DELETE","OLD")):
+        db.execute(f"""CREATE TRIGGER IF NOT EXISTS universe_dirty_{action.lower()} AFTER {action} ON omega_index
+            BEGIN INSERT OR IGNORE INTO universe_dirty VALUES({ref}.number); END""")
+    db.execute("""CREATE TRIGGER IF NOT EXISTS universe_dirty_renumber AFTER UPDATE OF number ON omega_index
+        BEGIN INSERT OR IGNORE INTO universe_dirty VALUES(OLD.number); END""")
+
+def verified_source(db,n,arc,title,story,checksum,did):
+    import soul_chronicle as ch
+    import soul_saga
+    import soul_lore
+    if not ch.canon_ok(db):raise ValueError("canon integrity")
+    if n<=13:
+        _,expected_title,expected_story=soul_saga.canonical_chapters()[n-1]
+        expected_arc="past" if n<=4 else "meeting" if n<=8 else "love" if n<=11 else "future"
+        if (arc,title,story,checksum,did)!=(expected_arc,expected_title,expected_story,soul_lore.metadata()["sha256"],None):
+            raise ValueError("canonical index mismatch")
+    else:
+        row=db.execute("""SELECT a.arc,d.payload,d.checksum,d.id FROM saga_arcs a JOIN chronicle_drafts d ON a.draft_id=d.id
+            WHERE a.number=? AND d.status='approved'""",(n,)).fetchone()
+        if not row:raise ValueError("publication missing")
+        p=ch.unpack(row[1],row[2])
+        if (arc,title,story,checksum,did)!=(row[0],p["title"],p["story"],row[2],row[3]):
+            raise ValueError("published index mismatch")
+
+def rebuild_publication_index(db):
+    import soul_chronicle as ch
+    import soul_saga
+    import soul_lore
+    if not ch.canon_ok(db):raise ValueError("canon integrity")
+    canon=soul_saga.canonical_chapters()
+    if len(canon)!=13:raise ValueError("canon incomplete")
+    digest=soul_lore.metadata()["sha256"]
+    expected=[(n,"past" if n<=4 else "meeting" if n<=8 else "love" if n<=11 else "future",title,story,digest,None) for n,title,story in canon]
+    for n,arc,did,raw,h in db.execute("""SELECT a.number,a.arc,d.id,d.payload,d.checksum FROM saga_arcs a
+         JOIN chronicle_drafts d ON a.draft_id=d.id WHERE d.status='approved' AND a.number IS NOT NULL ORDER BY a.number"""):
+        p=ch.unpack(raw,h)
+        if n!=len(expected)+1 or arc not in o.ARCS:raise ValueError("publication order")
+        expected.append((n,arc,p["title"],p["story"],h,did))
+    db.execute("SAVEPOINT universe_repair")
+    try:
+        db.execute("DELETE FROM omega_index")
+        db.executemany("INSERT INTO omega_index VALUES(?,?,?,?,?,?)",expected)
+        result=refresh(db,True)
+        db.execute("RELEASE universe_repair")
+        return result
+    except BaseException:
+        db.execute("ROLLBACK TO universe_repair");db.execute("RELEASE universe_repair")
+        raise
+
+def term_weights(body,heading,title):
+    raw=body+" "+heading+" "+title
+    allowed=o.tokens(raw)
+    return Counter(t for t in o.WORD.findall(o.normalized(raw)) if t in allowed)
 
 def chapter_pages(db):
     return db.execute("SELECT chapter_pages FROM universe_settings WHERE id=1").fetchone()[0]
@@ -86,7 +144,10 @@ def split(story):
 
 def refresh(db,force=False):
     changed=0
-    for n,title,story,source in db.execute("SELECT number,title,story,checksum FROM omega_index ORDER BY number"):
+    where="" if force else " WHERE number IN (SELECT chapter FROM universe_dirty) OR number NOT IN (SELECT chapter FROM universe_sources)"
+    rows=db.execute("SELECT number,arc,title,story,checksum,draft_id FROM omega_index"+where+" ORDER BY number").fetchall()
+    for n,arc,title,story,source,did in rows:
+        verified_source(db,n,arc,title,story,source,did)
         digest=o.digest(o.dump([VERSION,title,story,source]))
         old=db.execute("SELECT digest FROM universe_sources WHERE chapter=?",(n,)).fetchone()
         if not force and old==(digest,):continue
@@ -94,13 +155,13 @@ def refresh(db,force=False):
         db.execute("DELETE FROM universe_scenes WHERE chapter=?",(n,))
         for seq,(a,b,heading,body) in enumerate(split(story),1):
             db.execute("INSERT INTO universe_scenes VALUES(?,?,?,?,?,?)",(n,seq,a,b,heading or title,body))
-            allowed=o.tokens(body+" "+heading+" "+title)
-            terms=Counter(t for t in o.WORD.findall(o.normalized(body+" "+heading+" "+title)) if t in allowed)
+            terms=term_weights(body,heading,title)
             db.executemany("INSERT INTO universe_terms VALUES(?,?,?,?)",[(t,n,seq,w) for t,w in terms.items()])
         db.execute("INSERT OR REPLACE INTO universe_sources VALUES(?,?)",(n,digest))
         changed+=1
     for table in ("universe_terms","universe_scenes","universe_sources"):
         db.execute("DELETE FROM "+table+" WHERE chapter NOT IN (SELECT number FROM omega_index)")
+    db.execute("DELETE FROM universe_dirty")
     return changed
 
 def search(db,query,limit=6,visible=True,arc=None):
@@ -127,6 +188,15 @@ def search(db,query,limit=6,visible=True,arc=None):
         if len(out)>=limit:break
     return out
 
+def focused_excerpt(body,query,limit=450):
+    if len(body)<=limit:return body
+    terms=o.tokens(query)
+    prefixes={t[:max(4,len(t)-2)] for t in terms if len(t)>=4}
+    candidates=list(re.finditer(r"[^\n]+",body))
+    best=max(candidates,key=lambda m:(sum(any(t.startswith(p) for t in o.tokens(m[0])) for p in prefixes),-m.start()),default=None)
+    start=max(0,min(len(body)-limit,(best.start()-limit//4) if best else 0))
+    return body[start:start+limit]
+
 def coordinate(db,plan):
     """Explicit precedence, reject incompatible mandatory lanes before paid I/O."""
     mandatory=[k for k in ("dynasty","guardians","shadow","destiny") if plan.get(k)]
@@ -151,7 +221,7 @@ def coordinate(db,plan):
     query=" ".join(str(x) for x in (title,choice.get("guide",""),lens[:180]))
     # Cross-arc retrieval only in the future; historical scenes must not acquire future knowledge.
     recalled=search(db,query,3,False,None if plan["arc"]=="future" else plan["arc"])
-    refs=[{"chapter":r["chapter"],"scene":r["scene"],"title":r["title"],"quote":r["text"][:450]} for r in recalled]
+    refs=[{"chapter":r["chapter"],"scene":r["scene"],"title":r["title"],"quote":focused_excerpt(r["text"],query)} for r in recalled]
     p={"lane":lane,"theme":theme,"title":title,"lens":lens,"refs":refs,
        "part":novel.get("part",1),"start":novel.get("start",0),
        "style":STYLES.get(theme,STYLES["character"]),
@@ -209,9 +279,9 @@ def report(db,mode,query=""):
         return ("Последний сохранённый план (спойлеры, не канон):\n"+o.dump(p)) if p else "Писатель ещё не сохранил план Universe."
     if mode=="repair":
         if db.execute("PRAGMA quick_check").fetchone()[0]!="ok":return "SQLite повреждена; нужен проверенный снимок."
-        return f"Перестроен индекс сцен: {refresh(db,True)} глав. Текст не изменён."
+        return f"Перестроен индекс сцен: {rebuild_publication_index(db)} глав. Текст не изменён."
     if mode=="knowledge":
-        facts=[f for f in ev.state(db).values() if f["kind"] in ("knowledge","secret") and ev.readable(db,f["chapter"])]
+        facts=[dict(chapter=n,**f) for n,_,p in ev.published(db) for f in p["facts"] if f["kind"] in ("knowledge","secret") and ev.readable(db,n)]
         return "\n".join(f"{f['chapter']}: {f['subject']} — {f['detail']} | свидетели: {', '.join(f['knows']) or 'не подтверждены'}" for f in facts[-40:]) or "Нет доступных подтверждённых записей о знаниях."
     if mode=="actor":
         li.refresh(db)
@@ -220,7 +290,8 @@ def report(db,mode,query=""):
         return "\n\n".join(f"Глава {n}: {f['kind']} — {f['value']}\n«{f['quote']}»" for n,f in records[-30:]) or "Нет доступных свидетельств о персонаже."
     if mode=="timeline":
         data=overview(db,int(query or 1))
-        return "\n".join(f"{r['number']}. {r['title']} · том {r['volume']} · {r['arc']}" for r in data["items"])
+        page=int(query or 1)
+        return f"Порядок публикации · страница {page}/{data['pages']}. Команда: Хронология вселенной N\n"+"\n".join(f"{r['number']}. {r['title']} · том {r['volume']} · {r['arc']}" for r in data["items"])
     if mode=="atlas":
         import soul_genesis
         data=soul_genesis.state(db)
@@ -231,8 +302,18 @@ def report(db,mode,query=""):
             lines.append(f"Царство {i}: "+("; ".join(f"{p['name']} — {p['description']} (гл. {p['chapter']})" for p in places) if places else "нет доступных сведений"))
         return "\n".join(lines)
     if mode=="audit":
-        refresh(db)
-        for n,story in db.execute("SELECT number,story FROM omega_index"):
+        expected=13+db.execute("SELECT COUNT(*) FROM saga_arcs a JOIN chronicle_drafts d ON a.draft_id=d.id WHERE d.status=\'approved\' AND a.number IS NOT NULL").fetchone()[0]
+        if db.execute("SELECT COUNT(*) FROM omega_index").fetchone()[0]!=expected:return "Индекс публикаций неполон; требуется восстановление."
+        try:refresh(db)
+        except ValueError:return "Индекс публикаций повреждён; требуется восстановление."
+        for n,arc,title,story,digest,did in db.execute("SELECT number,arc,title,story,checksum,draft_id FROM omega_index"):
+            verified_source(db,n,arc,title,story,digest,did)
+            expected=list(split(story))
+            for seq,(a,b,heading,body) in enumerate(expected,1):
+                terms=dict(db.execute("SELECT term,weight FROM universe_terms WHERE chapter=? AND seq=?",(n,seq)))
+                if terms!=dict(term_weights(body,heading,title)):return f"Поисковый индекс повреждён: глава {n}, сцена {seq}."
+            if db.execute("SELECT 1 FROM universe_terms t WHERE t.chapter=? AND NOT EXISTS(SELECT 1 FROM universe_scenes s WHERE s.chapter=t.chapter AND s.seq=t.seq)",(n,)).fetchone():
+                return f"Лишние поисковые записи: глава {n}."
             spans=db.execute("SELECT start,end,body FROM universe_scenes WHERE chapter=? ORDER BY seq",(n,)).fetchall()
             end=0
             for a,b,body in spans:
@@ -242,3 +323,16 @@ def report(db,mode,query=""):
         return "Целостность индекса сцен подтверждена; это не смысловая проверка."
     data=overview(db)
     return f"Литературная вселенная: {data['chapters']} опубликованных частей, {data['scenes']} сцен, {data['volumes']} томов, {data['chars']} знаков. Персонажей: {data['actors']}; отношений: {data['relations']}. Черновиков: {data['pending']}."
+
+
+def save_fragment(db,attempt,body,reason):
+    if not isinstance(body,str) or not body.strip():return
+    body=body[:24000].encode("utf-8","replace").decode("utf-8")
+    db.execute("INSERT OR REPLACE INTO universe_fragments VALUES(?,?,?,?)",(attempt,body,reason,o.digest(body)))
+    db.execute("DELETE FROM universe_fragments WHERE attempt NOT IN (SELECT attempt FROM universe_fragments ORDER BY attempt DESC LIMIT 20)")
+
+def fragment_text(db):
+    row=db.execute("SELECT attempt,body,reason,checksum FROM universe_fragments ORDER BY attempt DESC LIMIT 1").fetchone()
+    if not row:return "Нет сохранённых незавершённых фрагментов."
+    if o.digest(row[1])!=row[3]:return "Контрольная сумма фрагмента не совпадает."
+    return "Неутверждённый фрагмент "+row[0]+" ("+row[2]+"). Не входит в канон и не публикуется автоматически.\n\n"+row[1]
