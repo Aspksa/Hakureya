@@ -13,6 +13,21 @@ def init(db):
     db.execute("""CREATE TABLE IF NOT EXISTS book_reader_position(
        id INTEGER PRIMARY KEY CHECK(id=1), chapter INTEGER NOT NULL, offset INTEGER NOT NULL, source_hash TEXT NOT NULL)""")
 
+    db.execute("""CREATE TABLE IF NOT EXISTS reader_coverage(
+       chapter INTEGER NOT NULL, source_hash TEXT NOT NULL, start INTEGER NOT NULL, end INTEGER NOT NULL,
+       PRIMARY KEY(chapter,source_hash,start))""")
+
+def cover(db,n,check,start,end,length):
+    # Only continuous displayed ranges qualify; opening the last page is not sufficient.
+    if not 0<=start<end<=length:return
+    rows=db.execute("SELECT start,end FROM reader_coverage WHERE chapter=? AND source_hash=? AND end>=? AND start<=?",(n,check,start,end)).fetchall()
+    for a,b in rows:start=min(start,a);end=max(end,b)
+    db.execute("DELETE FROM reader_coverage WHERE chapter=? AND source_hash=? AND end>=? AND start<=?",(n,check,start,end))
+    db.execute("INSERT INTO reader_coverage VALUES(?,?,?,?)",(n,check,start,end))
+    if start==0 and end==length:
+        import soul_evolution
+        soul_evolution.mark_read(db,n)
+
 def paginate(text, size=PAGE_SIZE):
     """Keep all source characters, prefer paragraph then sentence/word boundaries."""
     pages=[]; start=0
@@ -57,9 +72,10 @@ def display(db,n,p,loaded=None):
     db.execute("DELETE FROM book_reader_position")
     db.execute("INSERT OR REPLACE INTO book_reader VALUES(1,?,?,?,1)",(n,p,check))
     soul_omega.mark(db,n)
-    if p==len(pages)-1:
-        import soul_evolution
-        soul_evolution.mark_read(db,n)
+    part=source(db,n)
+    start=sum(map(len,pages[:p]))-part["prefix"]
+    end=start+len(pages[p])
+    cover(db,n,part["hash"],max(0,start),min(len(part["body"]),end),len(part["body"]))
     end="\n\nВсе опубликованные главы прочитаны. Новые появятся после утверждения." if n==latest(db) and p==len(pages)-1 else ""
     return f"Глава {n} · Страница {p+1}/{len(pages)}\n\n"+pages[p].strip()+end
 
@@ -73,7 +89,9 @@ def move(db,action,n=None):
             return f"Закладка сохранена: глава {row[0]}, страница {row[1]+1}."
         return "Чтение ещё не начато."
     if action=="where":
-        return f"Глава {row[0]}, страница {row[1]+1}." if row else "Чтение ещё не начато."
+        if not row:return "Чтение ещё не начато."
+        exact=db.execute("SELECT offset FROM book_reader_position WHERE chapter=?",(row[0],)).fetchone()
+        return f"Глава {row[0]}, позиция текста {exact[0]}." if exact else f"Глава {row[0]}, страница {row[1]+1}."
     if action=="start":return display(db,1,0)
     if action=="chapter":return display(db,n,0)
     if action=="latest":return display(db,latest(db),0)
@@ -178,8 +196,13 @@ def document(db):
 def position(db,hash_value,start,end):
     """Persist code-point offset, also keep the old chapter/page bookmark compatible."""
     doc=document(db)
-    if not doc or hash_value!=doc["hash"]:raise ValueError("reader source changed")
-    if type(start) is not int or type(end) is not int or not 0<=start<=end<=len(doc["text"]):raise ValueError("invalid reader offset")
+    if not doc:raise ValueError("reader source changed")
+    maximum=len(doc["text"])
+    if hash_value!=doc["hash"]:
+        # Accept only a verified previously published prefix, never a changed manuscript.
+        maximum=next((seg["end"] for seg in doc["segments"][:-1] if hashlib.sha256(doc["text"][:seg["end"]].encode("utf-8")).hexdigest()==hash_value),-1)
+        if maximum<0:raise ValueError("reader source changed")
+    if type(start) is not int or type(end) is not int or not 0<=start<=end<=maximum:raise ValueError("invalid reader offset")
     # Separators belong to the previous source; offsets remain stable after a new part is appended.
     segment=next((x for x in reversed(doc["segments"]) if x["start"]<=start),doc["segments"][0])
     n=segment["number"];part=source(db,n);offset=min(len(part["body"]),start-segment["start"])
@@ -192,9 +215,9 @@ def position(db,hash_value,start,end):
     db.execute("INSERT OR REPLACE INTO book_reader VALUES(1,?,?,?,1)",(n,p,check))
     db.execute("INSERT OR REPLACE INTO book_reader_position VALUES(1,?,?,?)",(n,offset,part["hash"]))
     soul_omega.mark(db,n)
-    import soul_evolution
     for seg in doc["segments"]:
-        if start<seg["end"]<=end:soul_evolution.mark_read(db,seg["number"])
+        a=max(start,seg["start"]);b=min(end,seg["end"])
+        if a<b:cover(db,seg["number"],seg["hash"],a-seg["start"],b-seg["start"],seg["end"]-seg["start"])
     return document(db)
 
 def adjacent(db,direction):
