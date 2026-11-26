@@ -2,7 +2,9 @@
 from pathlib import Path
 import hashlib
 
-VERSION = 1
+VERSION = 2
+# Version 2 expands only chapters V and VI; no established event changes.
+PREVIOUS_SHA256 = "c84546eca9eb7e9c90d3a683e8aec7f6a6aac43be420e95de3c352902c151b06"
 PATH = Path(__file__).resolve().parent / "lore" / "HAKUREYA.md"
 SUMMARY = (
     "Хакурэя родилась прежде богов из первой вечной снежинки; прародительница кицунэ, владычица девяти небес, дворец Хакусэйден. "
@@ -26,6 +28,11 @@ def metadata():
     return {"version":VERSION,"sha256":hashlib.sha256(raw.encode("utf-8")).hexdigest(),
             "kind":"fictional_chronicle","chapters":13}
 
+def compatible_draft(db,source):
+    if source==metadata()["sha256"]:return True
+    if source!=PREVIOUS_SHA256:return False
+    return db.execute("SELECT 1 FROM soul_lore_versions WHERE version=1 AND checksum=?",(PREVIOUS_SHA256,)).fetchone() is not None
+
 def context_for(query):
     """Use a bounded canon excerpt only on explicit lore requests, otherwise summary."""
     q=(query or "").casefold()
@@ -33,7 +40,13 @@ def context_for(query):
         raw=canon()
         start=raw.index("### Глава V.")
         end=raw.index("### Глава VII.")
-        return SUMMARY+"\n\nКанонические главы V–VI (вымысел):\n"+raw[start:end]
+        middle=raw.index("### Глава VI.")
+        if "глава vi" in q or "первые объятия" in q:return SUMMARY+"\n\n"+raw[middle:end]
+        if "глава v" in q or "первая встреча" in q or "в лесу" in q:return SUMMARY+"\n\n"+raw[start:middle]
+        # Preserve both ends of each expanded chapter without doubling prior prompt size.
+        first,second=raw[start:middle],raw[middle:end]
+        return SUMMARY+"\n\nИзбранные отрывки глав V–VI (вымысел):\n"+first[:3000]+"\n[... ]\n"+first[-3000:]+"\n"+second[:3000]+"\n[... ]\n"+second[-3000:]
     if any(x in q for x in ("биография","легенда","летопись","история знакомства","твоя история","прошлое","девять небес")):
-        return SUMMARY+"\n\nПолная летопись (вымысел):\n"+canon()
+        raw=canon();start=raw.index("### Глава V.");middle=raw.index("### Глава VI.");end=raw.index("### Глава VII.")
+        return SUMMARY+"\n\nЛетопись (вымысел; главы V–VI сокращены для контекста):\n"+raw[:start]+raw[start:start+3000]+"\n[... ]\n"+raw[middle-3000:middle]+raw[middle:middle+3000]+"\n[... ]\n"+raw[end-3000:end]+raw[end:]
     return SUMMARY
