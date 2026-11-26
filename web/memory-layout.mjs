@@ -56,13 +56,30 @@ export function cameraFrame(bounds,width,height){
 export function detailLevel(count,zoom){return count<800||zoom>=2.4?2:zoom>=1.25?1:0}
 export function layout(snapshot){
  const nodes=[{key:"root",kind:"root",group:-1,x:0,y:0,r:9,label:"HAKUREYA"}],edges=[],byKey=new Map([[ "root",nodes[0] ]]);
- const count=categories.map(()=>0),radius=categories.map(()=>.035),valid=(Array.isArray(snapshot.records)?snapshot.records:[]).filter(n=>Number.isInteger(n.group)&&n.group>=0&&n.group<categories.length&&typeof n.key==="string");
+ const count=categories.map(()=>0),radius=categories.map(()=>.035),valid=(Array.isArray(snapshot.records)?snapshot.records:[]).filter(n=>Number.isInteger(n.group)&&n.group>=0&&n.group<categories.length&&typeof n.key==="string").map(n=>({...n}));
  const occupied=categories.map(()=>new Set());
- const bio=[],heart=[],shadow=[],guardians=[],destiny=[],immortal=[],areas=[];
+ const bio=[],heart=[],shadow=[],guardians=[],destiny=[],immortal=[],infinite=[],areas=[];
  const destinyTopics=["love","power","guardians","court","worlds","cast","growth",...["iori","lian","kaen","meixiu","jun","renho","setsuna","nari","kagari","orum"].map(k=>"actor:"+k),...Array.from({length:9},(_,i)=>"realm:"+(i+1))];
  const guardianActors=["reika","seirana","mikage","tokihana","akatsuki","shiori","yumeka","meirin","amatsuka"];
  const shadowTopics=["court","visits","suitors","threat","mask","power"];
  const heartTopics=["meeting","tenderness","trust","memory","letters","adventure"];
+ // Attach new facts to the existing Heart and guardian lattices; keep the original hubs.
+ const infiniteGroups=new Set(valid.map(n=>n.infinite_group).filter(x=>typeof x==="string"));
+ const nextGuardian=new Map(),nextHeart=new Map();
+ for(const n of valid){
+  if(guardianActors.includes(n.guardian_actor)&&Number.isSafeInteger(n.guardian_slot))nextGuardian.set(n.guardian_actor,Math.max(nextGuardian.get(n.guardian_actor)||0,n.guardian_slot+1));
+  if(heartTopics.includes(n.heart_topic)&&Number.isSafeInteger(n.heart_slot))nextHeart.set(n.heart_topic,Math.max(nextHeart.get(n.heart_topic)||0,n.heart_slot+1));
+ }
+ for(const n of [...valid].sort((a,b)=>a.key.localeCompare(b.key))){
+  const group=n.infinite_group;
+  if(typeof group==="string"&&group.startsWith("guardian:")&&guardianActors.includes(group.slice(9))){
+   const actor=group.slice(9),slot=nextGuardian.get(actor)||0;
+   n.guardian_actor=actor;n.guardian_slot=slot;nextGuardian.set(actor,slot+1);delete n.infinite_group;
+  }else if(group==="heart:root"){
+   const topic="tenderness",slot=nextHeart.get(topic)||0;
+   n.heart_topic=topic;n.heart_slot=slot;nextHeart.set(topic,slot+1);delete n.infinite_group;
+  }else if(n.group===4&&(infiniteGroups.has(n.key)||n.key==="character:hero"))n.infinite_group=n.key;
+ }
  for(const n of valid){
   if(byKey.has(n.key))continue;
   const g=n.group;
@@ -77,8 +94,9 @@ export function layout(snapshot){
   const guardianNode=g===4&&(n.guardian_actor==="root"||guardianActors.includes(n.guardian_actor))&&Number.isSafeInteger(n.guardian_slot)&&n.guardian_slot>=-1&&n.guardian_slot<=1000000;
   const destinyNode=g===4&&(n.destiny_topic==="root"||destinyTopics.includes(n.destiny_topic))&&Number.isSafeInteger(n.destiny_slot)&&n.destiny_slot>=-1&&n.destiny_slot<=1000000;
   const immortalNode=g===4&&Number.isSafeInteger(n.immortal_slot)&&n.immortal_slot>=-1&&n.immortal_slot<=10000000;
-  if(!nested&&!heartNode&&!shadowNode&&!guardianNode&&!destinyNode&&!immortalNode)radius[g]=Math.max(radius[g],Math.hypot(p.x,p.y)+.035);
-  const r=1.35*(n.kind==="novel_epoch"?3.8:n.kind==="novel_chapter"?2.8:n.kind==="immortal_root"?3.8:n.kind==="immortal_saga"?3:n.kind==="immortal_stage"?2.2:n.kind==="living_root"?3.8:n.kind==="living_topic"?2.8:n.kind==="living_subject"?2.2:n.kind==="living_fact"?1.6:n.kind==="destiny_root"?4.2:n.kind==="destiny_topic"||n.kind==="destiny_character"||n.kind==="realm"?3.1:n.kind==="destiny_fact"||n.kind==="destiny_event"?1.8:n.kind==="guardian_root"?4.2:n.kind==="guardian_character"?3.1:n.kind==="guardian_memory"?1.8:n.kind==="shadow_root"?4.2:n.kind==="shadow_topic"?3.1:n.kind==="shadow_event"?1.8:n.kind==="heart_root"?4.2:n.kind==="heart_topic"?3.1:n.kind==="heart_moment"?1.8:n.kind==="epoch"?3.6:n.kind==="book_segment"?3:n.kind==="fictional_chapter"?2.7:n.kind==="draft"?2.1:n.kind==="theme"?1.7:1.5);
+  const infiniteNode=g===4&&typeof n.infinite_group==="string"&&!nested&&!heartNode&&!shadowNode&&!guardianNode&&!destinyNode&&!immortalNode;
+  if(!nested&&!heartNode&&!shadowNode&&!guardianNode&&!destinyNode&&!immortalNode&&!infiniteNode)radius[g]=Math.max(radius[g],Math.hypot(p.x,p.y)+.035);
+  const r=1.35*(n.key==="character:hero"?4.2:n.kind==="infinite_root"?3.8:n.kind==="infinite_character"?3:n.kind==="infinite_stage"?2.8:n.kind==="infinite_hero"?2.4:n.kind==="infinite_love"?2.4:n.kind==="novel_epoch"?3.8:n.kind==="novel_chapter"?2.8:n.kind==="immortal_root"?3.8:n.kind==="immortal_saga"?3:n.kind==="immortal_stage"?2.2:n.kind==="living_root"?3.8:n.kind==="living_topic"?2.8:n.kind==="living_subject"?2.2:n.kind==="living_fact"?1.6:n.kind==="destiny_root"?4.2:n.kind==="destiny_topic"||n.kind==="destiny_character"||n.kind==="realm"?3.1:n.kind==="destiny_fact"||n.kind==="destiny_event"?1.8:n.kind==="guardian_root"?4.2:n.kind==="guardian_character"?3.1:n.kind==="guardian_memory"?1.8:n.kind==="shadow_root"?4.2:n.kind==="shadow_topic"?3.1:n.kind==="shadow_event"?1.8:n.kind==="heart_root"?4.2:n.kind==="heart_topic"?3.1:n.kind==="heart_moment"?1.8:n.kind==="epoch"?3.6:n.kind==="book_segment"?3:n.kind==="fictional_chapter"?2.7:n.kind==="draft"?2.1:n.kind==="theme"?1.7:1.5);
   const item={...n,kind:typeof n.kind==="string"?n.kind:"memory",label:typeof n.label==="string"?n.label:n.key,slot,x:p.x,y:p.y,r};nodes.push(item);byKey.set(item.key,item);
   if(nested)bio.push(item);
   if(heartNode)heart.push(item);
@@ -86,6 +104,7 @@ export function layout(snapshot){
   if(guardianNode)guardians.push(item);
   if(destinyNode)destiny.push(item);
   if(immortalNode)immortal.push(item);
+  if(infiniteNode)infinite.push(item);
   edges.push({a:"hub:"+g,b:item.key,kind:"category"});
  }
  // Four epoch galaxies surround the permanent biography hub. Each volume occupies a hex cell;
@@ -140,6 +159,28 @@ export function layout(snapshot){
   let area=.05;
   for(const n of immortal){const p=n.immortal_slot<0?{x:0,y:0}:cell(n.immortal_slot);n.x=p.x;n.y=p.y;area=Math.max(area,Math.hypot(p.x,p.y)+.05)}
   areas.push({key:"immortal",r:area,members:immortal});
+ }
+ // Character sub-constellations share a bounded hex grid of non-overlapping envelopes.
+ if(infinite.length){
+  const groups=new Map();
+  for(const n of infinite){if(!groups.has(n.infinite_group))groups.set(n.infinite_group,[]);groups.get(n.infinite_group).push(n)}
+  const clusters=[];
+  for(const [key,members] of [...groups].sort((a,b)=>a[0].localeCompare(b[0]))){
+   const hub=members.find(n=>n.key===key);let r=.045,i=0;
+   for(const n of [...members].sort((a,b)=>a.key.localeCompare(b.key))){
+    const p=n===hub?{x:0,y:0}:cell(i++);
+    n.x=p.x;n.y=p.y;r=Math.max(r,Math.hypot(p.x,p.y)+.045);
+   }
+   clusters.push({key,members,r});
+  }
+  const spacing=(2*Math.max(...clusters.map(c=>c.r))+.035)/STEP;
+  let area=.06;
+  clusters.forEach((c,i)=>{
+   const p=i===0?{x:0,y:0}:cell(i-1),x=p.x*spacing,y=p.y*spacing;
+   for(const n of c.members){n.x+=x;n.y+=y}
+   area=Math.max(area,Math.hypot(x,y)+c.r);
+  });
+  areas.push({key:"infinite",r:area,members:infinite});
  }
  const packed=packCircles(areas,radius[4],.035);
  for(const a of areas){const p=packed.get(a.key);for(const n of a.members){n.x+=p.x;n.y+=p.y}radius[4]=Math.max(radius[4],Math.hypot(p.x,p.y)+a.r)}

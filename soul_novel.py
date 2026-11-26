@@ -147,7 +147,7 @@ def audit(db):
 
 def forecast(db):
     # Reuse the old queue's prerequisite simulation, then include actual remaining evolution and Immortal stages.
-    base=living.queue(db)
+    base=living.queue(db,limit=118)
     latest=base["based_on"]
     items=[dict(x) for x in base["items"] if x["theme"]=="fixed"]
     for p in ev.candidates(db,list(ev.published(db))):
@@ -158,6 +158,8 @@ def forecast(db):
             _,title,theme,guide=im.SAGAS[i];title+=" — "+im.PHASES[phase]
         else:title,guide=im.DAILY[i-10];theme="love"
         items.append({"title":title,"theme":theme,"guide":guide})
+    import soul_infinite
+    items.extend(soul_infinite.remaining(db))
     recent=Counter(p["theme"] for _,_,p in living.published(db))
     rank=sorted(THEMES,key=lambda x:(recent[x[0]],x[0]))
     while len(items)<100:

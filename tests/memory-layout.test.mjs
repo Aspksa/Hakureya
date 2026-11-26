@@ -149,3 +149,29 @@ test("overview fits all star centers in desktop and narrow chat viewports",()=>{
   }
  }
 });
+
+
+test("Infinite Destiny groups character facts and extends existing guardian and heart constellations",()=>{
+ const records=[
+  {key:"infinite:root",group:4,infinite_group:"infinite:root",kind:"infinite_root"},
+  {key:"character:hero",group:4,kind:"character"},
+  {key:"power:1",group:4,infinite_group:"character:hero",kind:"infinite_hero"},
+  {key:"power:2",group:4,infinite_group:"character:hero",kind:"infinite_hero"},
+  {key:"actor:one",group:4,kind:"character"},
+  {key:"actor:fact",group:4,infinite_group:"actor:one",kind:"infinite_fact"},
+  {key:"guardian:reika",group:4,guardian_actor:"reika",guardian_slot:-1},
+  {key:"guardian:old",group:4,guardian_actor:"reika",guardian_slot:0},
+  {key:"guardian:new",group:4,infinite_group:"guardian:reika"},
+  {key:"heart:topic:tenderness",group:4,heart_topic:"tenderness",heart_slot:-1},
+  {key:"heart:old",group:4,heart_topic:"tenderness",heart_slot:0},
+  {key:"heart:new",group:4,infinite_group:"heart:root"}
+ ];
+ const g=layout({records,edges:[]});
+ assert.equal(new Set(g.nodes.map(n=>n.x.toFixed(9)+":"+n.y.toFixed(9))).size,g.nodes.length);
+ for(const [a,b] of [["character:hero","power:1"],["actor:one","actor:fact"],["guardian:reika","guardian:new"],["heart:topic:tenderness","heart:new"]]){
+  const p=g.byKey.get(a),q=g.byKey.get(b);
+  assert.ok(Math.abs(Math.hypot(p.x-q.x,p.y-q.y)-.026)<1e-8);
+ }
+ assert.deepEqual(g.nodes,layout({records,edges:[]}).nodes);
+ assert.equal(records[8].guardian_slot,undefined);
+});

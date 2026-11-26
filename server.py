@@ -23,6 +23,7 @@ import cloud_writer
 import soul_evolution
 import soul_immortal
 import soul_novel
+import soul_infinite
 import graph_activity
 import time, re
 import base64, binascii
@@ -100,7 +101,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
             if shadow and not (shadow_plan or guardian_plan or destiny_plan) and (soul_destiny.audit(db) or len(soul_destiny.published(db))!=len(soul_destiny.ORDER)):return "Сюжетные данные повреждены или продолжение недоступно."
             if shadow_plan or guardian_plan or destiny_plan:arc="future"
             elif arc is None and not alternative and not soul_destiny.audit(db) and len(soul_destiny.published(db))==len(soul_destiny.ORDER):arc="future"
-            reservation=soul_chronicle.reserve(db,allow_story=True) if not (soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)+soul_evolution.audit(db)+soul_immortal.audit(db)+soul_novel.audit(db)) else None
+            reservation=soul_chronicle.reserve(db,allow_story=True) if not (soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)+soul_evolution.audit(db)+soul_immortal.audit(db)+soul_novel.audit(db)+soul_infinite.audit(db)) else None
             traits=soul_chronicle.profile(db)
             plan=soul_genesis.enrich(db,soul_omega.enrich_plan(db,soul_saga.plan(db,arc))) if reservation else None
             if plan:
@@ -117,6 +118,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                     soul_evolution.enrich(db,plan)
                     soul_immortal.enrich(db,plan)
                     soul_novel.enrich(db,plan)
+                    soul_infinite.context(db,plan)
             previous=[]
             if plan:
                 previous=[{"number":n,"title":t,"story":s[-2200:]} for n,t,s in reversed(db.execute("SELECT number,title,story FROM omega_index WHERE arc=? AND number>13 ORDER BY number DESC LIMIT 2",(plan["arc"],)).fetchall())]
@@ -233,6 +235,25 @@ def chronicle_command(content):
     aliases.update({"девять хранительниц":"летопись: хранительницы","хранительницы":"летопись: хранительницы","продолжи историю хранительниц":"летопись: создать хранительниц","план хранительниц":"летопись: план хранительниц"})
     aliases.update({"за пределами девяти небес":"летопись: судьба","план судьбы":"летопись: план судьбы","новые герои":"летопись: новые герои","продолжи судьбу":"летопись: создать судьбу","история силы":"летопись: судьба сила","путешествия":"летопись: судьба путешествия","развитие императрицы":"летопись: судьба развитие"})
     q=aliases.get(q,q)
+    inf_forecast=re.fullmatch(r"план романа 1000(?: ([1-9]|1[0-9]|20))?",q)
+    inf_timeline=re.fullmatch(r"хронология романа(?: ([1-9][0-9]{0,4}))?",q)
+    inf_encyclopedia=re.fullmatch(r"энциклопедия романа(?: ([1-9][0-9]{0,4}))?",q)
+    inf_actor=re.fullmatch(r"досье персонажа (.{2,60})",q)
+    if inf_forecast or inf_timeline or inf_encyclopedia or inf_actor or q in ("бесконечная судьба","новые великие саги","сюжетные линии","глубина прозы"):
+        with LOCK, closing(connect()) as db, db:
+            if not soul_chronicle.canon_ok(db) or soul_infinite.audit(db) or soul_evolution.audit(db) or soul_immortal.audit(db) or soul_genesis.audit(db):return "Литературные записи повреждены."
+            if inf_forecast:
+                page=int(inf_forecast[1] or 1)
+                rows=soul_infinite.forecast(db)["items"][(page-1)*50:page*50]
+                return f"План 1000 событий — прогноз, спойлеры; страница {page}/20:\n"+"\n".join(f"{x['number']}. {x['title']} · том {x['volume']}" for x in rows)
+            if inf_timeline:return soul_infinite.history_text(db,int(inf_timeline[1] or 1))
+            if inf_encyclopedia:return soul_infinite.encyclopedia(db,int(inf_encyclopedia[1] or 1))
+            if inf_actor:return soul_infinite.character_text(db,inf_actor[1])
+            if q=="сюжетные линии":return soul_infinite.threads_text(db)
+            if q=="глубина прозы":return soul_infinite.quality_text(db)
+            if q=="новые великие саги":return "Будущие замыслы (спойлеры):\n"+"\n".join(x[1] for x in soul_infinite.SAGAS)
+            remaining=soul_infinite.remaining(db)
+            return f"Infinite Destiny: {60-len(remaining)}/60 завершённых этапов. "+("Новые саги открыты." if soul_infinite.ready(db) else "Продолжаются прежние обязательные саги.")+" Прогноз: «План романа 1000»."
     if q in ("модель писателя","расход писателя","модели cloud.ru","подключи писателя","модель писателя как в чате") or q.startswith("модель писателя "):
         if q in ("модель писателя","расход писателя","модель писателя как в чате"):
             with LOCK, closing(connect()) as db, db:
@@ -305,7 +326,7 @@ def chronicle_command(content):
             if action=="status":return soul_living.status(db)
             if not soul_chronicle.canon_ok(db):return "Канон повреждён."
             if action=="news":return soul_living.news(db)
-            if soul_living.audit(db) or soul_shadow.audit(db) or soul_guardians.audit(db) or soul_destiny.audit(db) or soul_evolution.audit(db) or soul_immortal.audit(db) or soul_novel.audit(db):return "Сюжетные данные повреждены."
+            if soul_living.audit(db) or soul_shadow.audit(db) or soul_guardians.audit(db) or soul_destiny.audit(db) or soul_evolution.audit(db) or soul_immortal.audit(db) or soul_novel.audit(db) or soul_infinite.audit(db):return "Сюжетные данные повреждены."
             qplan=soul_novel.forecast(db)
             return "План (пересматриваемый прогноз, со спойлерами):\n"+"\n".join(f"{p['number']}. {p['title']}" for p in qplan["items"])
     if q=="статус романа":
@@ -501,7 +522,9 @@ def chronicle_worker(stop):
                 soul_chronicle.collect(db)
                 if soul_chronicle.canon_ok(db):
                     soul_genesis.consolidate(db)
-                    if not (soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)+soul_evolution.audit(db)+soul_immortal.audit(db)+soul_novel.audit(db)):soul_novel.forecast(db)
+                    if not (soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)+soul_evolution.audit(db)+soul_immortal.audit(db)+soul_novel.audit(db)+soul_infinite.audit(db)):
+                        soul_novel.forecast(db)
+                        soul_infinite.refresh_forecast(db)
                 enabled=CHRONICLE["enabled"] or soul_living.mode(db)!="off"
             with LOCK, closing(connect()) as db:
                 backed_up=db.execute("SELECT 1 FROM living_backups WHERE day=date('now')").fetchone()
