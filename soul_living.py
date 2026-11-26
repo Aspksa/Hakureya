@@ -66,11 +66,11 @@ def audit(db):
     except (ValueError,TypeError,KeyError):return ["Повреждены записи Living Universe"]
     return []
 
-def queue(db):
+def queue(db,limit=100):
     """Rolling 100-slot forecast. Only the head is committed as a writing intention."""
     latest=db.execute("SELECT COALESCE(MAX(number),13) FROM omega_index").fetchone()[0]
     cached=db.execute("SELECT payload,checksum FROM living_queue WHERE id=1").fetchone()
-    if cached and o.digest(cached[0])==cached[1]:
+    if limit==100 and cached and o.digest(cached[0])==cached[1]:
         try:
             q=json.loads(cached[0])
             if q.get("version")==VERSION and q.get("based_on")==latest and len(q["items"])==100:return q
@@ -87,7 +87,7 @@ def queue(db):
         candidates.append((score,-((i-count)%len(THEMES)),key,title,guide))
     ranked=sorted(candidates,reverse=True)
     result=[]
-    for i in range(100):
+    for i in range(limit):
         _,_,key,title,guide=ranked[i%len(ranked)]
         result.append({"number":latest+i+1,"volume":o.volume(latest+i+1),"theme":key,"title":title,"guide":guide})
     # Simulate remaining approved-stage prerequisites without advancing the actual saga.
@@ -120,7 +120,7 @@ def queue(db):
         if head["theme"]=="love" and payload["romance_threads"]:
             head["guide"]+=" Развивай открытую линию: "+payload["romance_threads"][0]["title"]
     raw=o.dump(payload)
-    db.execute("INSERT INTO living_queue VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,checksum=excluded.checksum WHERE checksum!=excluded.checksum",(raw,o.digest(raw)))
+    if limit==100:db.execute("INSERT INTO living_queue VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,checksum=excluded.checksum WHERE checksum!=excluded.checksum",(raw,o.digest(raw)))
     return payload
 
 def enrich(db,plan,background=False):
