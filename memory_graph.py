@@ -1,6 +1,7 @@
 """Local graph, backed exclusively by persisted records. No invented nodes."""
 import re
 import soul_chronicle
+import soul_omega
 from contextlib import closing
 
 KINDS = ("Запросы", "Знания", "Ответы", "Опыт", "Биография")
@@ -40,7 +41,7 @@ def snapshot(db, limit=5000):
     records += [{"key":f"n:{i}","group":g,"content":c,"created":t,"order":i} for i,g,c,t in reversed(notes)]
     extra, chronicle_edges = soul_chronicle.graph(db,limit) if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='chronicle_diary'").fetchone() else ([],[])
     records += extra
-    permanent,biography_edges,pending=soul_chronicle.constellation(db,limit) if db.execute("SELECT 1 FROM sqlite_master WHERE name=\'chronicle_diary\'").fetchone() else ([],[],None)
+    permanent,biography_edges,pending=soul_chronicle.constellation(db,limit) if db.execute("SELECT 1 FROM sqlite_master WHERE name='chronicle_diary'").fetchone() else ([],[],None)
     records.sort(key=lambda n:(n["created"] or "",n["key"][0],n["order"]))
     # Preserve the original canon and a real pending draft even under memory pressure.
     budget=max(0,limit-len(permanent)-int(pending is not None))
@@ -70,6 +71,15 @@ def snapshot(db, limit=5000):
             recent.append(key)
             if len(recent)>8:
                 del recent[0]
+    if db.execute("SELECT 1 FROM sqlite_master WHERE name='omega_index'").fetchone():
+        chapter_map={("canon:"+str(n) if did is None else "c:"+str(did)):(arc,n) for n,arc,did in db.execute("SELECT number,arc,draft_id FROM omega_index")}
+        for n in records:
+            pair=chapter_map.get(n["key"])
+            if pair:
+                arc,num=pair
+                n.update(sector=arc,book=soul_omega.volume(num),chapter_slot=num-1 if num<=13 else (num-14)%12)
+            elif n["key"].startswith("era:") and n["key"][4:] in soul_omega.ARCS:
+                n.update(sector=n["key"][4:],book=0,chapter_slot=0)
     assign_slots(db,records)
     visible={n["key"] for n in records}
     edges.extend(e for e in chronicle_edges+biography_edges if e["a"] in visible and e["b"] in visible)
