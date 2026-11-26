@@ -100,3 +100,16 @@ test("nine guardians and their memories have unique stable positions",()=>{
  assert.ok(Math.abs(Math.hypot(a.x-b.x,a.y-b.y)-.026)<1e-8);
  assert.deepEqual(g.nodes,layout({records,edges:[]}).nodes);
 });
+
+test("Destiny topic and personal clusters do not overlap",()=>{
+ const topics=["love","power","guardians","court","worlds","cast","growth","actor:iori","actor:lian"];
+ const records=[{key:"destiny:root",group:4,destiny_topic:"root",destiny_slot:-1}];
+ for(const topic of topics){
+  records.push({key:"hub:"+topic,group:4,destiny_topic:topic,destiny_slot:-1});
+  for(let i=0;i<40;i++)records.push({key:topic+":"+i,group:4,destiny_topic:topic,destiny_slot:i});
+ }
+ const g=layout({records,edges:[]});
+ assert.ok(g.nodes.every(n=>Number.isFinite(n.x)&&Number.isFinite(n.y)));
+ assert.equal(new Set(g.nodes.map(n=>n.x.toFixed(8)+":"+n.y.toFixed(8))).size,g.nodes.length);
+ assert.deepEqual(g.nodes,layout({records,edges:[]}).nodes);
+});
