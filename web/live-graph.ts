@@ -68,7 +68,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement){
   for(const item of next.active){const old=works.get(item.id);works.set(item.id,{item,started:old&&old.item.stage===item.stage?old.started:now,terminal:false})}
   for(const item of next.recent)if(!seen.has(item.id)){seen.add(item.id);works.set(item.id,{item,started:now,terminal:true})}
   while(seen.size>256)seen.delete(seen.values().next().value!);
-  status();invalidate();
+  if(!active||works.size)status();invalidate();
  }
  function drawActivity(now:number){
   for(const [id,a] of works){
