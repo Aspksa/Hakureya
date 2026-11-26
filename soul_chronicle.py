@@ -202,6 +202,7 @@ def fail(db,reservation):
     writer_volume.reconcile_job(db)
 
 def recover(db):
+    db.execute("UPDATE universe_fragments SET reason='interrupted' WHERE reason='stream_checkpoint' AND attempt IN (SELECT day FROM chronicle_attempts WHERE status='reserved')")
     db.execute("UPDATE chronicle_attempts SET status='interrupted' WHERE status='reserved'")
     writer_volume.reconcile_job(db)
 
