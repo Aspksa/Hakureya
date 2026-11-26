@@ -123,7 +123,7 @@ def save(db,did,story,raw,p):
     current=plan(db)
     if not current or current["step"]!=p["step"]:raise ValueError("guardian prerequisites missing")
     evidence=o.clean(raw["evidence"],12,240)
-    if evidence not in story:raise ValueError("guardian excerpt absent")
+    if evidence not in story or not any(BY_ID[a][1].casefold()[:4] in story.casefold() for a in current["actors"]):raise ValueError("guardian excerpt or participant absent")
     entries=raw["memories"]
     if not isinstance(entries,list) or len(entries)>2:raise ValueError("invalid memories")
     out=[]
@@ -179,16 +179,18 @@ def graph(db):
     if audit(db):return nodes,edges
     rows=published(db);relations={}
     for did,n,step,data in rows:
+        primary=STEPS[step][2][0];event=f"guardian:stage:{step}"
+        node(event,STEPS[step][1]+" · гл. "+str(n),"guardian_memory",primary,step*3)
+        edges.extend([{"a":"guardian:"+primary,"b":event,"kind":"guardian_event"},{"a":f"c:{did}","b":event,"kind":"guardian_source"}])
+        if step:edges.append({"a":f"guardian:stage:{step-1}","b":event,"kind":"guardian_sequence"})
         for j,e in enumerate(data["memories"]):
             a=e["actor"];key=f"guardian:memory:{did}:{j}"
-            node(key,e["summary"]+" · гл. "+str(n),"guardian_memory",a,step*2+j)
+            node(key,e["summary"]+" · гл. "+str(n),"guardian_memory",a,step*3+j+1)
             edges.extend([{"a":"guardian:"+a,"b":key,"kind":"guardian_memory"},{"a":f"c:{did}","b":key,"kind":"guardian_source"}])
             if e["other"] in BY_ID:
                 b=e["other"];pair=tuple(sorted((a,b)));relations[pair]=relations.get(pair,0)+1
                 edges.append({"a":key,"b":"guardian:"+b,"kind":"guardian_relationship"})
             elif e["other"] in ("empress","hero"):
                 edges.append({"a":key,"b":"character:"+e["other"],"kind":"guardian_relationship"})
-        for a,b in relations:
-            pass
     for (a,b),weight in relations.items():edges.append({"a":"guardian:"+a,"b":"guardian:"+b,"kind":"guardian_bond","shared":weight})
     return nodes,edges
