@@ -122,6 +122,10 @@ def snapshot(db, limit=5000):
                 del recent[0]
     if db.execute("SELECT 1 FROM sqlite_master WHERE name='omega_index'").fetchone():
         chapter_map={("canon:"+str(n) if did is None else "c:"+str(did)):(arc,n) for n,arc,did in db.execute("SELECT number,arc,draft_id FROM omega_index")}
+        volume_counts={}
+        for _,num in chapter_map.values():
+            v=soul_omega.volume(num);volume_counts[v]=volume_counts.get(v,0)+1
+        completed_volumes={v for v,count in volume_counts.items() if count==(13 if v==1 else soul_omega.VOLUME_SIZE)}
         for n in records:
             pair=chapter_map.get(n["key"])
             if pair:
@@ -133,7 +137,25 @@ def snapshot(db, limit=5000):
                 n.update(sector=n["key"][4:],book=0,chapter_slot=0)
             elif n["key"].startswith("segment:"):
                 _,arc,v=n["key"].split(":")
-                n.update(sector=arc,book=int(v),chapter_slot=-1)
+                n.update(sector=arc,book=int(v),chapter_slot=-1,volume_complete=int(v) in completed_volumes)
+            elif n["key"].startswith("book:") and n["key"][5:].isdigit():
+                n["volume_complete"]=int(n["key"][5:]) in completed_volumes
+    # Real local quality notices on the pending draft, not semantic contradiction detection.
+    if pending and pending in records:
+        did=int(pending["key"].split(":")[1])
+        warnings=[]
+        try:
+            import soul_romance, soul_immortal, soul_infinite
+            meta=soul_omega.metadata(db,did)
+            report=soul_romance.report(db,did)
+            for value in (meta,report):
+                if value:warnings.extend(value.get("warnings",[]))
+            for mod in (soul_immortal,soul_infinite):
+                item=mod.read(db,did)
+                if item:warnings.extend(item.get("quality",{}).get("warnings",[]))
+        except (ValueError,TypeError,KeyError,IndexError):
+            warnings.append("Не удалось прочитать локальный отчёт проверки")
+        pending["review_warnings"]=list(dict.fromkeys(w[:160] for w in warnings if isinstance(w,str)))[:6]
     assign_slots(db,records)
     visible={n["key"] for n in records}
     edges.extend(e for e in chronicle_edges+biography_edges if e["a"] in visible and e["b"] in visible)
