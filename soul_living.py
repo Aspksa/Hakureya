@@ -69,6 +69,12 @@ def audit(db):
 def queue(db):
     """Rolling 100-slot forecast. Only the head is committed as a writing intention."""
     latest=db.execute("SELECT COALESCE(MAX(number),13) FROM omega_index").fetchone()[0]
+    cached=db.execute("SELECT payload,checksum FROM living_queue WHERE id=1").fetchone()
+    if cached and o.digest(cached[0])==cached[1]:
+        try:
+            q=json.loads(cached[0])
+            if q.get("version")==VERSION and q.get("based_on")==latest and len(q["items"])==100:return q
+        except (ValueError,TypeError,KeyError):pass
     data=g.state(db)
     old=list(published(db))
     count=len(old)
@@ -238,20 +244,20 @@ def graph(db):
     def node(k,label,kind):
         if k not in seen:
             seen.add(k);nodes.append({"key":k,"group":4,"kind":kind,"content":label,"created":"","order":len(nodes)})
-    node("living:root","Живая художественная вселенная","theme")
+    node("living:root","Живая художественная вселенная","living_root")
     edges.append({"a":"destiny:root","b":"living:root","kind":"living_branch"})
     if audit(db):return nodes,edges
     # Bounded recent detail; old facts remain in the archive.
     all_rows=list(published(db));rows=all_rows[-80:]
     if len(all_rows)>80:
-        node("living:archive",f"Архив: {len(all_rows)-80} глав","theme")
+        node("living:archive",f"Архив: {len(all_rows)-80} глав","living_root")
         edges.append({"a":"living:root","b":"living:archive","kind":"living_archive"})
     for n,did,p in rows:
-        t="living:theme:"+p["theme"];node(t,next((v[1] for v in THEMES if v[0]==p["theme"]),"Основная сага"),"theme")
+        t="living:theme:"+p["theme"];node(t,next((v[1] for v in THEMES if v[0]==p["theme"]),"Основная сага"),"living_topic")
         edges.extend([{"a":"living:root","b":t,"kind":"living_branch"},{"a":t,"b":f"c:{did}","kind":"living_chapter"}])
         for j,f in enumerate(p["facts"]):
             key=f"living:fact:{did}:{j}";hub="living:subject:"+o.digest(o.normalized(f["name"]))[:20]
-            node(hub,f["name"],"theme");node(key,f["detail"],"theme")
+            node(hub,f["name"],"living_subject");node(key,f["detail"],"living_fact")
             edges.extend([{"a":t,"b":hub,"kind":"living_subject"},{"a":hub,"b":key,"kind":"living_fact"},{"a":f"c:{did}","b":key,"kind":"living_source"}])
             if f["cause"] is not None:
                 r=db.execute("SELECT draft_id FROM omega_index WHERE number=?",(f["cause"],)).fetchone()
