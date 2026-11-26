@@ -14,6 +14,8 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement){
  const starEls=starData.map((p,i)=>el("circle",{r:p.r,fill:i%13===0?"#d8b9a1":"#e1dcd8",opacity:p.o},stars));
  let snapshot:Snapshot={records:[],edges:[],total:0,limited:false},graph=layout(snapshot),w=1,h=1,s=1,zoom=1,panX=0,panY=0,fit=1,desired=1,active="",drag:null|{x:number,y:number,moved:boolean}=null,items=new Map<string,SVGGElement>(),edgeEls:SVGLineElement[]=[],drawnEdges:any[]=[],replayAt=0,shown=0,last=performance.now(),raf=0,disposed=false;
  let session="",works=new Map<string,{item:Work,started:number,terminal:boolean}>(),seen=new Set<string>();
+ let receivedSnapshot=false,maxChapter=0;
+ const births=new Map<string,number>();
  const motion=matchMedia("(prefers-reduced-motion: reduce)");
  const particles=new Map<string,{group:SVGGElement,line:SVGPolylineElement,dots:SVGCircleElement[]}>();
  function baseFit(){return Math.min(1,.45/graph.extent)}
@@ -36,6 +38,10 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement){
  }
  function render(next:Snapshot,initial=false){
   if(!initial&&JSON.stringify(next)===JSON.stringify(snapshot))return;
+  const now=performance.now();
+  for(const n of next.records){if(/^c:[1-9]\d*$/.test(n.key)){const id=Number(n.key.slice(2));if(receivedSnapshot&&id>maxChapter&&!motion.matches)births.set(n.key,now);}}
+  for(const n of next.records){if(/^c:[1-9]\d*$/.test(n.key))maxChapter=Math.max(maxChapter,Number(n.key.slice(2)));}
+  receivedSnapshot=true;
   snapshot=next;graph=layout(next);items.clear();links.replaceChildren();dots.replaceChildren();overlay.replaceChildren();
   // Always preserve root, categories and canon links; thin dense secondary edges only.
   const essential=graph.edges.filter(e=>e.kind==="category"||e.kind==="chronology"||e.a.startsWith("canon:")||e.kind==="draft");
@@ -45,7 +51,8 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement){
   const dense=graph.nodes.length>800;
   for(const n of graph.nodes){
    const g=el("g",{class:"node","data-key":n.key},dots),col=colors[n.group+1];items.set(n.key,g);
-   const major=n.key==="root"||n.key.startsWith("hub:")||n.kind==="fictional_chapter";
+   const major=n.key==="root"||n.key.startsWith("hub:")||n.kind==="fictional_chapter"||n.kind==="book"||n.kind==="epoch";
+   if(births.has(n.key))g.setAttribute("opacity",".08");
    if(!dense||major)el("circle",{r:n.r*6.2,fill:"url(#glow"+(n.group+1)+")"},g);
    if(n.kind==="draft"){el("circle",{r:n.r*2,fill:"none",stroke:col,"stroke-dasharray":"2 2","stroke-width":.8},g)}
    else{el("circle",{r:n.r*.9,fill:col,opacity:.74},g);if(!dense||major)el("circle",{r:n.r*.36,fill:"#fff9eb"},g)}
@@ -93,10 +100,11 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement){
   const k=motion.matches?1:1-Math.exp(-dt/200);fit+=(desired-fit)*k;if(Math.abs(desired-fit)<.001)fit=desired;
   world.setAttribute("transform","translate("+(w*.5+panX)+" "+(h*.39+panY)+") scale("+(zoom*fit)+")");
   drawActivity(now);
-  if(replayAt||fit!==desired||[...works.values()].some(a=>a.terminal||!motion.matches))invalidate();
+  for(const [key,start] of births){const t=Math.min(1,(now-start)/700);const g=items.get(key);if(g)g.setAttribute("opacity",String(.08+.92*t));if(t===1||!g||motion.matches){g?.removeAttribute("opacity");births.delete(key)}}
+  if(births.size||replayAt||fit!==desired||[...works.values()].some(a=>a.terminal||!motion.matches))invalidate();
  }
  const observer=new ResizeObserver(resize);observer.observe(svg);resize();render(snapshot,true);
- function visibility(){if(document.hidden){cancelAnimationFrame(raf);raf=0;clearActivity()}else{last=performance.now();invalidate()}}
+ function visibility(){if(document.hidden){cancelAnimationFrame(raf);raf=0;for(const key of births.keys())items.get(key)?.removeAttribute("opacity");births.clear();clearActivity()}else{last=performance.now();invalidate()}}
  document.addEventListener("visibilitychange",visibility);
  svg.addEventListener("wheel",e=>{e.preventDefault();zoom=clamp(zoom*Math.exp(-e.deltaY*.001),.35,8);invalidate()},{passive:false});
  svg.addEventListener("pointerdown",e=>{if(e.button===0)drag={x:e.clientX,y:e.clientY,moved:false}});
