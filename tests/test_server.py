@@ -4,6 +4,9 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 from http.server import ThreadingHTTPServer
 import server
+from unittest.mock import patch, MagicMock
+from contextlib import closing
+import soul_core
 
 class ServerTest(unittest.TestCase):
     def setUp(self):
@@ -50,3 +53,21 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(graph,self.request("graph"))
         with self.assertRaises(HTTPError):
             self.request("note",{"kind":2,"content":"invalid"})
+
+    def test_persona_used_in_chat_without_paid_call(self):
+        self.request("chat",{"content":"отвечай кратко"})
+        self.request("config",{"key":"test-key","model":"test-model","consent":True})
+        fake=MagicMock()
+        fake.__enter__.return_value.read.return_value=json.dumps({"choices":[{"message":{"content":"Готово."}}]}).encode()
+        with patch.object(server,"urlopen",return_value=fake) as remote:
+            result=self.request("chat",{"content":"Проверка"})
+            self.assertTrue(result["connected"])
+            payload=json.loads(remote.call_args.args[0].data)
+            self.assertEqual(payload["model"],"test-model")
+            self.assertEqual(payload["messages"][0]["role"],"system")
+            self.assertIn("Hakureya",payload["messages"][0]["content"])
+            self.assertIn("Кратко",payload["messages"][0]["content"])
+        with closing(server.connect()) as db:
+            snap=soul_core.snapshot(db)
+            self.assertEqual(snap["history"]["events"]["response_review"],1)
+            self.assertEqual(snap["history"]["events"]["model_selected"],1)
