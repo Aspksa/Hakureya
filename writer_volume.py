@@ -4,19 +4,24 @@ import json
 
 PAGE_CHARS=1800
 TARGET_PAGES=15
+GOALS=(0,5,10,15,20,30)
 MAX_ATTEMPTS=20
 
 def init(db):
     db.execute("CREATE TABLE IF NOT EXISTS writer_volume(id INTEGER PRIMARY KEY CHECK(id=1), target INTEGER NOT NULL CHECK(target IN (0,15)))")
     db.execute("INSERT OR IGNORE INTO writer_volume VALUES(1,0)")
+    db.execute("CREATE TABLE IF NOT EXISTS writer_daily_goal(id INTEGER PRIMARY KEY CHECK(id=1), target INTEGER NOT NULL CHECK(target IN (0,5,10,15,20,30)))")
+    db.execute("INSERT OR IGNORE INTO writer_daily_goal SELECT id,target FROM writer_volume")
 
 def target(db):
-    row=db.execute("SELECT target FROM writer_volume WHERE id=1").fetchone()
+    row=db.execute("SELECT target FROM writer_daily_goal WHERE id=1").fetchone()
     return row[0] if row else 0
 
 def set_target(db,pages):
-    if type(pages) is not int or pages not in (0,TARGET_PAGES):raise ValueError("invalid daily target")
-    db.execute("UPDATE writer_volume SET target=? WHERE id=1",(pages,))
+    if type(pages) is not int or pages not in GOALS:raise ValueError("invalid daily target")
+    db.execute("UPDATE writer_daily_goal SET target=? WHERE id=1",(pages,))
+    # Retain compatible legacy setting without changing the existing CHECK constraint.
+    db.execute("UPDATE writer_volume SET target=? WHERE id=1",(15 if pages else 0,))
 
 def today(now=None):
     return (now or datetime.now(timezone.utc)).date().isoformat()
