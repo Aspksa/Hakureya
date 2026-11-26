@@ -21,7 +21,7 @@ BRAINS=(
  ("time","Хронология"),("memory","Память"),("editor","Редактор"),("analytics","Аналитика"),
  ("twist","Повороты"),("coordinator","Координатор"))
 RELATIONS={"love","trust","ally","conflict","family","rival","friend"}
-KINDS={"character","biography","trait","habit","fear","goal","voice","power","limit","law","knowledge","location","world","place","artifact","prophecy","interpretation","promise","secret","clue","consequence","letter","tradition","event","age",*RELATIONS}
+KINDS={"character","biography","trait","habit","fear","goal","voice","power","limit","law","knowledge","location","world","place","artifact","prophecy","interpretation","promise","secret","clue","consequence","letter","tradition","event","age","identity","origin","belief","intention","emotion","diary","knowledge_transfer","world_time",*RELATIONS}
 ALIASES={"герой легенды":"герой","императрица":"хакурэя"}
 def norm(s):return ALIASES.get(o.normalized(s),o.normalized(s))
 def identifier(name):return "lit:actor:"+o.digest(norm(name))[:24]
@@ -68,7 +68,7 @@ def validate(db,story,raw):
         kind=f["kind"];subject=o.clean(f["subject"],2,60);obj=o.clean(f["object"],0,70)
         value=o.clean(f["value"],2,180);quote=o.clean(f["quote"],12,240);cause=f["cause"]
         if quote not in story or o.normalized(subject) not in o.normalized(quote):raise ValueError("unverified literary fact")
-        if kind in RELATIONS:
+        if kind in RELATIONS or kind=="knowledge_transfer":
             if not obj or norm(obj)==norm(subject) or o.normalized(obj) not in o.normalized(quote):raise ValueError("unverified relation")
         elif obj and o.normalized(obj) not in o.normalized(quote):raise ValueError("unverified object")
         if o.normalized(value) not in o.normalized(quote):raise ValueError("unverified value")
@@ -171,9 +171,9 @@ def collect_chapter(db,n,story,did):
     if ip:
         for f in ip["facts"]:add(f["kind"],f["key"],f["detail"],f["evidence"],cause=f["cause"])
     for f in extra(db,did):
-        if f["kind"] in {"character","biography","trait","habit","fear","goal","voice","age",*RELATIONS}:
+        if f["kind"] in {"character","biography","trait","habit","fear","goal","voice","age","identity","origin","belief","intention","emotion","diary","knowledge_transfer","world_time",*RELATIONS}:
             mention(f["subject"],f["quote"])
-        if f["kind"] in RELATIONS:mention(f["object"],f["quote"])
+        if f["kind"] in RELATIONS or f["kind"]=="knowledge_transfer":mention(f["object"],f["quote"])
         add(f["kind"],f["subject"],f["value"],f["quote"],f["object"],f["cause"])
     return records
 
@@ -339,6 +339,7 @@ def instruction(plan):
       "При необходимости дополнительно верни intelligence: список до двух записей {kind,subject,object,value,quote,cause}. "
       "kind: "+",".join(sorted(KINDS))+". subject и value дословно присутствуют в quote (12–240 символов из story); "
       "object пустая строка либо дословное второе имя/предмет в той же цитате. Для love/trust/ally/conflict/family/rival/friend укажи обоих героев. "
+      "Для knowledge_transfer явно назови отправителя (subject), получателя (object), содержание (value) и точную цитату. Для world_time укажи только явно написанное время, не вычисляй дату. diary — субъективная запись, intention — заявленное намерение. "
       "cause — номер уже опубликованной части либо null. Не выдумывай метаданные, при нехватке места пропусти их. "
       "Приоритет художественного текста и обязательных полей старых саг.")
 
