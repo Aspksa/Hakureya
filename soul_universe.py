@@ -12,6 +12,7 @@ import soul_intelligence as li
 
 VERSION=2
 SCENE_LIMIT=2200
+MAX_CONTEXT_BYTES=128_000
 # Additional scene directions attached to existing milestones, not a second saga.
 DYNASTY_LENSES={
 11: "Раскрой жизнь Маюри до обвинения, её собственную цель, последнюю ночь в темнице. Не завершай приговор до подтверждающего события.",
@@ -56,6 +57,7 @@ def init(db):
     db.execute("""CREATE TABLE IF NOT EXISTS universe_settings(
         id INTEGER PRIMARY KEY CHECK(id=1), chapter_pages INTEGER NOT NULL)""")
     db.execute("INSERT OR IGNORE INTO universe_settings VALUES(1,0)")
+    db.execute("""CREATE TABLE IF NOT EXISTS universe_fragments(attempt TEXT PRIMARY KEY,body TEXT NOT NULL,reason TEXT NOT NULL,checksum TEXT NOT NULL)""")
     db.execute("CREATE INDEX IF NOT EXISTS universe_terms_chapter ON universe_terms(chapter,seq)")
     fresh=not db.execute("SELECT 1 FROM sqlite_master WHERE name='universe_dirty'").fetchone()
     db.execute("CREATE TABLE IF NOT EXISTS universe_dirty(chapter INTEGER PRIMARY KEY)")
@@ -293,3 +295,16 @@ def report(db,mode,query=""):
         return "Целостность индекса сцен подтверждена; это не смысловая проверка."
     data=overview(db)
     return f"Литературная вселенная: {data['chapters']} опубликованных частей, {data['scenes']} сцен, {data['volumes']} томов, {data['chars']} знаков. Персонажей: {data['actors']}; отношений: {data['relations']}. Черновиков: {data['pending']}."
+
+
+def save_fragment(db,attempt,body,reason):
+    if not isinstance(body,str) or not body.strip():return
+    body=body[:24000].encode("utf-8","replace").decode("utf-8")
+    db.execute("INSERT OR REPLACE INTO universe_fragments VALUES(?,?,?,?)",(attempt,body,reason,o.digest(body)))
+    db.execute("DELETE FROM universe_fragments WHERE attempt NOT IN (SELECT attempt FROM universe_fragments ORDER BY attempt DESC LIMIT 20)")
+
+def fragment_text(db):
+    row=db.execute("SELECT attempt,body,reason,checksum FROM universe_fragments ORDER BY attempt DESC LIMIT 1").fetchone()
+    if not row:return "Нет сохранённых незавершённых фрагментов."
+    if o.digest(row[1])!=row[3]:return "Контрольная сумма фрагмента не совпадает."
+    return "Неутверждённый фрагмент "+row[0]+" ("+row[2]+"). Не входит в канон и не публикуется автоматически.\n\n"+row[1]
