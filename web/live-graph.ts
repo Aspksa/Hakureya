@@ -95,7 +95,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   const oldKeys=new Set(snapshot.records.map(n=>n.key));
   const scopeChanged=snapshot.volume!==next.volume,firstSnapshot=!receivedSnapshot&&!initial;
   if(scopeChanged){zoom=1;panX=0;panY=0;active="";births.clear();replayAt=0;focusMotion=null;}
-  for(const n of next.records){if(/^c:[1-9]\d*$/.test(n.key)){const id=Number(n.key.slice(2));if(receivedSnapshot&&!scopeChanged&&!next.volume&&id>maxChapter&&!motion.matches)births.set(n.key,now);}}
+  for(const n of next.records){if(/^c:[1-9]\d*$/.test(n.key)){const id=Number(n.key.slice(2));if(receivedSnapshot&&!scopeChanged&&!next.volume&&id>maxChapter&&!motion.matches&&!paused&&!document.hidden)births.set(n.key,now);}}
   for(const n of next.records){if(/^c:[1-9]\d*$/.test(n.key))maxChapter=Math.max(maxChapter,Number(n.key.slice(2)));}
   if(!initial)receivedSnapshot=true;
   const publication=next.publication,wasReceived=receivedSnapshot&&!firstSnapshot;
@@ -174,7 +174,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
     if(!p){const group=el("g",{},flows),line=el("polyline",{fill:"none","stroke-width":1.1},group),dots=Array.from({length:6},()=>el("circle",{r:1.5},group));p={group,line,dots};particles.set(key,p)}
     p.line.setAttribute("points",route.points.map(q=>(q.x*s)+","+(q.y*s)).join(" "));
     p.line.setAttribute("vector-effect","non-scaling-stroke");p.line.setAttribute("stroke",route.color);p.line.setAttribute("opacity",String(.35*fade));
-    p.dots.forEach((d,j)=>{const count=graph.nodes.length>800?3:6,t=motion.matches?.5:((elapsed/(1000+120*i)+i*.17-j*.055+2)%1),q=pointOn(route.points,t);d.setAttribute("r",String((j===0?2.8:Math.max(.65,2.1-j*.27))*inverse));d.setAttribute("cx",String(q.x*s));d.setAttribute("cy",String(q.y*s));d.setAttribute("fill",route.color);d.setAttribute("opacity",String((j>=count||motion.matches&&j>0?0:1-j*.14)*fade))});
+    p.dots.forEach((d,j)=>{const count=graph.nodes.length>800?3:6,t=motion.matches?.5:a.current.stage==="waiting"?Math.min(1,Math.max(0,elapsed/1100-j*.07)):((elapsed/(1000+120*i)+i*.17-j*.055+2)%1),q=pointOn(route.points,t);d.setAttribute("r",String((j===0?2.8:Math.max(.65,2.1-j*.27))*inverse));d.setAttribute("cx",String(q.x*s));d.setAttribute("cy",String(q.y*s));d.setAttribute("fill",route.color);d.setAttribute("opacity",String((j>=count||motion.matches&&j>0?0:1-j*.14)*fade*(a.current.stage==="waiting"&&!motion.matches?Math.max(0,Math.min(1,(1800-elapsed)/500)):1)))});
    });
    if(!a.terminal||fade>.15){
     hot.set("root","#e9cf9c");
