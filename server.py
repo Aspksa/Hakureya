@@ -32,6 +32,7 @@ import soul_intelligence
 import soul_director
 import soul_dynasty
 import soul_universe
+import soul_intellect
 import soul_export
 import graph_activity
 import writer_activity
@@ -239,6 +240,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                         db.execute("DELETE FROM chronicle_attempts WHERE day=? AND status='reserved'",(reservation[0],))
                         if once:writer_volume.close_job(db,"error","Несогласованные сюжетные планы; платный запрос не отправлен.")
                         return "Несогласованные сюжетные планы; платный запрос не отправлен."
+                    soul_intellect.prepare(db,plan)
                     soul_intelligence.prepare(db,plan)
             previous=[]
             if plan:
@@ -262,6 +264,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                 soul_evolution.reserve_cost(db,reservation[0],model,cost)
                 soul_intelligence.record_run(db,reservation[0],plan)
                 soul_universe.record(db,reservation[0],plan)
+                soul_intellect.record_run(db,reservation[0],plan)
                 visual_sources=writer_activity.context_keys(db,plan,previous)
         if not reservation:
             if once:
@@ -403,6 +406,31 @@ def chronicle_command(content):
     scene_query=re.fullmatch(r"поиск сцены (.{2,180})",q)
     actor_query=re.fullmatch(r"история персонажа (.{2,80})",q)
     timeline_query=re.fullmatch(r"хронология вселенной ([1-9][0-9]{0,5})",q)
+    intellect_commands={"литературный интеллект":"overview","проверка противоречий":"issues","открытые сюжетные нити":"threads","история знаний":"knowledge","проверить свидетельства":"audit","восстановить свидетельства":"repair","забытые герои":"forgotten"}
+    intellect_search=re.fullmatch(r"смысловой поиск (.{2,180})",q)
+    intellect_profile=re.fullmatch(r"личная память (.{2,80})",q)
+    identity_create=re.fullmatch(r"разделить личности\s+([^|]+)\s*\|\s*([1-9][0-9]{0,6})\s*\|\s*(.+)",content.strip(),re.I)
+    identity_assign=re.fullmatch(r"назначить свидетельство ([0-9a-f]{32}) (person:[0-9a-f]{24})",q)
+    if q in intellect_commands or intellect_search or intellect_profile or identity_create or identity_assign:
+        with LOCK, closing(connect()) as db, db:
+            if not soul_chronicle.canon_ok(db):return "Целостность канона нарушена."
+            db.execute("SAVEPOINT intellect_command")
+            try:
+                if identity_create:
+                    result="Создан отдельный ID личности: "+soul_intellect.create_identity(db,identity_create[1].strip(),int(identity_create[2]),identity_create[3].strip())
+                elif identity_assign:
+                    soul_intellect.refresh(db)
+                    soul_intellect.assign_identity(db,identity_assign[1],identity_assign[2])
+                    result="Свидетельство назначено указанной личности; исходный текст не изменён."
+                elif intellect_search:result=soul_intellect.report(db,"search",intellect_search[1])
+                elif intellect_profile:result=soul_intellect.report(db,"profile",intellect_profile[1])
+                else:result=soul_intellect.report(db,intellect_commands[q])
+                db.execute("RELEASE intellect_command")
+                return result
+            except (ValueError,TypeError,KeyError,IndexError,sqlite3.Error):
+                db.execute("ROLLBACK TO intellect_command");db.execute("RELEASE intellect_command")
+                return "Свидетельство не подтверждено или литературный индекс недоступен. Платный запрос не отправлен."
+    if q in ("смысловой поиск","личная память","разделить личности","назначить свидетельство"):return "Укажите параметры литературной команды; платный запрос не отправлен."
     if q=="восстановить фрагмент":
         with LOCK, closing(connect()) as db:return soul_universe.fragment_text(db)
     if q in ("поиск сцены","история персонажа"):return "Укажите запрос после названия команды. Запрос Cloud.ru не отправлен."
@@ -747,6 +775,7 @@ def chronicle_worker(stop):
                         soul_novel.forecast(db)
                         soul_infinite.refresh_forecast(db)
                         soul_intelligence.refresh(db)
+                        soul_intellect.refresh(db)
                         repaired=soul_intelligence.sweep(db)
                         if repaired:LOG.info("repaired derived literary records: %d",repaired)
                 writer_volume.reconcile_job(db)
