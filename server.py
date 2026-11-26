@@ -25,6 +25,7 @@ import soul_immortal
 import soul_novel
 import soul_infinite
 import graph_activity
+import writer_activity
 import time, re
 import base64, binascii
 
@@ -131,19 +132,22 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                     db.execute("DELETE FROM chronicle_attempts WHERE day=? AND status='reserved'",(reservation[0],))
                     return "Литературный запрос остановлен: проверьте денежный лимит или тариф модели."
                 soul_evolution.reserve_cost(db,reservation[0],model,cost)
+                visual_sources=writer_activity.context_keys(db,plan,previous)
         if not reservation:
             return "Есть незавершённая попытка или ожидающий черновик, нарушена целостность канона либо исчерпан дневной лимит."
         key, model, epoch=CONFIG["key"],writer or CONFIG["model"],CHRONICLE["epoch"]
-    with graph_activity.track("chronicle",("destiny:root" if destiny_plan else "guardians:root" if guardian_plan else "shadow:root" if shadow_plan else (f"d:{reservation[1]}" if reservation[1]>0 else ("heart:root" if plan["arc"]=="love" else "living:root" if plan.get("living") and plan["arc"]=="future" else "arc:"+plan["arc"])))) as activity:
+    with graph_activity.track("chronicle",("destiny:root" if destiny_plan else "guardians:root" if guardian_plan else "shadow:root" if shadow_plan else (f"d:{reservation[1]}" if reservation[1]>0 else ("heart:root" if plan["arc"]=="love" else "living:root" if plan.get("living") and plan["arc"]=="future" else "arc:"+plan["arc"]))),sources=visual_sources) as activity:
         return execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
 
 def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan):
     try:
+        graph_activity.update(activity,"context")
         payload={"model":model,"messages":soul_chronicle.prompt(reservation,traits,previous,plan),"max_tokens":cloud_writer.LIMIT,"stream":False}
         req=Request(API,data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
         graph_activity.update(activity,"waiting")
         with urlopen(req,timeout=60) as res:
             result=json.loads(res.read(1_000_000))
+        graph_activity.update(activity,"received","hub:4")
         graph_activity.update(activity,"validating","hub:4")
         with LOCK, closing(connect()) as db, db:
             cloud_writer.usage(db,reservation[0],model,result)
@@ -158,6 +162,7 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
                 soul_chronicle.fail(db,reservation)
                 graph_activity.update(activity,"discarded")
                 return "Настройки изменились; черновик отброшен."
+            graph_activity.update(activity,"saving","hub:4")
             soul_chronicle.finish(db,reservation,value,plan)
             pending=soul_chronicle.latest_pending(db)
             editorial=soul_omega.metadata(db,pending["id"])
@@ -171,7 +176,7 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
                 auto_published=soul_living.publish_if_allowed(db,pending["id"])
             if auto_published:
                 number=db.execute("SELECT number FROM saga_arcs WHERE draft_id=?",(pending["id"],)).fetchone()[0]
-        graph_activity.update(activity,"done",f"c:{pending['id']}" if auto_published else f"draft:{pending['id']}" if pending else "hub:4")
+        graph_activity.update(activity,"published" if auto_published else "saved",f"c:{pending['id']}" if auto_published else f"draft:{pending['id']}" if pending else "hub:4")
         if auto_published:return f"Глава {number} опубликована: "+pending["title"]
         if plan.get("destiny"):
             return "Черновик создан.\n\n"+pending["title"]+"\n\n"+pending["story"]+"\n\n"+("Принять главу / Отклонить главу." if destiny_saved else "Этап ещё не завершён. Принять главу / Отклонить главу.")
