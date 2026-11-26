@@ -69,3 +69,19 @@ test("Heart topics and growing moments have separate finite lattice positions",(
  assert.ok(Math.abs(Math.hypot(a.x-b.x,a.y-b.y)-.026)<1e-8);
  assert.deepEqual(g.nodes,layout({records,edges:[]}).nodes);
 });
+
+test("Shadow and Heart areas remain separate with all epoch sectors",()=>{
+ const records=[{key:"heart:root",group:4,heart_topic:"root",heart_slot:-1},{key:"shadow:root",group:4,shadow_topic:"root",shadow_slot:-1}];
+ for(const topic of ["court","visits","suitors","threat","mask","power"]){
+  records.push({key:"shadow:topic:"+topic,group:4,shadow_topic:topic,shadow_slot:-1});
+  for(let i=0;i<18;i++)records.push({key:"shadow:"+topic+":"+i,group:4,shadow_topic:topic,shadow_slot:i});
+ }
+ for(const topic of ["meeting","tenderness","trust","memory","letters","adventure"]){
+  records.push({key:"heart:topic:"+topic,group:4,heart_topic:topic,heart_slot:-1});
+  for(let i=0;i<30;i++)records.push({key:"heart:"+topic+":"+i,group:4,heart_topic:topic,heart_slot:i});
+ }
+ for(const sector of ["past","meeting","love","future"])records.push({key:"era:"+sector,group:4,sector,book:0,chapter_slot:0});
+ const g=layout({records,edges:[]});
+ assert.ok(g.nodes.every(n=>Number.isFinite(n.x)&&Number.isFinite(n.y)));
+ assert.equal(new Set(g.nodes.map(n=>n.x.toFixed(8)+":"+n.y.toFixed(8))).size,g.nodes.length);
+});
