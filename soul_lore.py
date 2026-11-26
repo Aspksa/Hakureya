@@ -41,11 +41,20 @@ def context_for(query):
         start=raw.index("### Глава V.")
         end=raw.index("### Глава VII.")
         middle=raw.index("### Глава VI.")
-        if "глава vi" in q or "первые объятия" in q:return SUMMARY+"\n\n"+raw[middle:end]
-        if "глава v" in q or "первая встреча" in q or "в лесу" in q:return SUMMARY+"\n\n"+raw[start:middle]
-        # Preserve both ends of each expanded chapter without doubling prior prompt size.
         first,second=raw[start:middle],raw[middle:end]
-        return SUMMARY+"\n\nИзбранные отрывки глав V–VI (вымысел):\n"+first[:3000]+"\n[... ]\n"+first[-3000:]+"\n"+second[:3000]+"\n[... ]\n"+second[-3000:]
+        label="\n\nКанонические главы V–VI (вымысел; выбранные отрывки):\n"
+        if "глава vi" in q or "первые объятия" in q:return SUMMARY+label+second
+        if "глава v" in q or "первая встреча" in q or "в лесу" in q:return SUMMARY+label+first
+        # Preserve the decisive scenes as well as the opening and ending.
+        # Taking only the outer edges of expanded chapters loses the first touch.
+        touch=first.index("#### Первое невозможное прикосновение")
+        touch_end=first.index("#### Императрица на руках смертного",touch)
+        embrace=second.index("#### Первые объятия")
+        embrace_end=second.index("#### Первые слёзы вечной императрицы",embrace)
+        if "первое прикосновение" in q:return SUMMARY+label+first
+        return SUMMARY+label+"\n[... ]\n".join((
+            first[:1200],first[touch:touch_end],first[-1500:],
+            second[:1200],second[embrace:embrace_end],second[-1600:]))
     if any(x in q for x in ("биография","легенда","летопись","история знакомства","твоя история","прошлое","девять небес")):
         raw=canon();start=raw.index("### Глава V.");middle=raw.index("### Глава VI.");end=raw.index("### Глава VII.")
         return SUMMARY+"\n\nЛетопись (вымысел; главы V–VI сокращены для контекста):\n"+raw[:start]+raw[start:start+3000]+"\n[... ]\n"+raw[middle-3000:middle]+raw[middle:middle+3000]+"\n[... ]\n"+raw[end-3000:end]+raw[end:]
