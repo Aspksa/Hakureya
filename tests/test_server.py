@@ -44,12 +44,14 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(e.exception.code,403)
 
     def test_real_graph_and_notes(self):
-        self.assertEqual(self.request("graph")["records"],[])
+        initial=self.request("graph")
+        self.assertEqual(len([n for n in initial["records"] if n["key"].startswith("canon:")]),13)
+        self.assertTrue(all(n["group"]==4 for n in initial["records"]))
         self.request("chat",{"content":"проверка двигателя автомобиля"})
         self.request("note",{"kind":1,"content":"проверка двигателя автомобиля"})
         graph=self.request("graph")
-        self.assertEqual(graph["total"],2)
-        self.assertEqual({n["group"] for n in graph["records"]},{0,1})
+        self.assertEqual(graph["total"],initial["total"]+2)
+        self.assertEqual({n["group"] for n in graph["records"]},{0,1,4})
         self.assertTrue(any(e["kind"]=="keywords" for e in graph["edges"]))
         self.assertEqual(graph,self.request("graph"))
         with self.assertRaises(HTTPError):
@@ -95,8 +97,34 @@ class ServerTest(unittest.TestCase):
             self.assertEqual(sent["max_tokens"],1800)
             self.assertIn("Черновик",self.request("chat",{"content":"летопись: черновик"})["reply"].replace("черновик","Черновик"))
             self.assertFalse(any(n["key"].startswith("c:") for n in self.request("graph")["records"]))
+            self.assertTrue(any(n["key"]=="draft:1" and n["kind"]=="draft" for n in self.request("graph")["records"]))
             self.assertIn("Решение сохранено",self.request("chat",{"content":"летопись: принять 1"})["reply"])
             self.assertTrue(any(n["key"]=="c:1" for n in self.request("graph")["records"]))
             self.assertEqual(self.request("chronicle")["status"]["approved"],1)
             self.request("chat",{"content":"летопись: создать"})
             self.assertEqual(remote.call_count,1)
+
+    def test_real_activity_during_network_and_error(self):
+        from urllib.error import URLError
+        self.request("chat",{"content":"Локально"})
+        self.assertEqual(self.request("activity")["active"],[])
+        self.request("config",{"key":"test-key","model":"test-model","consent":True})
+        fake=MagicMock()
+        fake.__enter__.return_value.read.return_value=json.dumps({"choices":[{"message":{"content":"Ответ"}}]}).encode()
+        def remote(*args,**kwargs):
+            events=self.request("activity")
+            self.assertEqual(len(events["active"]),1)
+            self.assertEqual(events["active"][0]["kind"],"chat")
+            self.assertEqual(events["active"][0]["stage"],"waiting")
+            self.assertNotIn("test-key",json.dumps(events))
+            return fake
+        with patch.object(server,"urlopen",side_effect=remote):
+            self.request("chat",{"content":"Вопрос"})
+        events=self.request("activity")
+        self.assertEqual(events["active"],[])
+        self.assertTrue(any(e["stage"]=="done" for e in events["recent"]))
+        with patch.object(server,"urlopen",side_effect=URLError("offline")):
+            with self.assertRaises(HTTPError):
+                self.request("chat",{"content":"Ошибка"})
+        self.assertEqual(self.request("activity")["active"],[])
+        self.assertTrue(any(e["stage"]=="error" for e in self.request("activity")["recent"]))

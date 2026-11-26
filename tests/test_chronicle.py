@@ -39,7 +39,10 @@ class ChronicleTest(unittest.TestCase):
         self.assertEqual(c.profile(self.db)["patience"],52)
         self.assertEqual(soul_lore.canon(),initial)
         graph=memory_graph.snapshot(self.db)
-        self.assertEqual({n["key"] for n in graph["records"]},{"d:1","c:1"})
+        self.assertTrue({"d:1","c:1","canon:1","canon:13"}.issubset({n["key"] for n in graph["records"]}))
+        self.assertEqual(next(n for n in graph["records"] if n["key"]=="c:1")["group"],4)
+        self.assertFalse(any(n["key"].startswith("draft:") for n in graph["records"]))
+        self.assertTrue(any(e["kind"]=="emotion" and e["a"]=="c:1" for e in graph["edges"]))
         self.assertTrue(any(e["kind"]=="chronicle" for e in graph["edges"]))
         self.assertEqual(len([n for n in c.biography_graph(self.db)["nodes"] if n["kind"]=="fictional_chapter"]),13)
     def test_validation_and_failure(self):
@@ -73,3 +76,22 @@ class ChronicleTest(unittest.TestCase):
         r=c.reserve(self.db)
         self.assertNotIn("Ответ",json.dumps(c.prompt(r,c.BASE),ensure_ascii=False))
         self.assertIn("не события легенды",c.prompt(r,c.BASE)[1]["content"])
+
+    def test_permanent_canon_and_stable_slots(self):
+        first=memory_graph.snapshot(self.db)
+        slots={n["key"]:n["slot"] for n in first["records"]}
+        self.reviews()
+        r=c.reserve(self.db)
+        c.finish(self.db,r,draft())
+        second=memory_graph.snapshot(self.db)
+        self.assertTrue(any(n["key"]=="draft:1" for n in second["records"]))
+        self.assertTrue(c.decide(self.db,1,True))
+        third=memory_graph.snapshot(self.db)
+        self.assertTrue(all(n["slot"]==slots[n["key"]] for n in third["records"] if n["key"] in slots))
+        for i in range(80):
+            memory_graph.add_note(self.db,1,"Запись "+str(i))
+        limited=memory_graph.snapshot(self.db,60)
+        self.assertEqual(len([n for n in limited["records"] if n["key"].startswith("canon:")]),13)
+        self.assertTrue(limited["limited"])
+        keys={n["key"] for n in limited["records"]}
+        self.assertTrue(all(e["a"] in keys and e["b"] in keys for e in limited["edges"]))

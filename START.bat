@@ -8,12 +8,17 @@ where py >nul 2>&1
 if not errorlevel 1 set "PY=py -3"
 %PY% --version
 if errorlevel 1 goto fail
-if exist "dist\index.html" goto run
+%PY% build_stamp.py
+if not errorlevel 1 goto run
 where npm.cmd >nul 2>&1
 if errorlevel 1 goto fail
-call npm.cmd install --no-audit --no-fund
-if errorlevel 1 goto fail
+if not exist "node_modules\vite\package.json" (
+  call npm.cmd install --no-audit --no-fund
+  if errorlevel 1 goto fail
+)
 call npm.cmd run build
+if errorlevel 1 goto fail
+%PY% build_stamp.py --write
 if errorlevel 1 goto fail
 :run
 %PY% server.py
