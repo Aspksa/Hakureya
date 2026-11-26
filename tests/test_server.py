@@ -14,6 +14,7 @@ class ServerTest(unittest.TestCase):
         self.old = server.DB
         server.DB = Path(self.temp.name) / "test.sqlite3"
         server.CONFIG.update(key="",model="")
+        server.CHRONICLE.update(enabled=False,epoch=0,last_activity=0)
         self.http = ThreadingHTTPServer(("127.0.0.1",0),server.Handler)
         self.thread=threading.Thread(target=self.http.serve_forever,daemon=True)
         self.thread.start()
@@ -71,3 +72,31 @@ class ServerTest(unittest.TestCase):
             snap=soul_core.snapshot(db)
             self.assertEqual(snap["history"]["events"]["response_review"],1)
             self.assertEqual(snap["history"]["events"]["model_selected"],1)
+
+    def test_chronicle_cloud_draft_opt_in(self):
+        import soul_chronicle as c
+        from test_chronicle import draft
+        for i in range(5):
+            server.store("assistant","Ответ")
+        with patch.object(server,"urlopen") as remote:
+            self.assertIn("Дневник",self.request("chat",{"content":"летопись: статус"})["reply"])
+            self.assertIn("Cloud.ru",self.request("chat",{"content":"летопись: создать"})["reply"])
+            remote.assert_not_called()
+        self.request("config",{"key":"test-key","model":"test-model","consent":True})
+        with patch.object(server,"urlopen") as remote:
+            server.generate_chronicle(background=True)
+            remote.assert_not_called()
+        fake=MagicMock()
+        fake.__enter__.return_value.read.return_value=json.dumps({"choices":[{"message":{"content":json.dumps(draft(),ensure_ascii=False)}}]}).encode()
+        with patch.object(server,"urlopen",return_value=fake) as remote:
+            self.assertIn("Черновик создан",self.request("chat",{"content":"летопись: создать"})["reply"])
+            self.assertEqual(remote.call_count,1)
+            sent=json.loads(remote.call_args.args[0].data)
+            self.assertEqual(sent["max_tokens"],1800)
+            self.assertIn("Черновик",self.request("chat",{"content":"летопись: черновик"})["reply"].replace("черновик","Черновик"))
+            self.assertFalse(any(n["key"].startswith("c:") for n in self.request("graph")["records"]))
+            self.assertIn("Решение сохранено",self.request("chat",{"content":"летопись: принять 1"})["reply"])
+            self.assertTrue(any(n["key"]=="c:1" for n in self.request("graph")["records"]))
+            self.assertEqual(self.request("chronicle")["status"]["approved"],1)
+            self.request("chat",{"content":"летопись: создать"})
+            self.assertEqual(remote.call_count,1)
