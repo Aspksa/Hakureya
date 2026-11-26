@@ -11,10 +11,9 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
  const defs=el("defs"),colors=["#fffdf4",...palette];
  colors.forEach((c,i)=>{const g=el("radialGradient",{id:"glow"+i},defs);for(const [offset,opacity] of [[0,.92],[.11,.65],[.25,.26],[.5,.08],[1,0]])el("stop",{offset,"stop-color":c,"stop-opacity":opacity},g)});
  const cloudGlow=el("radialGradient",{id:"cloud-glow"},defs);for(const [offset,opacity] of [[0,.8],[.2,.35],[1,0]])el("stop",{offset,"stop-color":"#91cbff","stop-opacity":opacity},cloudGlow);
+ const fog=el("g",{"pointer-events":"none","aria-hidden":"true"});
  const stars=el("g",{"pointer-events":"none"}),world=el("g"),links=el("g",{"pointer-events":"none"},world),orbits=el("g",{"pointer-events":"none"},world),dots=el("g",{},world),flows=el("g",{"pointer-events":"none"},world),overlay=el("g",{"pointer-events":"none"},world);
  // Decorative Genesis layers are never persisted as literary records.
- const fog=el("g",{"pointer-events":"none","aria-hidden":"true"});
- svg.insertBefore(fog,stars);
  const mist=el("radialGradient",{id:"genesis-mist"},defs);
  for(const [offset,opacity] of [[0,.23],[.43,.085],[1,0]])el("stop",{offset,"stop-color":"#d0a66a","stop-opacity":opacity},mist);
  const clouds=Array.from({length:3},()=>el("ellipse",{fill:"url(#genesis-mist)"},fog));
@@ -35,7 +34,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
  for(const [key,label] of Object.entries({mist:"Туман",glow:"Свечение",particles:"Частицы",speed:"Скорость"})){
   const k=key as EffectKey,row=document.createElement("label"),input=document.createElement("input");
   input.type="range";input.min="0";input.max="100";input.value=String(settings[k]);input.setAttribute("aria-label",label);
-  row.append(document.createTextNode(label),input);panel.append(row);
+  const caption=document.createElement("span");caption.textContent=label;row.append(caption,input);panel.append(row);
   input.addEventListener("input",()=>{settings[k]=Number(input.value);try{localStorage.setItem("hakureya.genesis.v1",JSON.stringify(settings))}catch{}invalidate()});
  }
  svg.parentElement?.append(panel);
