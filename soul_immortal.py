@@ -235,7 +235,7 @@ def volume_graph(db,volume):
     low,high=(1,13) if volume==1 else (14+(volume-2)*12,25+(volume-2)*12)
     rows=db.execute("SELECT number,title,draft_id FROM omega_index WHERE number BETWEEN ? AND ? ORDER BY number",(low,high)).fetchall()
     if not rows:raise ValueError("Том не найден")
-    records=[{"key":f"book:{volume}","label":f"Том {volume}","group":4,"kind":"book","slot":0}]
+    records=[{"key":f"book:{volume}","label":f"Том {volume}","group":4,"kind":"book","slot":0,"volume_complete":len(rows)==high-low+1}]
     edges=[];slot=1;previous=None
     for n,title,did in rows:
         if not c.canon_ok(db):raise ValueError("Канон повреждён")

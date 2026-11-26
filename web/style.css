@@ -154,3 +154,19 @@ dialog button:hover{background:#d5b38b12}
 #command-results .command-item small{font-size:11px;color:#af9c80;overflow-wrap:anywhere}
 #command-results .command-item:hover,#command-results .command-item:focus-visible{background:#d7b97e18}
 @media(max-width:600px){#command-dialog{padding:14px}#command-results{max-height:38dvh}#composer #command-plus{flex-basis:36px;min-width:36px}}
+
+/* Stellar Genesis: quiet cosmic scene and factual event ledger. */
+#stage{background:radial-gradient(ellipse at 48% 46%,#0a0909 0%,#030305 72%,#020203 100%)}
+#stellar-cinema{position:absolute;bottom:15px;left:142px;z-index:2;min-width:36px;min-height:36px;color:#d4bd94;font-size:21px;border-radius:8px;touch-action:auto}
+#stellar-cinema:hover,#stellar-cinema[aria-pressed=true]{background:#d6bb8920}
+#stage.stellar-cinema{position:fixed;inset:0!important;z-index:20}
+#stage.stellar-cinema .genesis-settings:not([open]){opacity:.55}
+#stage.stellar-cinema #stellar-cinema{left:auto;right:16px;bottom:16px}
+#stage.book-full:not(.stellar-cinema) #stellar-cinema{display:none}
+.stellar-ledger{position:absolute;top:44px;left:14px;max-width:min(230px,calc(100% - 32px));pointer-events:none;color:#b8a78d;font:12px/1.35 var(--ui-font);z-index:1;background:linear-gradient(90deg,#090809d9,transparent);padding:10px 12px;border-radius:7px;overflow-wrap:anywhere}
+.stellar-ledger strong{font-weight:550;letter-spacing:.025em;color:#d9bc86}
+.stellar-ledger p{margin:6px 0;padding-left:9px;border-left:1px solid #6a594344;font-size:11px}
+.stellar-ledger .stellar-current{color:#fff1cf;border-left:2px solid #f1ce7b;font-weight:600}
+.stellar-ledger .stellar-warning{color:#f3a19b;border-left:2px solid #d9746c}
+.stellar-ledger .stellar-event{opacity:.75}
+@media(max-width:600px){.stellar-ledger{top:48px;left:8px;max-width:min(155px,45%);padding:6px;font-size:10px}.stellar-ledger p{font-size:10px;margin:4px 0}#stellar-cinema{bottom:13px}}

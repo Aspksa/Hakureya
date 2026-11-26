@@ -38,6 +38,7 @@ graph.records.push({key:"immortal:root",group:4,kind:"immortal_root",immortal_sl
 graph.total=graph.records.length;
 const prose=Array.from({length:55},(_,i)=>"Абзац "+(i+1)+". Хакурэя подняла глаза и прислушалась к тишине. — Пойдём дальше, — сказала она. Герой улыбнулся.").join("\n\n");
 const checkpoints=[];
+let activity={session:"test",revision:1,active:[],recent:[]};
 const reader={chapter:1,title:"Первая глава",volume:1,page:1,pages:5,text:"Вечный снег. \n\nХакурэя открыла глаза.",chapter_progress:.2,volume_progress:.03,can_back:false,can_next:true,last_published:false,document:{chapter:1,last_chapter:1,title:"Первая глава",volume:1,text:prose,hash:"fixture",offset:0,segments:[{number:1,start:0,end:Array.from(prose).length,hash:"fixture-part"}],latest:2,volume_count:2,volume_ordinal:1,parts:1,epoch:1}};
 test("real browser: SVG, chat, book and settings at four viewport widths",{skip:!chrome&&"Chrome/Chromium not installed",timeout:120000},async()=>{
  const dir=await mkdtemp(join(tmpdir(),"hakureya-layout-"));
@@ -54,7 +55,7 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
      if(payload.action==="position")checkpoints.push(payload);
      res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify(payload.action==="position"?{ok:true}:{reader}));return;
     }
-    const data=path==="/api/graph"?graph:path==="/api/history"?{messages:[],connected:false}:path==="/api/reader"?{reader:null}:path==="/api/chat"?{reply:"",reader,connected:false}:{session:"test",revision:1,active:[],recent:[]};
+    const data=path==="/api/graph"?graph:path==="/api/history"?{messages:[],connected:false}:path==="/api/reader"?{reader:null}:path==="/api/chat"?{reply:"",reader,connected:false}:activity;
     req.resume();res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify(data));return;
    }
    const file=resolve(dist,"."+ (path==="/"?"/index.html":path));
@@ -89,6 +90,18 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
    assert.ok(metrics.font>=13&&metrics.font<=16,JSON.stringify(metrics));
    assert.ok(metrics.labels>=1);
    assert.equal(await evaluate("document.querySelector('#graph [data-key=\\\"cloud:api\\\"] title').textContent"),"Cloud.ru");
+   assert.ok(await evaluate("!!document.querySelector('#stellar-core') && !!document.querySelector('#stellar-chapter')"));
+   await evaluate("document.querySelector('#stellar-cinema').click()");
+   assert.ok(await evaluate("document.querySelector('#stage').classList.contains('stellar-cinema') && document.querySelector('#stellar-cinema').getAttribute('aria-pressed')==='true'"));
+   await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))");
+   assert.equal(await evaluate("document.querySelector('#stage').classList.contains('stellar-cinema')"),false);
+   if(width===1920){
+    activity={session:"test",revision:2,active:[{id:"fixture-writer",kind:"chronicle",source:"root",target:"root",stage:"streaming",response_chars:240,chunks:3,sources:["root"],events:[{seq:1,stage:"context",target:"root"},{seq:2,stage:"streaming",target:"root"}]}],recent:[]};
+    await waitFor(()=>evaluate("!document.querySelector('.stellar-ledger').hidden && document.querySelector('.stellar-ledger .stellar-current')?.textContent.includes('поступает текст')"));
+    assert.ok(await evaluate("document.querySelector('.stellar-ledger').textContent.includes('240 символов ответа')"));
+    activity={session:"test",revision:3,active:[],recent:[]};
+    await waitFor(()=>evaluate("document.querySelector('.stellar-ledger').hidden"));
+   }
    await evaluate("document.querySelector('#avatar').click()");
    await waitFor(()=>evaluate("!document.querySelector('#chat').hidden"));
    await delay(200);
