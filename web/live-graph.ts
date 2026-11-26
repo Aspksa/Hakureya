@@ -17,7 +17,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
  let receivedSnapshot=false,maxChapter=0,level=-1;
  let recentChapterKeys=new Set<string>();
  const births=new Map<string,number>();
- const glyphs=new Map<string,SVGGElement>(),labels=new Map<string,SVGTextElement>();
+ const glyphs=new Map<string,SVGGElement>(),labels=new Map<string,SVGTextElement>(),labelWidths=new Map<string,number>();
  let camera=cameraFrame(graph.bounds,w,h),glyphScale=NaN,selectionGlyph:SVGGElement|null=null;
  let focusMotion:null|{start:number,fromZoom:number,toZoom:number,fromX:number,fromY:number,toX:number,toY:number}=null;
  const motion=matchMedia("(prefers-reduced-motion: reduce)");
@@ -36,7 +36,8 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   const priority=(key:string)=>key==="root"?0:key===active?1:key.startsWith("hub:")?2:graph.byKey.get(key)?.kind?.endsWith("_root")?3:4;
   for(const [key,t] of [...labels].sort((a,b)=>priority(a[0])-priority(b[0])||a[0].localeCompare(b[0]))){
    const n=graph.byKey.get(key),px=x+n.x*s*k,py=y+n.y*s*k;
-   const width=Math.max(48,t.getComputedTextLength?.()||((n.label?.length||0)*7.5)),baseline=key==="root"?37:24,box={l:px-width/2-5,r:px+width/2+5,t:py+baseline-16,b:py+baseline+5};
+   let width=labelWidths.get(key);if(width===undefined){width=Math.max(48,t.getComputedTextLength?.()||((n.label?.length||0)*7.5));labelWidths.set(key,width)}
+   const baseline=key==="root"?37:24,box={l:px-width/2-5,r:px+width/2+5,t:py+baseline-16,b:py+baseline+5};
    const visible=items.get(key)?.getAttribute("visibility")!=="hidden"&&box.l>=2&&box.r<=w-2&&box.t>=2&&box.b<=h-2&&!(key===active&&key!=="root")&&!boxes.some(q=>box.l<q.r&&box.r>q.l&&box.t<q.b&&box.b>q.t);
    t.setAttribute("visibility",visible?"visible":"hidden");
    if(visible)boxes.push(box);
@@ -86,7 +87,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   for(const n of next.records){if(/^c:[1-9]\d*$/.test(n.key))maxChapter=Math.max(maxChapter,Number(n.key.slice(2)));}
   if(!initial)receivedSnapshot=true;
   snapshot=next;graph=layout(next);level=-1;
-  recentChapterKeys=new Set<string>(next.records.filter(n=>/^c:[1-9]\d*$/.test(n.key)).sort((a,b)=>Number(b.key.slice(2))-Number(a.key.slice(2))).slice(0,20).map(n=>n.key));items.clear();glyphs.clear();labels.clear();glyphScale=NaN;links.replaceChildren();dots.replaceChildren();overlay.replaceChildren();
+  recentChapterKeys=new Set<string>(next.records.filter(n=>/^c:[1-9]\d*$/.test(n.key)).sort((a,b)=>Number(b.key.slice(2))-Number(a.key.slice(2))).slice(0,20).map(n=>n.key));items.clear();glyphs.clear();labels.clear();labelWidths.clear();glyphScale=NaN;links.replaceChildren();dots.replaceChildren();overlay.replaceChildren();
   // Always preserve root, categories and canon links; thin dense secondary edges only.
   const essential=graph.edges.filter(e=>e.kind==="category"||e.kind==="chronology"||e.a.startsWith("canon:")||e.kind==="draft"||e.kind.startsWith("heart_")||e.kind.startsWith("shadow_")||e.kind.startsWith("guardian_")||e.kind.startsWith("destiny_")||e.kind.startsWith("living_")||e.kind.startsWith("evolution_")||e.kind.startsWith("immortal_"));
   const essentialSet=new Set(essential);const secondary=graph.edges.filter(e=>!essentialSet.has(e));
