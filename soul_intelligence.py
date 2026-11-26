@@ -289,9 +289,18 @@ def prepare(db,plan):
     brain("twist",{"causes":[{"chapter":n,"cause":f["cause"],"value":f["value"][:100]} for n,f in recent if f["cause"] is not None][-2:],"guide":"Поворот должен опираться на улику, а не отменять прежние события."})
     # Coordinator selects an explicit capped set, without cutting JSON in the middle.
     budget=4200;selected={}
-    for k,v in result.items():
-        candidate={**selected,k:v}
-        if len(o.dump(candidate).encode("utf-8"))<=budget:selected[k]=v
+    # Every pass contributes a compact portion before any module gets its full payload.
+    order=("plot","magic","time","memory","characters","relations","editor","analytics","twist")
+    for k in order:
+        v=result[k]
+        if isinstance(v,dict):
+            compact={name:(value[:1] if isinstance(value,list) else value[:180] if isinstance(value,str) else value) for name,value in v.items()}
+        else:compact=v[:1]
+        candidate={**selected,k:compact}
+        if len(o.dump(candidate).encode("utf-8"))<=budget:selected[k]=compact
+    for k in order:
+        candidate={**selected,k:result[k]}
+        if len(o.dump(candidate).encode("utf-8"))<=budget:selected[k]=result[k]
     brain("coordinator",{"included":list(selected),"bytes":len(o.dump(selected).encode("utf-8"))})
     plan["intelligence"]={"context":selected,"completed":completed,"bytes":result["coordinator"]["bytes"],"recalled":[x["number"] for x in selected.get("memory",[])]}
     return plan
@@ -338,7 +347,7 @@ def relations_text(db):
 
 def search(db,query):
     refresh(db)
-    matches=ge.recall(db,query,10)
+    matches=ge.recall(db,query,50)
     selected=[x for x in matches if x["number"]<=13 or ev.readable(db,x["number"])][:5]
     return "Локальный поиск по словам и тематическим синонимам:\n"+"\n\n".join(f"Глава {x['number']} — {x['title']}\n{x['story']}" for x in selected) if selected else "Доступных совпадений не найдено."
 
@@ -356,18 +365,18 @@ def graph(db,existing=()):
     for key,_ in BRAINS:
         if key!="coordinator":edge("brain:"+key,"brain:coordinator","lit_module")
     try:
-        refresh(db)
         data=list(rows(db,True))
     except ValueError:return nodes,edges
     actors,relations=registry(data)
     known={norm(n["content"]):n["key"] for n in existing if n.get("kind") in ("character","infinite_character","evolution_subject","destiny_character")}
+    known_keys={n["key"] for n in existing}
     latest=sorted(actors.values(),key=lambda x:x["last"],reverse=True)[:100]
     for a in latest:
         if a["id"].startswith("lit:actor:") and norm(a["name"]) in known:a["id"]=known[norm(a["name"])]
     # Reuse exact canonical/guardian/known Omega or Evolution actor keys when present.
     for a in latest:
         k=a["id"]
-        if k.startswith("lit:actor:"):node(k,a["name"],"lit_character",infinite_group=k)
+        if k not in known_keys:node(k,a["name"],"lit_character",infinite_group=k)
         edge("brain:characters",k,"lit_character")
     allowed={norm(a["name"]):a["id"] for a in latest}
     for n,f in data[-180:]:
