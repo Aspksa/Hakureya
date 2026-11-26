@@ -3,17 +3,20 @@ import {mountGraph} from "./live-graph";
 import {measuredPages,pageAt} from "./reader-pagination.mjs";
 import {commandGroups,commandCount,searchCommands} from "./command-catalog.mjs";
 const $=(id:string)=>document.getElementById(id)!;
-let selectedVolume:number|null=null;
+let selectedVolume:number|null=null,selectedAtlas:string|null=null;
+const atlasTrail:string[]=[];
 let live:ReturnType<typeof mountGraph>|null=null;
 function ensureGraph(){
- if(!live){try{$("graph").replaceChildren();live=mountGraph($("graph") as unknown as SVGSVGElement,$("info"),volume=>{selectedVolume=volume;void refreshGraph()})}catch(e){console.error("Hakureya graph initialization",e);$("graph").replaceChildren();$("info").textContent="Ошибка визуализации · ↻ повторить"}}
+ if(!live){try{$("graph").replaceChildren();live=mountGraph($("graph") as unknown as SVGSVGElement,$("info"),volume=>{if(selectedAtlas!==null)atlasTrail.push(selectedAtlas);selectedAtlas=null;selectedVolume=volume;void refreshGraph()},scope=>{if(selectedAtlas!==null)atlasTrail.push(selectedAtlas);selectedVolume=null;selectedAtlas=scope;void refreshGraph()})}catch(e){console.error("Hakureya graph initialization",e);$("graph").replaceChildren();$("info").textContent="Ошибка визуализации · ↻ повторить"}}
  return live;
 }
 let busy=false;
-$("replay").onclick=()=>{selectedVolume=null;void refreshGraph().then(()=>live?.replay())};$("reset").onclick=()=>{selectedVolume=null;void refreshGraph().then(()=>live?.replay());$("menu").hidden=true};
+$("replay").onclick=()=>{selectedVolume=null;selectedAtlas=null;atlasTrail.length=0;void refreshGraph().then(()=>live?.replay())};$("reset").onclick=()=>{selectedVolume=null;selectedAtlas=null;atlasTrail.length=0;void refreshGraph().then(()=>live?.replay());$("menu").hidden=true};
 let graphRequest=0;
-async function refreshGraph(){const id=++graphRequest;try{const data=await api(selectedVolume===null?"graph":"graph/volume/"+selectedVolume);if(id===graphRequest)ensureGraph()?.render(data)}catch(e){console.error("Hakureya graph refresh",e);if(id===graphRequest)$("info").textContent="Область недоступна · ↻ для общей карты"}}
+async function refreshGraph(){const id=++graphRequest;try{const data=await api(selectedAtlas!==null?"graph/atlas"+(selectedAtlas?"/"+selectedAtlas:""):selectedVolume===null?"graph":"graph/volume/"+selectedVolume);if(id===graphRequest){ensureGraph()?.render(data);$("atlas-back").hidden=!atlasTrail.length;$("atlas-open").setAttribute("aria-pressed",String(selectedAtlas!==null))}}catch(e){console.error("Hakureya graph refresh",e);if(id===graphRequest)$("info").textContent="Область недоступна · ↻ для общей карты"}}
 let writerPollBusy=false,previewPollBusy=false;
+$("atlas-open").onclick=()=>{selectedVolume=null;selectedAtlas="";atlasTrail.length=0;void refreshGraph()};
+$("atlas-back").onclick=()=>{if(atlasTrail.length){selectedVolume=null;selectedAtlas=atlasTrail.pop()!;void refreshGraph()}};
 let activityBusy=false,activityRevision="",activityTimer=0,activityActive=false,activityGraphSignature="";
 async function refreshActivity(){
  if(document.hidden||activityBusy)return;
@@ -123,7 +126,7 @@ async function renderUniverse(){
    for(let j=0;j<group.count;j++){const point=document.createElementNS("http://www.w3.org/2000/svg","circle"),angle=j*Math.PI*2/Math.max(1,group.count);point.setAttribute("cx",String(32+22*Math.cos(angle)));point.setAttribute("cy",String(32+22*Math.sin(angle)));point.setAttribute("r","2");point.setAttribute("fill","#edcf89");star.append(point)}
    const core=document.createElementNS("http://www.w3.org/2000/svg","circle");core.setAttribute("cx","32");core.setAttribute("cy","32");core.setAttribute("r","5");core.setAttribute("fill","#fff2c6");star.append(core);
    const name=document.createElement("small");name.textContent="Том "+group.volume+" · "+group.count;b.append(star,name);
-   b.onclick=()=>{universeDialog.close();selectedVolume=group.volume;void refreshGraph()};galaxies.append(b)
+   b.onclick=()=>{universeDialog.close();selectedAtlas=null;atlasTrail.length=0;selectedVolume=group.volume;void refreshGraph()};galaxies.append(b)
   }
   const actors=$("universe-actors");actors.replaceChildren();
   for(const actor of data.actors_list){const b=document.createElement("button");b.type="button";b.textContent=actor.name+" · "+actor.count+" частей";b.onclick=()=>universeCommand("История персонажа "+actor.name);actors.append(b)}
