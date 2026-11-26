@@ -22,6 +22,7 @@ import soul_living
 import cloud_writer
 import cloud_vault
 import writer_stream
+import writer_volume
 import soul_evolution
 import soul_immortal
 import soul_novel
@@ -60,7 +61,11 @@ def writer_status(db):
     mode=soul_living.mode(db)
     pending=db.execute("SELECT COUNT(*) FROM chronicle_drafts WHERE status='pending'").fetchone()[0]
     day=datetime.now(timezone.utc).date().isoformat()
-    attempt=db.execute("SELECT status FROM chronicle_attempts WHERE day=?",(day,)).fetchone()
+    attempts=writer_volume.attempts(db,day)
+    pages=writer_volume.target(db)
+    chars=writer_volume.published_chars(db,day)
+    attempt=attempts[-1][1] if attempts else None
+    model=cloud_writer.selected(db) or CONFIG["model"]
     reserved=db.execute("SELECT 1 FROM chronicle_attempts WHERE status='reserved'").fetchone()
     idle=soul_immortal.preferences(db)[1]
     wait=max(0,int(idle-(time.monotonic()-CHRONICLE["last_activity"])))
@@ -69,14 +74,18 @@ def writer_status(db):
     elif not soul_chronicle.canon_ok(db):reason="Нарушена целостность канона"
     elif reserved:reason="Запрос уже выполняется или ожидает восстановления"
     elif pending:reason="Черновик ожидает решения"
-    elif attempt:reason="Суточная попытка использована: "+attempt[0]
+    elif pages and not writer_volume.budget_ready(db,model):reason="Настройте месячный бюджет и тарифы выбранной модели"
+    elif pages and chars>=pages*writer_volume.PAGE_CHARS:reason="Дневная цель по опубликованному тексту достигнута"
+    elif len(attempts)>=writer_volume.limit(db):reason="Лимит запросов на сегодня использован"
+    elif pages and writer_volume.auto_block(db,day):reason="Автоматические повторные запросы остановлены после ошибки"
     elif wait and not reading_window(db):reason="Ожидание бездействия"
     else:reason="Готов к следующей проверке планировщика"
     return {"mode":mode,"connected":bool(CONFIG["key"]),"model":cloud_writer.selected(db) or CONFIG["model"],
             "saved_connection":(DB.parent/"cloud.dpapi").is_file(),"can_remember":cloud_vault.supported(),
             "interval":idle//60,"wait_seconds":wait,"pending":pending,
-            "published":soul_reader.latest(db),"attempt":attempt[0] if attempt else None,
-            "daily_limit":1,"max_tokens":cloud_writer.LIMIT,"reason":reason,
+            "published":soul_reader.latest(db),"attempt":attempt,
+            "target_pages":pages,"published_chars":chars,"page_chars":writer_volume.PAGE_CHARS,"attempts_today":len(attempts),
+            "daily_limit":writer_volume.limit(db),"max_tokens":cloud_writer.LIMIT,"reason":reason,
             "budget":soul_evolution.budget_text(db,day[:7])}
 
 def writer_status_text(db):
@@ -145,6 +154,11 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
         with closing(connect()) as db, db:
             if background and not reading_window(db) and time.monotonic()-CHRONICLE["last_activity"]<soul_immortal.preferences(db)[1]:return "Ожидание фонового интервала."
             if background and not CHRONICLE["enabled"] and soul_living.mode(db)=="off":return "Автономное развитие выключено."
+            pages=writer_volume.target(db)
+            if pages:
+                model=cloud_writer.selected(db) or CONFIG["model"]
+                if not writer_volume.budget_ready(db,model):return "Настройте бюджет и тарифы модели писателя."
+                if background and writer_volume.auto_block(db,writer_volume.today()):return "Автоматические запросы остановлены после ошибки до следующего дня UTC."
             soul_chronicle.collect(db)
             cycle=soul_romance.current_cycle(db)
             if (shadow or guardians or destiny) and cycle:
@@ -266,8 +280,9 @@ def independent_editor():
             did=draft["id"]
             source=db.execute("SELECT checksum FROM chronicle_drafts WHERE id=?",(did,)).fetchone()[0]
             model=cloud_writer.selected(db) or CONFIG["model"]
-            day=datetime.now(timezone.utc).date().isoformat()
-            if db.execute("SELECT 1 FROM chronicle_attempts WHERE day=? OR status='reserved'",(day,)).fetchone():return "Суточная попытка уже использована. Редактор не запускался."
+            day=writer_volume.next_id(db,writer_volume.today(),editor=True)
+            if day is None:return "Суточная попытка или лимит запросов уже использованы. Редактор не запускался."
+            if writer_volume.target(db) and not writer_volume.budget_ready(db,model):return "Настройте бюджет и тарифы модели писателя."
             messages=soul_immortal.editor_prompt(db,draft)
             allowed,cost=soul_evolution.budget_check(db,model,messages,cloud_writer.LIMIT,day)
             if not allowed:return "Редактор остановлен: проверьте бюджет или тариф модели."
@@ -439,7 +454,7 @@ def chronicle_command(content):
                 return "Длина сцены: "+immortal_length[1]+". Лимит токенов сохранён."
             if immortal_idle:
                 db.execute("UPDATE immortal_preferences SET idle=? WHERE id=1",(int(immortal_idle[1])*60,))
-                return "Интервал бездействия: "+immortal_idle[1]+" минут. Одна попытка в сутки."
+                return "Интервал бездействия: "+immortal_idle[1]+" минут."
             if soul_immortal.audit(db):return "Литературные записи повреждены."
             if immortal_volume:return soul_immortal.quality_text(db,int(immortal_volume[1]))
             if q=="качество прозы":return soul_immortal.quality_text(db)
@@ -725,13 +740,18 @@ class Handler(SimpleHTTPRequestHandler):
             if self.path == "/api/writer":
                 mode=data.get("mode")
                 interval=data.get("interval")
+                pages=data.get("target_pages",0)
+                if type(pages) is not int or pages not in (0,15):return self.respond({"error":"Недопустимый объём."},400)
                 if mode not in ("off","draft","auto") or type(interval) is not int or interval not in (20,30,60,120):
                     return self.respond({"error":"Недопустимый режим или интервал."},400)
-                if mode!="off" and data.get("consent") is not True:
+                if (mode!="off" or pages) and data.get("consent") is not True:
                     return self.respond({"error":"Подтвердите согласие на фоновые платные запросы."},400)
                 with LOCK, closing(connect()) as db, db:
                     if mode!="off" and not soul_chronicle.canon_ok(db):
                         return self.respond({"error":"Канон повреждён."},400)
+                    model=cloud_writer.selected(db) or CONFIG["model"]
+                    if pages and not writer_volume.budget_ready(db,model):return self.respond({"error":"Для увеличенного объёма задайте бюджет и тарифы модели писателя."},400)
+                    writer_volume.set_target(db,pages)
                     soul_living.set_mode(db,mode)
                     db.execute("UPDATE immortal_preferences SET idle=? WHERE id=1",(interval*60,))
                     CHRONICLE.update(enabled=False,epoch=CHRONICLE["epoch"]+1)
