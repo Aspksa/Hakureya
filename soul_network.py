@@ -34,6 +34,9 @@ FIELDS={
     "coordinator":("included","bytes"),
 }
 MAX_PACKET=16000
+LIST_FIELDS={"open","recent","forgotten","profiles","rules","limits","profile_gaps","rapid_relations","causes","included"}
+TEXT_FIELDS={"theme","guide"}
+INT_FIELDS={"last","volume","warnings","last_scene_words","chapters","characters","cross_volume","bytes"}
 CONTEXT_BUDGET=4200
 
 def size(value):
@@ -51,6 +54,16 @@ def validate_output(key,value):
         if not isinstance(value,list) or any(not isinstance(x,dict) or type(x.get("number")) is not int or not isinstance(x.get("story"),str) for x in value):raise ValueError("memory contract")
     else:
         if not isinstance(value,dict) or not set(FIELDS[key])<=set(value):raise ValueError("brain contract: "+key)
+    if isinstance(value,dict):
+        for field in FIELDS[key]:
+            v=value[field]
+            if field in LIST_FIELDS and not isinstance(v,list):raise ValueError("brain list field: "+key+"."+field)
+            if field in TEXT_FIELDS and not isinstance(v,str):raise ValueError("brain text field: "+key+"."+field)
+            if field in INT_FIELDS and (type(v) is not int or v<0):raise ValueError("brain integer field: "+key+"."+field)
+        if key=="time" and (type(value.get("scope_last")) is not int or not 0<=value["scope_last"]<=value["last"] or value.get("arc") not in ("past","meeting","love","future")):raise ValueError("time scope")
+        if key=="editor" and not isinstance(value.get("check_sources"),list):raise ValueError("editor source contract")
+        if key=="analytics" and not isinstance(value.get("editor_sources"),list):raise ValueError("analytics source contract")
+        if key=="coordinator" and (set(value["included"])!=set(ORDER[:-1]) or not 0<value["bytes"]<=CONTEXT_BUDGET):raise ValueError("coordinator coverage")
     if size(value)>MAX_PACKET:raise ValueError("brain packet limit")
 
 class Network:
@@ -118,6 +131,7 @@ def compact(outputs):
 def init(db):
     db.execute("""CREATE TABLE IF NOT EXISTS neural_runs(
         attempt TEXT PRIMARY KEY,payload TEXT NOT NULL,checksum TEXT NOT NULL)""")
+    db.execute("""CREATE TABLE IF NOT EXISTS neural_diagnostic(id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL,checksum TEXT NOT NULL)""")
 
 def validate_trace(trace):
     if trace.get("version")!=VERSION or set(trace.get("included",[]))!=set(ORDER[:-1]):raise ValueError("network trace version or coverage")
@@ -139,6 +153,11 @@ def record(db,attempt,trace):
     raw=o.dump(trace)
     db.execute("INSERT INTO neural_runs VALUES(?,?,?)",(attempt,raw,o.digest(raw)))
 
+def record_diagnostic(db,trace):
+    validate_trace(trace)
+    raw=o.dump(trace)
+    db.execute("INSERT OR REPLACE INTO neural_diagnostic VALUES(1,?,?)",(raw,o.digest(raw)))
+
 def latest(db):
     row=db.execute("SELECT payload,checksum FROM neural_runs ORDER BY attempt DESC LIMIT 1").fetchone()
     if not row:return None
@@ -150,6 +169,12 @@ def edges():
 
 def snapshot(db,labels):
     trace=latest(db)
+    origin="writer" if trace else None
+    if not trace:
+        row=db.execute("SELECT payload,checksum FROM neural_diagnostic WHERE id=1").fetchone()
+        if row:
+            if o.digest(row[0])!=row[1]:raise ValueError("diagnostic checksum")
+            trace=validate_trace(json.loads(row[0]));origin="diagnostic"
     events={e["brain"]:e for e in trace["events"]} if trace else {}
     records=[dict(key="lit:db",label="SQLite · литературная память",group=4,kind="lit_database",slot=0)]
     for pos,(key,label) in enumerate(labels,1):
@@ -158,11 +183,11 @@ def snapshot(db,labels):
           neural_inputs=list(DEPENDENCIES[key]),neural_ms=e["duration_ms"] if e else None,neural_bytes=e["bytes"] if e else None))
     links=edges()+[dict(a="lit:db",b="brain:"+k,kind="neural_source") for k in ("plot","characters","relations","magic","time","memory","editor","analytics","twist")]
     links.append(dict(a="brain:coordinator",b="root",kind="neural_output"))
-    return dict(records=records,edges=links,total=10,limited=False,network=True,neural_trace=trace)
+    return dict(records=records,edges=links,total=10,limited=False,network=True,neural_trace=trace,trace_origin=origin)
 
 def report(db,trace):
     validate_trace(trace)
-    lines=["Локальная нейросеть: 10/10 проходов; 9/9 вкладов в контекст.",
+    lines=["Локальная нейросеть: 10/10 проходов; 9/9 разделов контекста.",
            "Передача данных: "+str(sum(len(e["inputs"]) for e in trace["events"]))+" проверенных зависимостей.",
            "Контекст: "+str(trace["context_bytes"])+"/4200 байт."]
     for e in trace["events"]:
