@@ -15,7 +15,7 @@ export function cell(slot){
 }
 export function detailLevel(count,zoom){return count<800||zoom>=2.4?2:zoom>=1.25?1:0}
 export function layout(snapshot){
- const nodes=[{key:"root",group:-1,x:0,y:0,r:3.6,label:"hakureya"}],edges=[],byKey=new Map([[ "root",nodes[0] ]]);
+ const nodes=[{key:"root",kind:"root",group:-1,x:0,y:0,r:3.6,label:"hakureya"}],edges=[],byKey=new Map([[ "root",nodes[0] ]]);
  const count=categories.map(()=>0),radius=categories.map(()=>.035),valid=(Array.isArray(snapshot.records)?snapshot.records:[]).filter(n=>Number.isInteger(n.group)&&n.group>=0&&n.group<categories.length&&typeof n.key==="string");
  const occupied=categories.map(()=>new Set());
  const bio=[],heart=[],shadow=[],guardians=[],destiny=[],immortal=[];
@@ -26,7 +26,7 @@ export function layout(snapshot){
  for(const n of valid){
   if(byKey.has(n.key))continue;
   const g=n.group;
-  if(!count[g]){const key="hub:"+g,hub={key,group:g,x:0,y:0,r:3.5,label:categories[g]};nodes.push(hub);byKey.set(key,hub);edges.push({a:"root",b:key,kind:"category"})}
+  if(!count[g]){const key="hub:"+g,hub={key,kind:"hub",group:g,x:0,y:0,r:3.5,label:categories[g]};nodes.push(hub);byKey.set(key,hub);edges.push({a:"root",b:key,kind:"category"})}
   let slot=Number.isSafeInteger(n.slot)&&n.slot>=0?n.slot:count[g];
   while(occupied[g].has(slot))slot++;
   occupied[g].add(slot);count[g]++;
@@ -39,7 +39,7 @@ export function layout(snapshot){
   const immortalNode=g===4&&Number.isSafeInteger(n.immortal_slot)&&n.immortal_slot>=-1&&n.immortal_slot<=10000000;
   if(!nested&&!heartNode&&!shadowNode&&!guardianNode&&!destinyNode&&!immortalNode)radius[g]=Math.max(radius[g],Math.hypot(p.x,p.y)+.035);
   const r=n.kind==="immortal_root"?3.8:n.kind==="immortal_saga"?3:n.kind==="immortal_stage"?2.2:n.kind==="living_root"?3.8:n.kind==="living_topic"?2.8:n.kind==="living_subject"?2.2:n.kind==="living_fact"?1.6:n.kind==="destiny_root"?4.2:n.kind==="destiny_topic"||n.kind==="destiny_character"||n.kind==="realm"?3.1:n.kind==="destiny_fact"||n.kind==="destiny_event"?1.8:n.kind==="guardian_root"?4.2:n.kind==="guardian_character"?3.1:n.kind==="guardian_memory"?1.8:n.kind==="shadow_root"?4.2:n.kind==="shadow_topic"?3.1:n.kind==="shadow_event"?1.8:n.kind==="heart_root"?4.2:n.kind==="heart_topic"?3.1:n.kind==="heart_moment"?1.8:n.kind==="epoch"?3.6:n.kind==="book_segment"?3:n.kind==="fictional_chapter"?2.7:n.kind==="draft"?2.1:n.kind==="theme"?1.7:1.5;
-  const item={...n,slot,x:p.x,y:p.y,r};nodes.push(item);byKey.set(item.key,item);
+  const item={...n,kind:typeof n.kind==="string"?n.kind:"memory",label:typeof n.label==="string"?n.label:n.key,slot,x:p.x,y:p.y,r};nodes.push(item);byKey.set(item.key,item);
   if(nested)bio.push(item);
   if(heartNode)heart.push(item);
   if(shadowNode)shadow.push(item);
@@ -117,7 +117,7 @@ export function layout(snapshot){
  }
  for(const n of nodes)if(n.group>=0){n.x+=centers[n.group][0]*spread;n.y+=centers[n.group][1]*spread}
  const seen=new Set(edges.map(e=>e.a+"|"+e.b+"|"+e.kind));
- for(const e of snapshot.edges||[]){const k=e.a+"|"+e.b+"|"+e.kind;if(byKey.has(e.a)&&byKey.has(e.b)&&e.a!==e.b&&!seen.has(k)){edges.push(e);seen.add(k)}}
+ for(const e of snapshot.edges||[]){const k=e.a+"|"+e.b+"|"+e.kind;if(typeof e.kind==="string"&&byKey.has(e.a)&&byKey.has(e.b)&&e.a!==e.b&&!seen.has(k)){edges.push(e);seen.add(k)}}
  const extent=Math.max(.45,...nodes.map(n=>Math.max(Math.abs(n.x)*1.35,Math.abs(n.y))));
  return {nodes,edges,byKey,extent,spread,radius};
 }
