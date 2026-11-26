@@ -2,6 +2,7 @@
 from pathlib import Path
 import hashlib
 import sys
+import json
 
 ROOT=Path(__file__).resolve().parent
 STAMP=ROOT/"dist"/".source-sha256"
@@ -23,16 +24,26 @@ def fingerprint():
         h.update(hashlib.sha256(p.read_bytes()).digest())
     return h.hexdigest()
 
+def built_manifest():
+    return {p.relative_to(ROOT/"dist").as_posix():hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in sorted((ROOT/"dist").rglob("*")) if p.is_file() and p!=STAMP}
+
 def main():
     try:
         if not (ROOT/"dist"/"index.html").is_file():
             return 1
         digest=fingerprint()
         if sys.argv[1:]==["--write"]:
-            STAMP.write_text(digest,encoding="ascii")
+            tmp=STAMP.with_suffix(".tmp")
+            # Exclude the temporary manifest from the output file list.
+            tmp.unlink(missing_ok=True)
+            manifest={"source":digest,"files":built_manifest()}
+            tmp.write_text(json.dumps(manifest,sort_keys=True),encoding="ascii")
+            tmp.replace(STAMP)
             return 0
-        return 0 if STAMP.read_text(encoding="ascii")==digest else 1
-    except OSError:
+        old=json.loads(STAMP.read_text(encoding="ascii"))
+        return 0 if old=={"source":digest,"files":built_manifest()} else 1
+    except (OSError,ValueError,UnicodeError):
         return 1
 
 if __name__=="__main__":
