@@ -105,3 +105,13 @@ dialog button:hover{background:#d5b38b12}
  dialog{padding:20px}
 }
 @media(prefers-reduced-motion:reduce){#stage{transition:none}}
+
+/* Full pages of prose, with repeated technical headings removed on later pages. */
+#book-page{max-width:70ch;padding-block:18px 20px}
+#book-text{display:flow-root}
+#book-text p:last-child{margin-bottom:0}
+#book-kicker{margin-bottom:14px}
+#book-end{margin:14px 0 0}
+#book-status:empty{display:none}
+#book-scroll{scrollbar-gutter:stable}
+@media(max-width:600px){#book-page{padding-block:10px 16px}}

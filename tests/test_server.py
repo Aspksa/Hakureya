@@ -341,3 +341,21 @@ class ServerTest(unittest.TestCase):
         with closing(server.connect()) as db:
             self.assertEqual(c.latest_pending(db)["story"],pending["story"])
             self.assertEqual(db.execute("SELECT COUNT(*) FROM chronicle_drafts WHERE status='approved'").fetchone()[0],0)
+
+
+    def test_reader_presence_and_offsets_are_local(self):
+        import time
+        with patch.object(server,"urlopen") as remote:
+            result=self.request("chat",{"content":"Читать с начала"})["reader"]
+            d=result["document"]
+            self.assertTrue(self.request("reader",{"action":"position","hash":d["hash"],"start":3,"end":40})["ok"])
+            self.assertEqual(self.request("reader",{"action":"presence"})["reader"]["document"]["offset"],3)
+            with closing(server.connect()) as db,db:
+                self.assertFalse(server.reading_window(db))
+                server.soul_living.set_mode(db,"draft")
+                server.soul_reader.move(db,"latest")
+                server.CHRONICLE["reader_seen"]=time.monotonic()
+                self.assertTrue(server.reading_window(db))
+                server.CHRONICLE["reader_seen"]=time.monotonic()-120
+                self.assertFalse(server.reading_window(db))
+            remote.assert_not_called()
