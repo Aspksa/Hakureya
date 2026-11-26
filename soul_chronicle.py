@@ -15,6 +15,7 @@ import soul_guardians
 import soul_destiny
 import soul_living
 import cloud_writer
+import writer_volume
 import soul_evolution
 import soul_immortal
 import soul_novel
@@ -52,6 +53,7 @@ def init(db):
     soul_destiny.init(db)
     soul_living.init(db)
     cloud_writer.init(db)
+    writer_volume.init(db)
     soul_evolution.init(db)
     soul_immortal.init(db)
     soul_novel.init(db)
@@ -122,7 +124,8 @@ def reserve(db, now=None, allow_story=False):
         return None
     if db.execute("SELECT 1 FROM chronicle_drafts WHERE status='pending'").fetchone() or db.execute("SELECT 1 FROM chronicle_attempts WHERE status='reserved'").fetchone():
         return None
-    day=(now or datetime.now(timezone.utc)).date().isoformat()
+    day=writer_volume.next_id(db,writer_volume.today(now))
+    if day is None:return None
     row=pending_diary(db)
     if row is None:
         if not allow_story:
