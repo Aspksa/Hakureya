@@ -114,6 +114,9 @@ def state(db):
                 if event["cause"] is not None:consequences.append({"from":event["cause"],"to":n,"event":event["summary"]})
         w=world(db,did)
         if w:
+            for x in w.get("characters",[]):
+                key=o.normalized(x["name"]); item=actors.setdefault(key,{"name":x["name"],"first":n,"last":n,"count":0})
+                item["last"]=n;item["portrait"]=x["portrait"];item["motive"]=x["motive"];item["lineage"]=x["lineage"];item["source"]=n
             for x in w["places"]:
                 places.setdefault(o.normalized(x["name"]),{"name":x["name"],"realm":x["realm"],"chapter":n,"description":x["description"]})
     last=db.execute("SELECT COALESCE(MAX(number),13) FROM omega_index").fetchone()[0]
@@ -144,16 +147,16 @@ def instruction(plan):
         " Выстрой выбор героя, его последствия, мотивы и предысторию. Сохрани стиль, самостоятельность и взаимность. "
         " Сначала продумай и отредактируй текст внутри одного ответа. Не выдавай ход рассуждений. "
         " При возможности добавь необязательный объект world с полями places:[{name,realm,description,evidence}], letter, perspective. "
-        " realm — число 1–9 или null для человеческого мира; evidence — точная цитата из story; letter — художественное письмо до 500 символов, perspective — альтернативный взгляд до 500 символов. До двух мест. "
+        " realm — число 1–9 или null для человеческого мира; evidence — точная цитата из story; letter — художественное письмо до 500 символов, perspective — альтернативный взгляд до 500 символов. До двух мест. Допустимо поле characters: [{name,portrait,motive,lineage,evidence}], максимум 2; lineage — только родство, описанное в тексте или пустая строка. "
         " Никаких сведений о реальных людях; это художественный материал. "+ (" По запросу альтернативы: добавь необязательное поле alternative — второй самостоятельный вариант с title, story (100–1500 символов), tags, emotions, traits; не копируй основную сцену. Оба варианта краткие, в пределах общего лимита ответа." if plan.get("alternative") else ""))
 
 def validate_world(db,story,raw):
-    if raw is None:return {"places":[],"letter":"","perspective":""}
-    if not isinstance(raw,dict) or set(raw)!={"places","letter","perspective"}:raise ValueError("invalid world fields")
+    if raw is None:return {"places":[],"letter":"","perspective":"","characters":[]}
+    if not isinstance(raw,dict) or not {"places","letter","perspective"}<=set(raw) or set(raw)-{"places","letter","perspective","characters"}:raise ValueError("invalid world fields")
     places=raw["places"]
     if not isinstance(places,list) or len(places)>2:raise ValueError("invalid places")
     known={o.normalized(p["name"]):p["realm"] for p in state(db)["places"]}
-    result={"places":[],"letter":o.clean(raw["letter"],0,500),"perspective":o.clean(raw["perspective"],0,500)}
+    result={"places":[],"letter":o.clean(raw["letter"],0,500),"perspective":o.clean(raw["perspective"],0,500),"characters":[]}
     for p in places:
         if not isinstance(p,dict) or set(p)!={"name","realm","description","evidence"}:raise ValueError("invalid place")
         name=o.clean(p["name"],2,70); evidence=o.clean(p["evidence"],8,240); realm=p["realm"]
@@ -163,6 +166,13 @@ def validate_world(db,story,raw):
         if key in known and known[key]!=realm:raise ValueError("realm contradiction")
         known[key]=realm
         result["places"].append({"name":name,"realm":realm,"description":o.clean(p["description"],5,250),"evidence":evidence})
+    chars=raw.get("characters",[])
+    if not isinstance(chars,list) or len(chars)>2:raise ValueError("invalid character portraits")
+    for p in chars:
+        if not isinstance(p,dict) or set(p)!={"name","portrait","motive","lineage","evidence"}:raise ValueError("invalid character portrait")
+        name=o.clean(p["name"],2,60);evidence=o.clean(p["evidence"],8,240)
+        if evidence not in story or o.normalized(name) not in o.normalized(evidence):raise ValueError("ungrounded character")
+        result["characters"].append({"name":name,"portrait":o.clean(p["portrait"],5,200),"motive":o.clean(p["motive"],0,160),"lineage":o.clean(p["lineage"],0,160),"evidence":evidence})
     return result
 
 def save_world(db,did,story,raw):
@@ -270,3 +280,19 @@ def select_variant(db,option):
     db.execute("INSERT OR REPLACE INTO genesis_world VALUES(?,?,?)",(did,world_raw,o.digest(world_raw)))
     db.execute("INSERT INTO genesis_edits(draft_id,before_hash,after_hash,chosen) VALUES(?,?,?,?)",(did,before,h,option))
     return True
+
+
+def continuity_warnings(db,base,plan):
+    """Flag explicit patterns only; do not claim understanding of all contradictions."""
+    text=o.normalized(base["story"]);arc=plan.get("arc")
+    warnings=[]
+    if re.search(r"\b(?:десять|десятый|восемь|восьмой)\s+хвост",text) and "восьмой хвост" not in text:
+        warnings.append("проверь число хвостов")
+    if arc=="past" and any(p in text for p in ("наш первый поцелуй","мой любимый хозяин","после нашей встречи")):
+        warnings.append("проверь хронологию встречи: сцена относится к прошлому")
+    if any(p in text for p in ("защиту получил после","защита появилась после","обрёл защиту благодаря")):
+        warnings.append("проверь врождённую защиту героя")
+    relevant=recall(db,base["title"]+" "+base["story"][:400],3,arc)
+    if relevant and len(o.tokens(base["story"]) & o.tokens(relevant[0]["story"])) / max(1,len(o.tokens(base["story"])))>.75:
+        warnings.append("проверь смысловое сходство с главой "+str(relevant[0]["number"]))
+    return warnings
