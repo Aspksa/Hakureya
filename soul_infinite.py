@@ -283,6 +283,15 @@ def forecast(db):
     db.execute("INSERT INTO infinite_forecast VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,checksum=excluded.checksum WHERE checksum!=excluded.checksum",(raw,o.digest(raw)))
     return json.loads(raw)
 
+def refresh_forecast(db):
+    row=db.execute("SELECT payload,checksum FROM infinite_forecast WHERE id=1").fetchone()
+    if row and o.digest(row[0])==row[1]:
+        try:
+            value=json.loads(row[0])
+            if value["version"]==VERSION and value["based_on"]==latest(db) and len(value["items"])==1000:return
+        except (ValueError,TypeError,KeyError):pass
+    forecast(db)
+
 def source_visible(db,n):
     return n<=13 or ev.readable(db,n)
 
@@ -366,7 +375,8 @@ def graph(db):
     guardians={o.normalized(x[1]):"guardian:"+x[0] for x in gu.CAST}
     # Existing character nodes are reused whenever available.
     existing={}
-    for n,did,p in list(ev.published(db))[-60:]:
+    evolution_rows=[] if ev.audit(db) else list(ev.published(db))[-60:]
+    for n,did,p in evolution_rows:
         if source_visible(db,n):
             for f in p["facts"]:
                 key=o.normalized(f["subject"]);existing[key]="evolution:subject:"+o.digest(key)[:20]
