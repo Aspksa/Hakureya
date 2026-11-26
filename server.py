@@ -22,6 +22,7 @@ import soul_living
 import cloud_writer
 import soul_evolution
 import soul_immortal
+import soul_novel
 import graph_activity
 import time, re
 import base64, binascii
@@ -31,7 +32,7 @@ DB = ROOT / "data" / "hakureya.sqlite3"
 API = "https://foundation-models.api.cloud.ru/v1/chat/completions"
 LOCK = threading.Lock()
 CONFIG = {"key": "", "model": ""}
-CHRONICLE = {"enabled": False, "last_activity": time.monotonic(), "epoch": 0}
+CHRONICLE = {"enabled": False, "last_activity": time.monotonic(), "epoch": 0, "reader_seen": -1e9}
 
 
 def normalize_cloud_key(value):
@@ -68,13 +69,20 @@ def store(role, content):
             soul_chronicle.collect(db)
         return message_id
 
+def reading_window(db):
+    """Only explicitly enabled persistent writer mode, recent actual reading, near the published end."""
+    if soul_living.mode(db)=="off" or time.monotonic()-CHRONICLE.get("reader_seen",-1e9)>100:
+        return False
+    row=soul_reader.bookmark(db)
+    return bool(row and row[3] and row[0]>=soul_reader.latest(db)-1)
+
 def generate_chronicle(background=False, arc=None, alternative=False, shadow=False, guardians=False, destiny=False):
     # Reserve quota and snapshot under lock; do not block chat during network I/O.
     with LOCK:
         if not CONFIG["key"]:
             return "Cloud.ru не подключён или фоновый сон не разрешён."
         with closing(connect()) as db, db:
-            if background and time.monotonic()-CHRONICLE["last_activity"]<soul_immortal.preferences(db)[1]:return "Ожидание фонового интервала."
+            if background and not reading_window(db) and time.monotonic()-CHRONICLE["last_activity"]<soul_immortal.preferences(db)[1]:return "Ожидание фонового интервала."
             if background and not CHRONICLE["enabled"] and soul_living.mode(db)=="off":return "Автономное развитие выключено."
             soul_chronicle.collect(db)
             cycle=soul_romance.current_cycle(db)
@@ -92,7 +100,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
             if shadow and not (shadow_plan or guardian_plan or destiny_plan) and (soul_destiny.audit(db) or len(soul_destiny.published(db))!=len(soul_destiny.ORDER)):return "Сюжетные данные повреждены или продолжение недоступно."
             if shadow_plan or guardian_plan or destiny_plan:arc="future"
             elif arc is None and not alternative and not soul_destiny.audit(db) and len(soul_destiny.published(db))==len(soul_destiny.ORDER):arc="future"
-            reservation=soul_chronicle.reserve(db,allow_story=True) if not (soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)+soul_evolution.audit(db)+soul_immortal.audit(db)) else None
+            reservation=soul_chronicle.reserve(db,allow_story=True) if not (soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)+soul_evolution.audit(db)+soul_immortal.audit(db)+soul_novel.audit(db)) else None
             traits=soul_chronicle.profile(db)
             plan=soul_genesis.enrich(db,soul_omega.enrich_plan(db,soul_saga.plan(db,arc))) if reservation else None
             if plan:
@@ -108,9 +116,10 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                     soul_living.enrich(db,plan,background)
                     soul_evolution.enrich(db,plan)
                     soul_immortal.enrich(db,plan)
+                    soul_novel.enrich(db,plan)
             previous=[]
             if plan:
-                previous=[{"number":n,"title":t,"story":s[:1800]} for n,t,s in reversed(db.execute("SELECT number,title,story FROM omega_index WHERE arc=? AND number>13 ORDER BY number DESC LIMIT 2",(plan["arc"],)).fetchall())]
+                previous=[{"number":n,"title":t,"story":s[-2200:]} for n,t,s in reversed(db.execute("SELECT number,title,story FROM omega_index WHERE arc=? AND number>13 ORDER BY number DESC LIMIT 2",(plan["arc"],)).fetchall())]
                 previous.append({"published_titles":[t for t, in db.execute("SELECT title FROM omega_index ORDER BY number DESC LIMIT 12")]})
             writer=cloud_writer.selected(db)
             if reservation:
@@ -296,9 +305,12 @@ def chronicle_command(content):
             if action=="status":return soul_living.status(db)
             if not soul_chronicle.canon_ok(db):return "Канон повреждён."
             if action=="news":return soul_living.news(db)
-            if soul_living.audit(db) or soul_shadow.audit(db) or soul_guardians.audit(db) or soul_destiny.audit(db):return "Сюжетные данные повреждены."
-            qplan=soul_living.queue(db)
+            if soul_living.audit(db) or soul_shadow.audit(db) or soul_guardians.audit(db) or soul_destiny.audit(db) or soul_evolution.audit(db) or soul_immortal.audit(db) or soul_novel.audit(db):return "Сюжетные данные повреждены."
+            qplan=soul_novel.forecast(db)
             return "План (пересматриваемый прогноз, со спойлерами):\n"+"\n".join(f"{p['number']}. {p['title']}" for p in qplan["items"])
+    if q=="статус романа":
+        with LOCK, closing(connect()) as db:
+            return soul_novel.status(db) if not soul_novel.audit(db) else "Части романа повреждены."
     if q=="проверить черновик редактором":return independent_editor()
     if q=="отчёт редактора":
         with LOCK, closing(connect()) as db:
@@ -489,7 +501,7 @@ def chronicle_worker(stop):
                 soul_chronicle.collect(db)
                 if soul_chronicle.canon_ok(db):
                     soul_genesis.consolidate(db)
-                    if not (soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)+soul_evolution.audit(db)+soul_immortal.audit(db)):soul_living.queue(db)
+                    if not (soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)+soul_evolution.audit(db)+soul_immortal.audit(db)+soul_novel.audit(db)):soul_novel.forecast(db)
                 enabled=CHRONICLE["enabled"] or soul_living.mode(db)!="off"
             with LOCK, closing(connect()) as db:
                 backed_up=db.execute("SELECT 1 FROM living_backups WHERE day=date('now')").fetchone()
@@ -587,10 +599,18 @@ class Handler(SimpleHTTPRequestHandler):
                 raise ValueError("Некорректный JSON")
             if self.path == "/api/reader":
                 action=data.get("action")
-                if not isinstance(action,str) or action not in ("resume","next","back","pause","start"):raise ValueError("Недопустимое действие чтения")
+                if not isinstance(action,str) or action not in ("resume","next","back","pause","start","advance","retreat","position","presence"):raise ValueError("Недопустимое действие чтения")
                 with LOCK, closing(connect()) as db, db:
                     CHRONICLE["last_activity"]=time.monotonic()
-                    reply=soul_reader.move(db,action)
+                    if action=="pause":
+                        CHRONICLE["reader_seen"]=-1e9
+                    elif action!="presence" or soul_reader.active(db):
+                        CHRONICLE["reader_seen"]=time.monotonic()
+                    if action=="position":
+                        soul_reader.position(db,data.get("hash"),data.get("start"),data.get("end"))
+                        return self.respond({"ok":True})
+                    if action=="presence":return self.respond({"reader":soul_reader.view(db)})
+                    reply=soul_reader.adjacent(db,action) if action in ("advance","retreat") else soul_reader.move(db,action)
                     return self.respond({"reply":reply,"reader":soul_reader.view(db)})
             if self.path == "/api/avatar":
                 raw = base64.b64decode(data.get("png",""),validate=True)
