@@ -28,6 +28,7 @@ PHASES=("завязка","осложнения","пересечение","выб
 def init(db):
     db.execute("""CREATE TABLE IF NOT EXISTS story_director(
         draft_id INTEGER PRIMARY KEY,payload TEXT NOT NULL,source_hash TEXT NOT NULL,checksum TEXT NOT NULL)""")
+    db.execute("""CREATE TABLE IF NOT EXISTS story_volume_notes(volume INTEGER PRIMARY KEY,payload TEXT NOT NULL,checksum TEXT NOT NULL)""")
 
 def read(db,did):
     row=db.execute("SELECT payload,source_hash,checksum FROM story_director WHERE draft_id=?",(did,)).fetchone()
@@ -44,6 +45,25 @@ def published(db,limit=120):
         JOIN chronicle_drafts d ON d.id=r.draft_id WHERE d.status='approved' AND a.number IS NOT NULL
         ORDER BY a.number DESC LIMIT ?""",(limit,)).fetchall()
     return [(n,did,read(db,did)) for n,did in reversed(rows)]
+
+def update_annotation(db,n):
+    volume=o.volume(n)
+    low,high=(1,13) if volume==1 else (14+(volume-2)*12,25+(volume-2)*12)
+    entries=[{"number":num,"title":title,"excerpt":story.strip().split("\n",1)[0][:220],"source":source} for num,title,story,source in db.execute("SELECT number,title,story,checksum FROM omega_index WHERE number BETWEEN ? AND ? ORDER BY number",(low,high))]
+    raw=o.dump(entries)
+    db.execute("INSERT INTO story_volume_notes VALUES(?,?,?) ON CONFLICT(volume) DO UPDATE SET payload=excluded.payload,checksum=excluded.checksum",(volume,raw,o.digest(raw)))
+
+def annotation(db,volume):
+    row=db.execute("SELECT payload,checksum FROM story_volume_notes WHERE volume=?",(volume,)).fetchone()
+    if not row:return ev.annotation(db,volume)
+    if o.digest(row[0])!=row[1]:raise ValueError("damaged volume annotation")
+    lines=[]
+    for item in json.loads(row[0]):
+        n=item["number"]
+        if not source_visible(db,n):continue
+        source=db.execute("SELECT checksum FROM omega_index WHERE number=?",(n,)).fetchone()
+        if source and source[0]==item["source"]:lines.append(f"{n}. {item['title']}: {item['excerpt']}")
+    return "Том "+str(volume)+" — аннотация из опубликованных отрывков:\n"+"\n".join(lines) if lines else "Нет доступных глав этого тома."
 
 def source_visible(db,n):
     return n<=13 or ev.readable(db,n)
@@ -193,7 +213,7 @@ def report(db,mode):
             c=r.get("cycle")
             if c:cycles[c["id"]]=c
         return "Редакционные циклы (не доказательство завершения сюжета):\n"+"\n".join(f"{c['id']}. "+("Редакционный цикл" if ev.settings(db)[1] else c["title"])+f" — {c['part']}/{c['target']}, {c['phase']}" for c in cycles.values()) if cycles else "Действуют прежние обязательные этапы."
-    if mode=="annotation":return ev.annotation(db,o.volume(n))
+    if mode=="annotation":return annotation(db,o.volume(n))
     if mode=="quality":
         return "Локальные показатели, не смысловая гарантия:\n"+"\n".join(f"Глава {num}: напряжение {r['tension']}/100, оригинальность {r['originality']}, замечания: "+("; ".join(r["warnings"]) or "нет") for num,_,r in rows[-8:])
     # Reasons may reference prior unread chapters; conservatively hide detailed plans in that case.
@@ -210,14 +230,14 @@ def graph(db):
     def edge(a,b,kind):
         if a!=b:edges.append(dict(a=a,b=b,kind=kind))
     node("director:root","Eternal Story · сюжетный режиссёр","director_root",infinite_group="director:root")
-    previous=None
+    previous=None;previous_number=None
     for n,did,p in rows:
         k="c:"+str(did);c=p.get("cycle")
         if c:
             key="director:cycle:"+str(c["id"]);cycles[key]=c;chapter_cycle[n]=key
             edge(key,k,"director_part")
-        if previous:edge(previous,k,"director_time")
-        previous=k
+        if previous and previous_number==n-1:edge(previous,k,"director_time")
+        previous=k;previous_number=n
         for cause in p["causes"][:4]:
             source=db.execute("SELECT draft_id FROM omega_index WHERE number=?",(cause,)).fetchone()
             if source and source_visible(db,cause):edge("canon:"+str(cause) if source[0] is None else "c:"+str(source[0]),k,"director_cause")
@@ -228,6 +248,9 @@ def graph(db):
     for key,c in cycles.items():
         node(key,("Редакционный цикл "+str(c["id"]) if ev.settings(db)[1] else c["title"])+f" · {c['part']}/{c['target']}","director_saga",infinite_group=key,cycle_complete=c["part"]>=c["target"])
         edge("director:root",key,"director_cycle")
+    ordered=sorted(cycles,key=lambda k:cycles[k]["id"])
+    for a,b in zip(ordered,ordered[1:]):
+        if cycles[a]["part"]>=cycles[a]["target"]:edge(a,b,"director_successor")
     for n,_,p in rows:
         for cause in p["causes"]:
             a,b=chapter_cycle.get(cause),chapter_cycle.get(n)
