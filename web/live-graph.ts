@@ -4,7 +4,7 @@ import {rng,clamp} from "./geometry.mjs";
 import {stellarPalette,stellarKind,stellarColor,edgeKey,publicationChanges,smoothStep,frameBudget} from "./stellar-effects.mjs";
 type Publication={number:number,key:string,volume:number,segment:string,first:boolean,complete:boolean,epoch:number,details?:boolean};
 type Snapshot={records:any[],edges:any[],total:number,limited:boolean,volume?:number,atlas?:string,publication?:Publication|null};
-type Work={id:string,kind:string,source:string,target:string,stage:string,response_chars?:number,chunks?:number,sources?:string[],events?:{seq:number,stage:string,target:string}[],seq?:number};
+type Work={id:string,kind:string,source:string,target:string,stage:string,response_chars?:number,prose_chars?:number,stalled?:boolean,chunks?:number,sources?:string[],events?:{seq:number,stage:string,target:string,duration_ms?:number}[],seq?:number};
 type Activity={session:string,revision:number,active:Work[],recent:Work[]};
 export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:number)=>void,onAtlas?:(scope:string)=>void){
  const ns="http://www.w3.org/2000/svg";
@@ -102,7 +102,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   const work=[...works.values()].filter(a=>a.item.kind==="chronicle").sort((a,b)=>Number(a.terminal)-Number(b.terminal)).at(0);
   const warning=snapshot.records.find(n=>n.kind==="draft"&&Array.isArray(n.review_warnings)&&n.review_warnings.length);
   const rows:{label:string,active:boolean,warning?:boolean}[]=[];
-  if(work){const latest=work.item.stage;const events=(work.item.events||[]).slice(-6);for(const e of events)rows.push({label:stageNames[e.stage]||e.stage,active:e===events.at(-1),warning:e.stage==="error"});if(!events.length)rows.push({label:stageNames[latest]||latest,active:true,warning:latest==="error"});if(work.item.response_chars)rows.push({label:work.item.response_chars.toLocaleString("ru-RU")+" символов ответа",active:false});}
+  if(work){const latest=work.item.stage;const events=(work.item.events||[]).slice(-6);for(const e of events)rows.push({label:(stageNames[e.stage]||e.stage)+(e.duration_ms!==undefined?" · "+e.duration_ms.toFixed(1)+" мс":""),active:e===events.at(-1),warning:e.stage==="error"});if(!events.length)rows.push({label:stageNames[latest]||latest,active:true,warning:latest==="error"});if(work.item.response_chars)rows.push({label:(work.item.prose_chars??0).toLocaleString("ru-RU")+" знаков прозы",active:false});if(work.item.stalled)rows.push({label:"Долгое ожидание Cloud.ru",active:true,warning:true});}
   if(warning){rows.push({label:"Черновик · замечания проверок",active:true,warning:true});for(const item of warning.review_warnings.slice(0,3))rows.push({label:String(item),active:false,warning:true})}
   const signature=JSON.stringify(rows);if(signature===ledgerSignature)return;ledgerSignature=signature;ledger.hidden=!rows.length;ledgerTitle.textContent="Литературные события";ledgerRows.replaceChildren();for(const row of rows){const line=document.createElement("p");line.textContent=row.label;line.className=row.warning?"stellar-warning":row.active?"stellar-current":"stellar-event";ledgerRows.append(line)}
  }
@@ -304,11 +304,11 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   spiral.forEach((p,i)=>{let d="";for(let j=0;j<=36;j++){const t=j/36,a=t*5.8+phase*(i?1:-1)+i*Math.PI,r=radius*.5+t*radius*1.7;d+=(j?"L":"M")+(Math.cos(a)*r).toFixed(2)+" "+(Math.sin(a)*r*.68).toFixed(2)}p.setAttribute("d",d);p.setAttribute("opacity",String(.42*intensity))});
   // A prospective star is an overlay, explicitly not a draft or a published chapter.
   const angle=-.68,offset=Math.min(88,Math.max(40,Math.min(w,h)*.18)),sx=Math.max(35,Math.min(w-35,x+Math.cos(angle)*offset)),sy=Math.max(35,Math.min(h-35,y+Math.sin(angle)*offset));
-  const chars=Math.max(0,work.item.response_chars||0),size=received?10:Math.min(10,4.5+Math.log1p(chars)*.55);
+  const chars=Math.max(0,work.item.prose_chars||0),size=received?10:Math.min(10,4.5+Math.log1p(chars)*.55);
   seed.setAttribute("transform","translate("+sx+" "+sy+")");seed.setAttribute("opacity",String(.45+.55*intensity));
-  seedGlow.setAttribute("r",String(size*5));seedCore.setAttribute("r",String(size));
+  seedGlow.setAttribute("r",String(size*5));seedCore.setAttribute("r",String(size));seedCore.setAttribute("fill",work.item.stalled?"#f08a82":"#ffe9b0");
   seedOrbit.setAttribute("rx",String(size*2.4));seedOrbit.setAttribute("ry",String(size*1.4));seedOrbit.setAttribute("transform","rotate("+phase*12+")");
-  seedLabel.textContent=stage==="saving"?"Сохранение":stage==="validating"?"Проверка":received?"Ответ получен":stage==="streaming"?chars+" симв. ответа":stage==="waiting"?"Ожидание Cloud.ru":"Подготовка главы";
+  seedLabel.textContent=stage==="saving"?"Сохранение":stage==="validating"?"Проверка":received?"Ответ получен":stage==="streaming"?chars+" знаков прозы":stage==="waiting"?"Ожидание Cloud.ru":"Подготовка главы";
   const sources=[...new Set([work.item.source,...(work.item.sources||[])])].map(key=>graph.byKey.get(key)).filter(n=>n&&items.get(n.key)?.getAttribute("visibility")!=="hidden");
   const count=Math.floor(dust.length*settings.particles/100*quality);
   dust.forEach((p,i)=>{if(i>=count||calm||!sources.length){p.setAttribute("display","none");return}
