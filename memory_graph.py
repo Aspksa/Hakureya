@@ -153,6 +153,12 @@ def snapshot(db, limit=5000):
             for mod in (soul_immortal,soul_infinite):
                 item=mod.read(db,did)
                 if item:warnings.extend(item.get("quality",{}).get("warnings",[]))
+            editor=soul_immortal.editor_report(db,did)
+            if editor:
+                for note in editor.get("notes",[]):
+                    if note.get("kind") in ("canon","logic"):
+                        warnings.append("Редактор (оценка модели): "+str(note.get("issue","")))
+                if editor.get("verdict")=="revise":warnings.append("Редактор (оценка модели): нужна доработка")
         except (ValueError,TypeError,KeyError,IndexError):
             warnings.append("Не удалось прочитать локальный отчёт проверки")
         pending["review_warnings"]=list(dict.fromkeys(w[:160] for w in warnings if isinstance(w,str)))[:6]
