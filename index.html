@@ -6,9 +6,16 @@
 <div id="book-toolbar"><button id="book-exit" aria-label="Вернуться в чат">← Чат</button><button id="book-smaller" aria-label="Уменьшить шрифт">A−</button><button id="book-larger" aria-label="Увеличить шрифт">A+</button><button id="book-spacing" aria-label="Изменить межстрочный интервал">↕</button><button id="book-focus" aria-label="Полноэкранное чтение" aria-pressed="false">⛶</button></div>
 <article id="book-scroll" tabindex="0"><div id="book-page" aria-live="polite"><div id="book-kicker"></div><h1 id="book-title"></h1><div id="book-ornament" class="book-ornament" aria-hidden="true">✦</div><div id="book-text"></div><p id="book-end" hidden>Продолжение появится после написания и публикации.</p></div></article>
 <footer id="book-footer"><button id="book-prev" aria-label="Предыдущая страница">‹</button><div><div id="book-position" aria-live="polite"></div><progress id="book-progress" max="1" value="0" aria-label="Прогресс главы"></progress><progress id="book-volume" max="1" value="0" aria-label="Прогресс опубликованной части тома"></progress></div><button id="book-next" aria-label="Следующая страница">›</button></footer><output id="book-status" role="status"></output>
-</section><form id="composer"><textarea id="prompt" required maxlength="12000" rows="2" placeholder="Сообщение…"></textarea><button type="submit">↑</button></form><small id="status">Локальный режим</small></aside>
+</section><form id="composer"><button id="command-plus" type="button" aria-label="Открыть команды" aria-haspopup="dialog" aria-controls="command-dialog" aria-expanded="false" title="Все команды">+</button><textarea id="prompt" required maxlength="12000" rows="2" placeholder="Сообщение…"></textarea><button type="submit">↑</button></form><small id="status">Локальный режим</small></aside>
 <menu id="menu" hidden><button id="settings">Подключение Cloud.ru</button><button id="writer-open">Автономный писатель</button><button id="avatar-picker">Загрузить PNG-аватар</button><button id="note-open">Сохранить знание или опыт</button><button id="reset">Повторить рост графа</button></menu>
-<dialog id="config"><form id="config-form" method="dialog" autocomplete="off">
+<dialog id="command-dialog" aria-labelledby="command-title">
+ <header class="command-heading"><h2 id="command-title">Команды Хакурэи</h2><button id="command-close" type="button" aria-label="Закрыть команды">×</button></header>
+ <p class="command-help">Выберите команду. Она появится в поле сообщения, отправка — только по вашему нажатию.</p>
+ <section class="command-tools" aria-label="Быстрые настройки"><button id="command-writer" type="button">✦ Автономный писатель</button><button id="command-cloud" type="button">Cloud.ru</button></section>
+ <label for="command-search">Поиск команд</label><input id="command-search" type="search" placeholder="Например, глава, сюжет, бюджет…" autocomplete="off">
+ <label for="command-category">Раздел</label><select id="command-category"><option value="">Все разделы</option></select>
+ <output id="command-count" aria-live="polite"></output><section id="command-results" aria-label="Список команд"></section>
+ </dialog><dialog id="config"><form id="config-form" method="dialog" autocomplete="off">
 <h2>Cloud.ru</h2><p>Ключ по умолчанию хранится только до перезапуска. Запросы платные.</p>
 <label>Модель<input id="model" maxlength="200"></label>
 <button id="load-models" type="button">Загрузить модели</button>
