@@ -7,6 +7,7 @@ from contextlib import closing
 import memory_graph
 import soul_core
 import soul_chronicle
+import graph_activity
 import time, re
 import base64, binascii
 
@@ -56,11 +57,17 @@ def generate_chronicle(background=False):
         if not reservation:
             return "Нет новой записи дневника, есть ожидающий черновик, нарушена целостность канона или исчерпан дневной лимит."
         key, model, epoch=CONFIG["key"],CONFIG["model"],CHRONICLE["epoch"]
+    with graph_activity.track("chronicle",f"d:{reservation[1]}") as activity:
+        return execute_chronicle(reservation,traits,previous,key,model,epoch,activity)
+
+def execute_chronicle(reservation,traits,previous,key,model,epoch,activity):
     try:
         payload={"model":model,"messages":soul_chronicle.prompt(reservation,traits,previous),"max_tokens":1800,"stream":False}
         req=Request(API,data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
+        graph_activity.update(activity,"waiting")
         with urlopen(req,timeout=60) as res:
             result=json.loads(res.read(1_000_000))
+        graph_activity.update(activity,"validating","hub:4")
         raw=result["choices"][0]["message"]["content"]
         if not isinstance(raw,str) or len(raw)>24000:
             raise ValueError("invalid draft")
@@ -68,12 +75,16 @@ def generate_chronicle(background=False):
         with LOCK, closing(connect()) as db, db:
             if CHRONICLE["epoch"]!=epoch:
                 soul_chronicle.fail(db,reservation)
+                graph_activity.update(activity,"discarded")
                 return "Настройки изменились; черновик отброшен."
             soul_chronicle.finish(db,reservation,value)
+            pending=soul_chronicle.latest_pending(db)
+        graph_activity.update(activity,"done",f"draft:{pending[\'id\']}" if pending else "hub:4")
         return "Черновик создан. Введите «летопись: черновик» для чтения и решения."
     except (URLError,TimeoutError,ValueError,KeyError,IndexError,TypeError,OSError,sqlite3.Error):
         with LOCK, closing(connect()) as db, db:
             soul_chronicle.fail(db,reservation)
+        graph_activity.update(activity,"error")
         return "Черновик не создан: ответ модели не прошёл проверку или запрос завершился ошибкой. Дневная попытка учтена."
 
 def chronicle_command(content):
@@ -162,6 +173,8 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if not self.local():
             return self.respond({"error":"Доступ только локально"},403)
+        if self.path == "/api/activity":
+            return self.respond(graph_activity.snapshot())
         if self.path == "/api/chronicle":
             with closing(connect()) as db:
                 return self.respond({"status":soul_chronicle.status(db),"graph":soul_chronicle.biography_graph(db)})
@@ -238,7 +251,7 @@ class Handler(SimpleHTTPRequestHandler):
             if command is not None:
                 return self.respond({"reply":command,"connected":bool(CONFIG["key"])})
             with LOCK:
-                store("user",content.strip())
+                user_id=store("user",content.strip())
                 if not CONFIG["key"]:
                     reply = "Сообщение сохранено локально. Для ответа подключите Cloud.ru через меню аватара."
                     return self.respond({"reply":reply,"connected":False})
@@ -246,17 +259,22 @@ class Handler(SimpleHTTPRequestHandler):
                     persona = soul_core.system_prompt(db, CONFIG["model"], content.strip())
                 payload = {"model":CONFIG["model"],"messages":[{"role":"system","content":persona}]+history(24),"max_tokens":1200,"stream":False}
                 req = Request(API, data=json.dumps(payload).encode(), headers={"Authorization":"Bearer "+CONFIG["key"],"Content-Type":"application/json"}, method="POST")
-                try:
-                    with urlopen(req,timeout=60) as res:
-                        body = json.loads(res.read(4_000_000))
-                    reply = body["choices"][0]["message"]["content"]
-                    if not isinstance(reply,str) or not reply.strip():
-                        raise ValueError("empty response")
-                except (URLError, TimeoutError, ValueError, KeyError, IndexError, TypeError, OSError):
-                    return self.respond({"error":"Cloud.ru не вернул ответ. Сообщение сохранено; проверьте модель и ключ."},502)
-                store("assistant",reply)
-                CHRONICLE["last_activity"]=time.monotonic()
-                return self.respond({"reply":reply,"connected":True})
+                with graph_activity.track("chat",f"m:{user_id}") as activity:
+                    try:
+                        graph_activity.update(activity,"waiting")
+                        with urlopen(req,timeout=60) as res:
+                            body = json.loads(res.read(4_000_000))
+                        graph_activity.update(activity,"received")
+                        reply = body["choices"][0]["message"]["content"]
+                        if not isinstance(reply,str) or not reply.strip():
+                            raise ValueError("empty response")
+                    except (URLError, TimeoutError, ValueError, KeyError, IndexError, TypeError, OSError):
+                        graph_activity.update(activity,"error")
+                        return self.respond({"error":"Cloud.ru не вернул ответ. Сообщение сохранено; проверьте модель и ключ."},502)
+                    answer_id=store("assistant",reply)
+                    graph_activity.update(activity,"done",f"m:{answer_id}")
+                    CHRONICLE["last_activity"]=time.monotonic()
+                    return self.respond({"reply":reply,"connected":True})
         except (ValueError, UnicodeError, TypeError, binascii.Error) as e:
             return self.respond({"error":"Некорректные данные запроса"},400)
 
