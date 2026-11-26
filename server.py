@@ -7,6 +7,7 @@ from contextlib import closing
 import memory_graph
 import soul_core
 import soul_chronicle
+import soul_saga
 import graph_activity
 import time, re
 import base64, binascii
@@ -44,25 +45,29 @@ def store(role, content):
             soul_chronicle.collect(db)
         return message_id
 
-def generate_chronicle(background=False):
+def generate_chronicle(background=False, arc=None):
     # Reserve quota and snapshot under lock; do not block chat during network I/O.
     with LOCK:
         if not CONFIG["key"] or (background and (not CHRONICLE["enabled"] or time.monotonic()-CHRONICLE["last_activity"]<1200)):
             return "Cloud.ru не подключён или фоновый сон не разрешён."
         with closing(connect()) as db, db:
             soul_chronicle.collect(db)
-            reservation=soul_chronicle.reserve(db)
+            reservation=soul_chronicle.reserve(db,allow_story=True)
             traits=soul_chronicle.profile(db)
-            previous=[{"title":p["title"],"story":p["story"][:1200],"tags":p["tags"]} for p in soul_chronicle.approved(db,2)]
+            plan=soul_saga.plan(db,arc) if reservation else None
+            rows=soul_saga.reading_rows(db) if reservation else []
+            same=[p for p in rows if p["arc"]==plan["arc"]] if plan else []
+            previous=[{"number":p["number"],"title":p["title"],"story":p["story"][:1800],"tags":p["tags"]} for p in same[-2:]]
+            if rows: previous.append({"published_titles":[p["title"] for p in rows[-12:]]})
         if not reservation:
-            return "Нет новой записи дневника, есть ожидающий черновик, нарушена целостность канона или исчерпан дневной лимит."
+            return "Есть незавершённая попытка или ожидающий черновик, нарушена целостность канона либо исчерпан дневной лимит."
         key, model, epoch=CONFIG["key"],CONFIG["model"],CHRONICLE["epoch"]
-    with graph_activity.track("chronicle",f"d:{reservation[1]}") as activity:
-        return execute_chronicle(reservation,traits,previous,key,model,epoch,activity)
+    with graph_activity.track("chronicle",(f"d:{reservation[1]}" if reservation[1]>0 else "arc:"+plan["arc"])) as activity:
+        return execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
 
 def execute_chronicle(reservation,traits,previous,key,model,epoch,activity):
     try:
-        payload={"model":model,"messages":soul_chronicle.prompt(reservation,traits,previous),"max_tokens":1800,"stream":False}
+        payload={"model":model,"messages":soul_chronicle.prompt(reservation,traits,previous,plan),"max_tokens":1800,"stream":False}
         req=Request(API,data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
         graph_activity.update(activity,"waiting")
         with urlopen(req,timeout=60) as res:
@@ -77,10 +82,10 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity):
                 soul_chronicle.fail(db,reservation)
                 graph_activity.update(activity,"discarded")
                 return "Настройки изменились; черновик отброшен."
-            soul_chronicle.finish(db,reservation,value)
+            soul_chronicle.finish(db,reservation,value,plan)
             pending=soul_chronicle.latest_pending(db)
         graph_activity.update(activity,"done",f"draft:{pending['id']}" if pending else "hub:4")
-        return "Черновик создан. Введите «летопись: черновик» для чтения и решения."
+        return "Черновик создан. "+soul_saga.ARC_LABELS[plan["arc"]]+".\n\n"+pending["title"]+"\n\n"+pending["story"]+"\n\nлетопись: принять "+str(pending["id"])+" / летопись: отклонить "+str(pending["id"])
     except (URLError,TimeoutError,ValueError,KeyError,IndexError,TypeError,OSError,sqlite3.Error):
         with LOCK, closing(connect()) as db, db:
             soul_chronicle.fail(db,reservation)
@@ -89,20 +94,27 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity):
 
 def chronicle_command(content):
     q=content.strip().casefold()
+    aliases={"оглавление":"летопись: содержание","покажи оглавление":"летопись: содержание","прочитать последнюю главу":"летопись: последняя","покажи последнюю главу":"летопись: последняя","создай новую главу":"летопись: создать","продолжи нашу историю любви":"летопись: создать любовь"}
+    q=aliases.get(q,q)
+    read_match=re.fullmatch(r"(?:летопись: читать|прочитай главу|читать главу) ([1-9][0-9]{0,8})",q)
+    create_match=re.fullmatch(r"летопись: создать(?: (прошлое|встреча|любовь|будущее))?",q)
     decision=re.fullmatch(r"летопись: (принять|отклонить) ([1-9][0-9]{0,8})",q)
-    if q not in soul_chronicle.COMMANDS and not decision and q!="летопись: главы":
+    if q not in soul_chronicle.COMMANDS and not decision and not read_match and not create_match and q not in ("летопись: главы","летопись: содержание","летопись: последняя"):
         return None
-    if q=="летопись: создать":
+    if create_match:
         with LOCK, closing(connect()) as db, db:
             soul_chronicle.control(db,"manual_request")
-        return generate_chronicle()
+        return generate_chronicle(arc=soul_saga.ALIASES.get(create_match[1]))
     with LOCK, closing(connect()) as db, db:
+        if read_match: return soul_saga.read(db,int(read_match[1]))
+        if q=="летопись: содержание": return soul_saga.contents(db)
+        if q=="летопись: последняя": return soul_saga.read(db)
         if q=="летопись: включить сон":
             if not CONFIG["key"]:
                 return "Сначала подключите Cloud.ru. Сон не включён."
             CHRONICLE.update(enabled=True,epoch=CHRONICLE["epoch"]+1)
             soul_chronicle.control(db,"background_enabled")
-            return "Сон включён до закрытия сервера: не чаще одной попытки UTC в сутки, после 20 минут тишины, только при новой записи дневника. В Cloud.ru передаются канон и счётчики, не текст чата. Отключение: летопись: выключить сон."
+            return "Сон включён до закрытия сервера: не чаще одной попытки UTC в сутки, после 20 минут тишины, даже без новой записи дневника, по очереди сюжетных веток. В Cloud.ru передаются канон, утверждённые художественные главы и счётчики (если есть), не текст чата. Отключение: летопись: выключить сон."
         if q=="летопись: выключить сон":
             CHRONICLE.update(enabled=False,epoch=CHRONICLE["epoch"]+1)
             soul_chronicle.control(db,"background_disabled")
@@ -113,6 +125,9 @@ def chronicle_command(content):
                 ok=soul_chronicle.decide(db,i,decision[1]=="принять")
             except ValueError:
                 ok=False
+            if ok and decision[1]=="принять":
+                n=db.execute("SELECT number FROM saga_arcs WHERE draft_id=?",(i,)).fetchone()[0]
+                return f"Решение сохранено. Глава {n} добавлена в летопись и граф. Читать: летопись: читать {n}."
             return "Решение сохранено." if ok else "Черновик не найден, повреждён или уже обработан."
         if q=="летопись: дневник":
             return soul_chronicle.diary_text(db)
