@@ -172,3 +172,15 @@ class ServerTest(unittest.TestCase):
             self.assertIn("1/18",self.request("chat",{"content":"Что дальше по сюжету?"})["reply"])
             self.assertEqual(remote.call_count,1)
         self.assertTrue(any(n["key"]=="shadow:event:0" for n in self.request("graph")["records"]))
+
+
+    def test_page_reader_offline(self):
+        with patch.object(server,"urlopen") as remote:
+            first=self.request("chat",{"content":"Прочитай главу 5"})["reply"]
+            second=self.request("chat",{"content":"Дальше!"})["reply"]
+            self.assertIn("Страница 2/",second)
+            self.assertEqual(self.request("chat",{"content":"Продолжить чтение"})["reply"],second)
+            self.assertEqual(self.request("chat",{"content":"Назад"})["reply"],first)
+            self.assertIn("страница 1",self.request("chat",{"content":"Остановить чтение"})["reply"])
+            self.assertEqual(self.request("chat",{"content":"Читать книгу"})["reply"],first)
+            remote.assert_not_called()
