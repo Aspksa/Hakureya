@@ -180,6 +180,9 @@ def eligible(db,did):
     if not c.canon_ok(db) or g.audit(db)+h.audit(db)+sh.audit(db)+gu.audit(db)+de.audit(db)+audit(db):return False
     for k,mod in (("shadow",sh),("guardians",gu),("destiny",de)):
         if k in p["required"] and not mod.read(db,did):return False
+    import soul_immortal
+    im=soul_immortal.read(db,did)
+    if im and (im["quality"]["warnings"] or (im.get("required") and im["step"] is None)):return False
     m=o.metadata(db,did);review=r.report(db,did)
     return bool(m and review and m["score"]>=85 and not m["warnings"] and review["originality_heuristic"]>=80 and not review["warnings"] and review["words"]>=350)
 

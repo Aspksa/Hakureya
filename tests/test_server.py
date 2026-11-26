@@ -252,3 +252,46 @@ class ServerTest(unittest.TestCase):
             self.assertIn("остановлен",self.request("chat",{"content":"Продолжи сагу"})["reply"])
             self.assertIn("4000",self.request("chat",{"content":"Формат главы большая"})["reply"])
             remote.assert_not_called()
+
+
+    def test_book_reader_api_is_offline(self):
+        with patch.object(server,"urlopen") as remote:
+            self.assertIsNone(self.request("reader")["reader"])
+            first=self.request("chat",{"content":"Читать с начала"})["reader"]
+            self.assertEqual(first["chapter"],1)
+            self.assertEqual(first["page"],1)
+            self.assertNotIn("Художественный канон",first["text"])
+            next_page=self.request("reader",{"action":"next"})["reader"]
+            self.assertNotEqual(next_page,first)
+            self.assertEqual(self.request("reader",{"action":"back"})["reader"],first)
+            self.assertEqual(self.request("reader")["reader"],first)
+            self.assertIsNone(self.request("reader",{"action":"pause"})["reader"])
+            self.assertEqual(self.request("reader",{"action":"resume"})["reader"],first)
+            self.assertIn("Императрица человеческого мира",self.request("chat",{"content":"Новые саги"})["reply"])
+            self.assertEqual(self.request("graph/volume/1")["volume"],1)
+            self.assertIn("30 минут",self.request("chat",{"content":"Интервал писателя 30"})["reply"])
+            remote.assert_not_called()
+
+
+    def test_independent_editor_uses_existing_daily_quota(self):
+        import soul_chronicle as c
+        from datetime import datetime,timezone
+        from test_omega import chapter
+        self.request("config",{"key":"test-key","model":"test-model","consent":True})
+        with closing(server.connect()) as db, db:
+            reservation=c.reserve(db,datetime(2099,1,1,tzinfo=timezone.utc),allow_story=True)
+            c.finish(db,reservation,chapter())
+            pending=c.latest_pending(db)
+        fake=MagicMock()
+        report={"score":80,"verdict":"revise","notes":[{"kind":"pace","issue":"Сцена слишком быстро заканчивается","evidence":"Хакурэя открыла дверь серебряного архива.","suggestion":"Добавить реакцию героини на открытие."}]}
+        fake.__enter__.return_value.read.return_value=json.dumps({"choices":[{"message":{"content":json.dumps(report,ensure_ascii=False)}}],"usage":{"prompt_tokens":1000,"completion_tokens":200}}).encode()
+        with patch.object(server,"urlopen",return_value=fake) as remote:
+            self.assertIn("80/100",self.request("chat",{"content":"Проверить черновик редактором"})["reply"])
+            self.assertIn("Суточная попытка",self.request("chat",{"content":"Проверить черновик редактором"})["reply"])
+            self.assertIn("80/100",self.request("chat",{"content":"Отчёт редактора"})["reply"])
+            self.assertEqual(remote.call_count,1)
+            payload=json.loads(remote.call_args.args[0].data)
+            self.assertEqual(payload["max_tokens"],1800)
+        with closing(server.connect()) as db:
+            self.assertEqual(c.latest_pending(db)["story"],pending["story"])
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM chronicle_drafts WHERE status='approved'").fetchone()[0],0)

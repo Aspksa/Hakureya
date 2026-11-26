@@ -2,3 +2,28 @@
 #avatar[aria-expanded=true]{right:min(455px,calc(100vw - 100px));width:100px;height:125px}#chat{padding-bottom:32px}@media(max-width:600px){#avatar[aria-expanded=true]{right:9px;width:70px;height:90px}#chat{padding-bottom:104px}}
 
 #stage{background:radial-gradient(ellipse at 50% 48%,#0c0b0b 0%,#080808 72%)}#graph{font-family:"JetBrains Mono","Cascadia Mono","Consolas","Liberation Mono",monospace}.label{font-size:8px;stroke-width:1.5px;letter-spacing:-.18px}.active-label{font-size:9px;letter-spacing:-.15px;font-weight:600}#note-kind{font:inherit;background:#111;color:#eee;padding:7px;border:1px solid #633e45}#note-text{border:1px solid #633e45;padding:8px}#avatar img{image-rendering:auto}
+
+/* Reading-only typography, without changing graph or normal chat fonts. */
+#chat.reading{width:min(760px,100%);padding:18px clamp(18px,4vw,40px) 22px;background:linear-gradient(90deg,#0a0909f7,#100e0dfc);box-shadow:-16px 0 60px #0007}
+#chat.reading header{font-family:system-ui,sans-serif}
+#chat.book-focus{width:100%;background:#0e0c0b;z-index:5;padding-inline:clamp(20px,8vw,120px)}
+#book{display:flex;flex-direction:column;flex:1;min-height:0;gap:12px;color:#e8e0d5}
+#book-toolbar,#book-footer{display:flex;align-items:center;gap:8px;font:12px/1.4 system-ui,sans-serif;color:#c6ac86}
+#book-toolbar button{min-width:36px;min-height:36px;border-radius:5px}
+#book-toolbar button:hover,#book-footer button:hover{background:#c6ac8612}
+#book-exit{margin-right:auto}
+#book-scroll{min-height:0;flex:1;overflow:auto;overscroll-behavior:contain;touch-action:pan-y;scrollbar-width:thin;scrollbar-color:#5f4e3d transparent}
+#book-page{max-width:64ch;margin:auto;padding:20px 4px 35px;font:var(--book-font,18px)/var(--book-spacing,1.8) Georgia,"Times New Roman",serif;overflow-wrap:break-word}
+#book-kicker{color:#c6ac86;text-align:center;font:11px/1.5 system-ui,sans-serif;letter-spacing:.16em}
+#book-title{font-weight:400;font-size:1.55em;line-height:1.25;color:#f0e0c6;text-align:center;margin:.65em 0}
+.book-ornament{text-align:center;color:#b99c72;font-size:14px;margin:16px 0 22px}
+#book-text p{margin:0 0 1em;white-space:pre-wrap}
+#book-end{font:12px/1.6 system-ui,sans-serif;text-align:center;color:#bca482}
+#book-footer{justify-content:space-between;max-width:640px;width:100%;margin:auto}
+#book-footer button{font-size:30px;min-width:44px;min-height:44px}
+#book-footer button:disabled{opacity:.24;cursor:default}
+#book-footer>div{flex:1;max-width:320px;text-align:center}
+#book-footer progress{display:block;width:100%;height:3px;accent-color:#c8aa78;margin-top:6px}
+#book-volume{opacity:.48}
+#book-status{font:11px system-ui,sans-serif;color:#e0b59d;min-height:1em}
+@media(max-width:600px){#chat.reading{padding:14px 18px 18px;z-index:5}#book-page{padding-top:10px}#book-toolbar{gap:4px}}

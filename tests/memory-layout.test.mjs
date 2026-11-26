@@ -113,3 +113,12 @@ test("Destiny topic and personal clusters do not overlap",()=>{
  assert.equal(new Set(g.nodes.map(n=>n.x.toFixed(8)+":"+n.y.toFixed(8))).size,g.nodes.length);
  assert.deepEqual(g.nodes,layout({records,edges:[]}).nodes);
 });
+
+test("Immortal Chronicle uses separated stable cells",()=>{
+ const records=[{key:"immortal:root",group:4,immortal_slot:-1},{key:"destiny:root",group:4,destiny_topic:"root",destiny_slot:-1},{key:"heart:root",group:4,heart_topic:"root",heart_slot:-1}];
+ for(let i=0;i<500;i++)records.push({key:"immortal:"+i,group:4,immortal_slot:i});
+ const g=layout({records,edges:[]});
+ assert.ok(g.nodes.every(n=>Number.isFinite(n.x)&&Number.isFinite(n.y)));
+ assert.equal(new Set(g.nodes.map(n=>n.x.toFixed(8)+":"+n.y.toFixed(8))).size,g.nodes.length);
+ assert.deepEqual(g.nodes,layout({records,edges:[]}).nodes);
+});
