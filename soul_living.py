@@ -203,6 +203,9 @@ def eligible(db,did):
             words=sum(len(re.findall(r"\b\w+\b",r["story"])) for r in rows)+len(re.findall(r"\b\w+\b",text))
             if words>=part["target"] or o.volume(part["start"]+part["part"])!=o.volume(part["start"]):return False
     if db.execute("SELECT 1 FROM lit_rejections WHERE draft_id=?",(did,)).fetchone():return False
+    import soul_intellect
+    soul_intellect.refresh(db)
+    if soul_intellect.draft_concerns(db,did):return False
     m=o.metadata(db,did);review=r.report(db,did)
     return bool(m and review and m["score"]>=85 and not m["warnings"] and review["originality_heuristic"]>=80 and not review["warnings"] and review["words"]>=350)
 
