@@ -87,7 +87,7 @@ def snapshot(db, limit=5000):
         if k.startswith("canon:"):return 0
         if k.startswith("brain:") or k=="lit:db":return 1
         if k.startswith(("character:","guardian:","era:","arc:")) or kind.endswith("_root"):return 2
-        if kind in ("book","book_segment","novel_epoch","director_saga"):return 3
+        if kind in ("book","book_segment","novel_epoch","director_saga","dynasty_saga"):return 3
         return 4
     total_permanent=len(permanent)
     permanent=sorted(permanent,key=priority)[:max(0,limit-int(pending is not None))]
@@ -153,6 +153,10 @@ def snapshot(db, limit=5000):
             for mod in (soul_immortal,soul_infinite):
                 item=mod.read(db,did)
                 if item:warnings.extend(item.get("quality",{}).get("warnings",[]))
+            import soul_dynasty
+            dynasty=soul_dynasty.read(db,did)
+            if dynasty and dynasty["target"] and not dynasty["step"]:warnings.append("Этап Династии ещё не подтверждён")
+            if dynasty and dynasty.get("warning"):warnings.append(dynasty["warning"])
             editor=soul_immortal.editor_report(db,did)
             if editor:
                 for note in editor.get("notes",[]):
