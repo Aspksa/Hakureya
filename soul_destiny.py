@@ -263,7 +263,7 @@ def graph(db):
         if 51<=b<=60:
             a,name,_=CAST[b-51];key="destiny:actor:"+a;node(key,name,"destiny_character","actor:"+a,-1);edge(k,key,"introduced");first_char[a]=key
         for j,f in enumerate(data["facts"]):
-            kind=f["kind"];key=f"destiny:fact:{did}:{j}";area="actor:"+f["subject"] if f["subject"] in first_char else t
+            kind=f["kind"];key=f"destiny:fact:{did}:{j}";area="actor:"+f["subject"] if f["subject"] in first_char else "realm:"+str(f["realm"]) if f["realm"] is not None and kind in ("travel","realm") else t
             node(key,f["detail"],"destiny_fact",area,(b-1)*4+j+1);edge(k,key,kind)
             if kind=="travel":
                 if last_travel:edge(last_travel,key,"travel_sequence")
