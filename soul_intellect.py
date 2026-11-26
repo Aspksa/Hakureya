@@ -30,7 +30,7 @@ CANON=(
 def canonical_evidence(n,story):
     return [dict(kind=kind,subject=name,object="",value=value,quote=quote,cause=None) for chapter,kind,name,value,quote in CANON if n==chapter and quote in story]
 
-PROFILE={"biography","identity","age","trait","habit","fear","goal","voice","belief","location","power","limit","knowledge","secret","letter","relationship","love_moment"}
+PROFILE={"biography","identity","age","trait","habit","fear","goal","voice","belief","location","power","limit","knowledge","secret","letter","relationship","love_moment","emotion","intention","diary","knowledge_transfer","world_time"}
 STABLE={"identity","law","limit","origin"}
 THREADS={"clue","promise","conflict"}
 KINDS=PROFILE|STABLE|THREADS|{"character","artifact","event","consequence","prophecy","reveal","close","emotion","tradition",*li.RELATIONS}
@@ -212,7 +212,7 @@ def instruction(plan):
 def record_run(db,attempt,plan):
     p=plan.get("intellect7")
     if p:
-        raw=o.dump(p)
+        raw=o.dump({**p,"timings_ms":plan.get("intelligence",{}).get("timings_ms",{})})
         db.execute("INSERT INTO intellect_runs VALUES(?,?,?)",(attempt,raw,o.digest(raw)))
 
 def report(db,mode,query=""):
@@ -236,7 +236,14 @@ def report(db,mode,query=""):
             for f in p["facts"]:
                 if f["kind"] in ("knowledge","secret"):
                     out.append(f"{n} · {f['subject']}: {f['detail']} · свидетели: "+(", ".join(f["knows"]) or "не указаны")+" · источник: «"+f["evidence"]+"»")
+        for f in rows(db,kind="knowledge_transfer",limit=40):
+            out.append(f"{f['chapter']} · {f['subject']} → {f['object']}: {f['value']} · «{f['quote']}»")
         return "\n\n".join(out[-60:]) or "Нет подтверждённых доступных записей о знаниях."
+    if mode=="world_time":
+        data=rows(db,kind="world_time",limit=80)
+        return "Явные временные указания из текста (порядок публикации, не вычисленные даты):\n"+"\n".join(f"{r['chapter']} · {r['subject']}: {r['value']} · «{r['quote']}»" for r in data) if data else "Пока нет доступных явных временных указаний."
+    if mode=="modules":
+        return module_audit(db)
     if mode=="audit":
         return audit(db)
     if mode=="repair":
@@ -285,3 +292,27 @@ def graph_notices(db,records):
             row=db.execute("SELECT number FROM omega_index WHERE draft_id=?",(int(key[2:]),)).fetchone()
             if row and row[0] in by_chapter:
                 node["review_warnings"]=by_chapter[row[0]][:3]
+
+
+def module_audit(db):
+    import soul_chronicle as ch
+    import soul_genesis, soul_heart, soul_shadow, soul_guardians, soul_destiny
+    import soul_living, soul_immortal, soul_novel, soul_dynasty
+    messages=["Канон: "+("OK" if ch.canon_ok(db) else "ошибка")]
+    for mod in (soul_genesis,soul_heart,soul_shadow,soul_guardians,soul_destiny,soul_living,ev,soul_immortal,soul_novel,inf,soul_dynasty):
+        try:
+            found=mod.audit(db)
+            messages.append(mod.__name__+": "+("; ".join(str(x) for x in found) if found else "OK"))
+        except (ValueError,TypeError,KeyError,IndexError):
+            messages.append(mod.__name__+": ошибка чтения")
+    messages.append("Сцены: "+u.report(db,"audit"))
+    messages.append("Литературный индекс: "+li.audit_text(db))
+    messages.append("Свидетельства: "+audit(db))
+    messages.append("Проверка локальных данных, не полная смысловая экспертиза.")
+    return "\n".join(messages)
+
+def draft_concerns(db,did):
+    facts=li.extra(db,did)
+    n=db.execute("SELECT COALESCE(MAX(number),13)+1 FROM omega_index").fetchone()[0]
+    records=[dict(f,chapter=n,id=evidence_id(n,f),actor_id=li.actor_key(f["subject"])) for f in facts]
+    return concerns(db,records,False)
