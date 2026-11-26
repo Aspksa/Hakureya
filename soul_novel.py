@@ -98,7 +98,7 @@ def enrich(db,plan):
     p["guardian_focus"]=1+(p["previous_number"]%9)
     p["heaven_focus"]=1+((p["previous_number"]//2)%9)
     plan["novel"]=p
-    if plan["arc"]=="future" and not any(k in plan for k in ("shadow","guardians","destiny")) and "cycle_id" not in plan.get("romance",{}) and not plan.get("evolution",{}).get("chosen",{}).get("scene") and not plan.get("immortal",{}).get("chosen") and im.ready(db):
+    if not plan.get("dynasty_lane") and plan["arc"]=="future" and not any(k in plan for k in ("shadow","guardians","destiny")) and "cycle_id" not in plan.get("romance",{}) and not plan.get("evolution",{}).get("chosen",{}).get("scene") and not plan.get("immortal",{}).get("chosen") and im.ready(db):
         head=forecast(db)["items"][0]
         p["next_line"]={"title":head["title"],"guide":head["guide"],"theme":head["theme"]}
     return plan

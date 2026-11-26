@@ -85,7 +85,7 @@ def preferences(db):
 def enrich(db,plan):
     rows=list(published(db))
     done=sum(p["step"] is not None for _,_,p in rows)
-    fixed=any(k in plan for k in ("shadow","guardians","destiny")) or plan["arc"]!="future" or "cycle_id" in plan.get("romance",{})
+    fixed=bool(plan.get("dynasty_lane")) or any(k in plan for k in ("shadow","guardians","destiny")) or plan["arc"]!="future" or "cycle_id" in plan.get("romance",{})
     step=ORDER[done] if not fixed and ready(db) and done<len(ORDER) else None
     chosen=None
     if step:

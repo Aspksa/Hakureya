@@ -101,7 +101,7 @@ def context(db,plan):
     history=published(db)
     recent=[p for _,_,p in history[-12:]]
     recent_themes=[{"theme":p["theme"]} for p in recent] or [{"theme":p["theme"]} for _,_,p in list(ev.published(db))[-8:]]
-    fixed=(plan["arc"]!="future" or any(k in plan for k in ("shadow","guardians","destiny")) or
+    fixed=(bool(plan.get("dynasty_lane")) or plan["arc"]!="future" or any(k in plan for k in ("shadow","guardians","destiny")) or
         "cycle_id" in plan.get("romance",{}) or bool(plan.get("evolution",{}).get("chosen",{}).get("scene")) or
         bool(plan.get("immortal",{}).get("chosen")) or bool(plan.get("infinite",{}).get("selected")) or not inf.ready(db) or bool(inf.remaining(db)))
     continuation=plan.get("novel",{}).get("part",1)>1
@@ -122,7 +122,7 @@ def context(db,plan):
         mandatory=next((plan[k] for k in ("shadow","guardians","destiny") if isinstance(plan.get(k),dict)),None)
         if mandatory:chosen={"theme":"fixed","title":str(mandatory.get("title","Обязательный эпизод")),"guide":"Следуй текущей саге."}
         chosen=chosen or {"theme":"fixed","title":"Обязательный эпизод","guide":"Продолжай установленную ветку."}
-        reason="приоритет обязательного этапа или явно выбранной ветки"
+        reason="приоритет отдельной линии Династии" if plan.get("dynasty_lane") else "приоритет обязательного этапа или явно выбранной ветки"
     elif continuation:
         prev=recent[-1] if recent else None
         chosen={"theme":prev["theme"],"title":prev["title"],"guide":"Продолжай предыдущую сцену без повторения."} if prev else {"theme":"growth","title":"Продолжение главы","guide":"Продолжай предыдущую сцену."}

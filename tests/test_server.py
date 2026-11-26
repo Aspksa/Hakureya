@@ -30,6 +30,30 @@ class ServerTest(unittest.TestCase):
         h.update(headers or {})
         with urlopen(Request(self.url+path,data=None if data is None else json.dumps(data).encode(),headers=h),timeout=5) as r:
             return json.load(r)
+    def test_dynasty_commands_and_single_writer_request(self):
+        from test_dynasty import base
+        with patch.object(server,"urlopen") as remote:
+            self.assertIn("0 из 70",self.request("chat",{"content":"Династия вечности"})["reply"])
+            self.assertIn("11. Приговорённая к казни",self.request("chat",{"content":"План династии"})["reply"])
+            self.assertIn("Нет доступных",self.request("chat",{"content":"История горничной"})["reply"])
+            remote.assert_not_called()
+        self.request("config",{"key":"test-key","model":"test-model","consent":True})
+        payload={**base(),"dynasty":{"step":11,"evidence":"Маюри была приговорена к казни."}}
+        fake=MagicMock()
+        fake.__enter__.return_value.read.return_value=json.dumps({"choices":[{"message":{"content":json.dumps(payload,ensure_ascii=False)}}]}).encode()
+        with patch.object(server,"urlopen",return_value=fake) as remote:
+            self.assertIn("Черновик создан",self.request("chat",{"content":"Продолжи династию"})["reply"])
+            self.assertEqual(remote.call_count,1)
+            sent=json.loads(remote.call_args.args[0].data)
+            self.assertEqual(sent["max_tokens"],1800)
+            self.assertIn("Eternal Dynasty",sent["messages"][0]["content"])
+            self.assertIn("Маюри",sent["messages"][0]["content"])
+            self.assertIn("0 из 70",self.request("chat",{"content":"Династия вечности"})["reply"])
+            self.assertIn("Глава 14",self.request("chat",{"content":"Принять главу"})["reply"])
+            self.assertIn("1 из 70",self.request("chat",{"content":"Династия вечности"})["reply"])
+            self.assertIn("завершите текущую главу Династии",self.request("chat",{"content":"летопись: цикл обычная"})["reply"])
+            self.assertEqual(remote.call_count,1)
+
     def test_writer_panel_persistence_and_consent(self):
         st=self.request("writer")
         self.assertEqual(st["mode"],"off")

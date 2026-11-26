@@ -29,6 +29,7 @@ import soul_novel
 import soul_infinite
 import soul_intelligence
 import soul_director
+import soul_dynasty
 import graph_activity
 import writer_activity
 import instance_guard
@@ -149,7 +150,7 @@ def reading_window(db):
     row=soul_reader.bookmark(db)
     return bool(row and row[3] and row[0]>=soul_reader.latest(db)-1)
 
-def generate_chronicle(background=False, arc=None, alternative=False, shadow=False, guardians=False, destiny=False):
+def generate_chronicle(background=False, arc=None, alternative=False, shadow=False, guardians=False, destiny=False, dynasty=False):
     # Reserve quota and snapshot under lock; do not block chat during network I/O.
     with LOCK:
         if not CONFIG["key"]:
@@ -169,6 +170,14 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
             if cycle and arc and arc!=cycle["arc"]:
                 return "Сначала завершите открытый художественный цикл или продолжите его сюжетную линию."
             if cycle: arc=cycle["arc"]
+            if soul_dynasty.audit(db):return "Записи Династии повреждены; написание остановлено."
+            if soul_dynasty.continuing(db) and (cycle or alternative or shadow or guardians or destiny or arc not in (None,"future")):
+                return "Сначала завершите текущую главу Династии."
+            dynasty_lane=False
+            if not cycle and not alternative and not (shadow or guardians or destiny) and (dynasty or arc is None or soul_dynasty.continuing(db)):
+                dynasty_lane=soul_dynasty.choose_lane(db,explicit=dynasty)
+            if dynasty and not dynasty_lane:return "Династия: сначала завершите текущую литературную главу/цикл либо все этапы уже пройдены."
+            if dynasty_lane:arc="future"
             shadow_plan=soul_shadow.plan(db) if not cycle and not alternative and (shadow or arc is None) and not soul_shadow.audit(db) else None
             guardian_plan=soul_guardians.plan(db) if not cycle and not alternative and (guardians or shadow or arc is None) else None
             destiny_plan=soul_destiny.plan(db) if not cycle and not alternative and (destiny or shadow or arc is None) else None
@@ -185,6 +194,8 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                 soul_romance.enrich(db,plan)
                 soul_heart.enrich(db,plan)
                 plan["alternative"]=alternative
+                plan["dynasty_lane"]=dynasty_lane
+                plan["dynasty_guard"]=soul_dynasty.guard(db,plan)
                 if shadow_plan:plan["shadow"]=shadow_plan
                 if destiny_plan:plan["destiny"]=destiny_plan
                 if guardian_plan:plan["guardians"]=guardian_plan
@@ -196,6 +207,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                     soul_immortal.enrich(db,plan)
                     soul_novel.enrich(db,plan)
                     soul_infinite.context(db,plan)
+                    soul_dynasty.context(db,plan)
                     soul_director.context(db,plan)
                     soul_intelligence.prepare(db,plan)
             previous=[]
@@ -215,7 +227,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
         if not reservation:
             return "Есть незавершённая попытка или ожидающий черновик, нарушена целостность канона либо исчерпан дневной лимит."
         key, model, epoch=CONFIG["key"],writer or CONFIG["model"],CHRONICLE["epoch"]
-    with graph_activity.track("chronicle",("destiny:root" if destiny_plan else "guardians:root" if guardian_plan else "shadow:root" if shadow_plan else (f"d:{reservation[1]}" if reservation[1]>0 else ("heart:root" if plan["arc"]=="love" else "living:root" if plan.get("living") and plan["arc"]=="future" else "arc:"+plan["arc"]))),sources=visual_sources) as activity:
+    with graph_activity.track("chronicle",("dynasty:root" if dynasty_lane else "destiny:root" if destiny_plan else "guardians:root" if guardian_plan else "shadow:root" if shadow_plan else (f"d:{reservation[1]}" if reservation[1]>0 else ("heart:root" if plan["arc"]=="love" else "living:root" if plan.get("living") and plan["arc"]=="future" else "arc:"+plan["arc"]))),sources=visual_sources) as activity:
         return execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
 
 def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan):
@@ -322,6 +334,15 @@ def chronicle_command(content):
     aliases.update({"девять хранительниц":"летопись: хранительницы","хранительницы":"летопись: хранительницы","продолжи историю хранительниц":"летопись: создать хранительниц","план хранительниц":"летопись: план хранительниц"})
     aliases.update({"за пределами девяти небес":"летопись: судьба","план судьбы":"летопись: план судьбы","новые герои":"летопись: новые герои","продолжи судьбу":"летопись: создать судьбу","история силы":"летопись: судьба сила","путешествия":"летопись: судьба путешествия","развитие императрицы":"летопись: судьба развитие"})
     q=aliases.get(q,q)
+    if q=="продолжи династию":
+        with LOCK, closing(connect()) as db, db:soul_chronicle.control(db,"manual_request")
+        return generate_chronicle(dynasty=True)
+    if q in ("династия вечности","план династии","история горничной","история сестры"):
+        with LOCK, closing(connect()) as db, db:
+            if not soul_chronicle.canon_ok(db) or soul_dynasty.audit(db):return "Литературные записи повреждены."
+            if q=="династия вечности":return soul_dynasty.status(db)
+            if q=="план династии":return soul_dynasty.plan_text(db)
+            return soul_dynasty.character_text(db,"maid" if q=="история горничной" else "sister")
     director_commands={"сюжетный режиссёр":"decision","сюжетный режиссер":"decision","сюжетные циклы":"cycles","качество сюжета":"quality","план трёх томов":"forecast","план трех томов":"forecast","аннотация последнего тома":"annotation"}
     if q in director_commands:
         with LOCK, closing(connect()) as db, db:
@@ -506,7 +527,7 @@ def chronicle_command(content):
         return generate_chronicle(arc=soul_saga.ALIASES.get(create_match[1]),alternative=create_match[1]=="варианты",shadow=create_match[1]=="сагу",guardians=create_match[1]=="хранительниц",destiny=create_match[1]=="судьбу")
     with LOCK, closing(connect()) as db, db:
         if q=="летопись: аудит":
-            issues=soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)+soul_evolution.audit(db)+soul_immortal.audit(db)+soul_novel.audit(db)+soul_infinite.audit(db)
+            issues=soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)+soul_evolution.audit(db)+soul_immortal.audit(db)+soul_novel.audit(db)+soul_infinite.audit(db)+soul_dynasty.audit(db)
             index_status=soul_intelligence.audit_text(db)
             if index_status!="целостность подтверждена":issues.append("Литературный индекс: "+index_status)
             return "Проверка целостности (не семантическая проверка): "+("\n"+"\n".join(issues) if issues else "нарушений не найдено.")
@@ -540,6 +561,7 @@ def chronicle_command(content):
             plan=soul_heart.choose(db,"love")
             return "Предварительный художественный замысел: "+plan["lens"]
         if romance_start:
+            if soul_dynasty.continuing(db):return "Сначала завершите текущую главу Династии."
             arc=soul_saga.ALIASES.get(romance_start[2],"love")
             ok=soul_romance.start_cycle(db,romance_start[1],arc)
             return "Цикл открыт. Цель: "+str(soul_romance.FORMATS[romance_start[1]])+" слов в утверждённых частях. Создавайте части командой «летопись: создать». Действует прежний дневной лимит." if ok else "Сначала обработайте текущий черновик, запрос или открытый цикл."
