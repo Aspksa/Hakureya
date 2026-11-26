@@ -9,6 +9,7 @@ import soul_core
 import soul_chronicle
 import soul_saga
 import soul_omega
+import soul_genesis
 import graph_activity
 import time, re
 import base64, binascii
@@ -46,20 +47,21 @@ def store(role, content):
             soul_chronicle.collect(db)
         return message_id
 
-def generate_chronicle(background=False, arc=None):
+def generate_chronicle(background=False, arc=None, alternative=False):
     # Reserve quota and snapshot under lock; do not block chat during network I/O.
     with LOCK:
         if not CONFIG["key"] or (background and (not CHRONICLE["enabled"] or time.monotonic()-CHRONICLE["last_activity"]<1200)):
             return "Cloud.ru не подключён или фоновый сон не разрешён."
         with closing(connect()) as db, db:
             soul_chronicle.collect(db)
-            reservation=soul_chronicle.reserve(db,allow_story=True)
+            reservation=soul_chronicle.reserve(db,allow_story=True) if not soul_genesis.audit(db) else None
             traits=soul_chronicle.profile(db)
-            plan=soul_omega.enrich_plan(db,soul_saga.plan(db,arc)) if reservation else None
-            rows=soul_saga.reading_rows(db) if reservation else []
-            same=[p for p in rows if p["arc"]==plan["arc"]] if plan else []
-            previous=[{"number":p["number"],"title":p["title"],"story":p["story"][:1800],"tags":p["tags"]} for p in same[-2:]]
-            if rows: previous.append({"published_titles":[p["title"] for p in rows[-12:]]})
+            plan=soul_genesis.enrich(db,soul_omega.enrich_plan(db,soul_saga.plan(db,arc))) if reservation else None
+            if plan: plan["alternative"]=alternative
+            previous=[]
+            if plan:
+                previous=[{"number":n,"title":t,"story":s[:1800]} for n,t,s in reversed(db.execute("SELECT number,title,story FROM omega_index WHERE arc=? AND number>13 ORDER BY number DESC LIMIT 2",(plan["arc"],)).fetchall())]
+                previous.append({"published_titles":[t for t, in db.execute("SELECT title FROM omega_index ORDER BY number DESC LIMIT 12")]})
         if not reservation:
             return "Есть незавершённая попытка или ожидающий черновик, нарушена целостность канона либо исчерпан дневной лимит."
         key, model, epoch=CONFIG["key"],CONFIG["model"],CHRONICLE["epoch"]
@@ -86,8 +88,9 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
             soul_chronicle.finish(db,reservation,value,plan)
             pending=soul_chronicle.latest_pending(db)
             editorial=soul_omega.metadata(db,pending["id"])
+            variants=db.execute("SELECT COUNT(*) FROM genesis_variants WHERE draft_id=?",(pending["id"],)).fetchone()[0]
         graph_activity.update(activity,"done",f"draft:{pending['id']}" if pending else "hub:4")
-        return "Черновик создан. "+soul_saga.ARC_LABELS[plan["arc"]]+".\n\n"+pending["title"]+"\n\n"+pending["story"]+"\n\nОценка редактора (эвристика): "+str(editorial["score"])+"/100. "+", ".join(editorial["warnings"])+"\n\nлетопись: принять "+str(pending["id"])+" / летопись: отклонить "+str(pending["id"])
+        return "Черновик создан. "+soul_saga.ARC_LABELS[plan["arc"]]+".\n\n"+pending["title"]+"\n\n"+pending["story"]+"\n\nОценка редактора (эвристика): "+str(editorial["score"])+"/100. "+", ".join(editorial["warnings"])+( "\nЕсть варианты: летопись: варианты" if variants else "")+"\n\nлетопись: принять "+str(pending["id"])+" / летопись: отклонить "+str(pending["id"])
     except (URLError,TimeoutError,ValueError,KeyError,IndexError,TypeError,OSError,sqlite3.Error):
         with LOCK, closing(connect()) as db, db:
             soul_chronicle.fail(db,reservation)
@@ -99,20 +102,48 @@ def chronicle_command(content):
     aliases={"оглавление":"летопись: содержание","покажи оглавление":"летопись: содержание","прочитать последнюю главу":"летопись: последняя","покажи последнюю главу":"летопись: последняя","создай новую главу":"летопись: создать","продолжи нашу историю любви":"летопись: создать любовь"}
     q=aliases.get(q,q)
     read_match=re.fullmatch(r"(?:летопись: читать|прочитай главу|читать главу) ([1-9][0-9]{0,8})",q)
-    create_match=re.fullmatch(r"летопись: создать(?: (прошлое|встреча|любовь|будущее))?",q)
+    create_match=re.fullmatch(r"летопись: создать(?: (прошлое|встреча|любовь|будущее|варианты))?",q)
+    genesis_read=re.fullmatch(r"летопись: (письмо|другой взгляд|вариант) ([1-9][0-9]{0,8})",q)
+    genesis_arc=re.fullmatch(r"летопись: эпоха (прошлое|встреча|любовь|будущее)(?: ([1-9][0-9]{0,5}))?",q)
+    genesis_commands=("летопись: атлас","летопись: законы","летопись: энциклопедия","летопись: судьбы","летопись: аудит","летопись: варианты","летопись: план 100","летопись: любовь","летопись: прошлое","летопись: персонажи")
     omega_read=re.fullmatch(r"летопись: (том|читать том|дневник героини) ([1-9][0-9]{0,8})",q)
     omega_search=re.fullmatch(r"летопись: (поиск|персонаж) (.{2,200})",q)
     omega_commands=("летопись: книги","летопись: продолжить чтение","летопись: план","летопись: загадки","летопись: качество","летопись: дневник героини","летопись: хронология")
     decision=re.fullmatch(r"летопись: (принять|отклонить) ([1-9][0-9]{0,8})",q)
-    if q not in soul_chronicle.COMMANDS and not decision and not read_match and not create_match and not omega_read and not omega_search and q not in omega_commands and q not in ("летопись: главы","летопись: содержание","летопись: последняя"):
+    if q not in soul_chronicle.COMMANDS and not decision and not read_match and not create_match and not omega_read and not omega_search and not genesis_read and not genesis_arc and q not in genesis_commands and q not in omega_commands and q not in ("летопись: главы","летопись: содержание","летопись: последняя"):
         return None
     if create_match:
         with LOCK, closing(connect()) as db, db:
             soul_chronicle.control(db,"manual_request")
-        return generate_chronicle(arc=soul_saga.ALIASES.get(create_match[1]))
+        return generate_chronicle(arc=soul_saga.ALIASES.get(create_match[1]),alternative=create_match[1]=="варианты")
     with LOCK, closing(connect()) as db, db:
-        if (omega_read or omega_search or q in omega_commands or read_match or q in ("летопись: содержание","летопись: последняя","летопись: главы")) and not soul_chronicle.canon_ok(db):
+        if q=="летопись: аудит":
+            issues=soul_genesis.audit(db)
+            return "Проверка целостности (не семантическая проверка): "+("\n"+"\n".join(issues) if issues else "нарушений не найдено.")
+        if (genesis_read or genesis_arc or q in genesis_commands or omega_read or omega_search or q in omega_commands or read_match or q in ("летопись: содержание","летопись: последняя","летопись: главы")) and not soul_chronicle.canon_ok(db):
             return "Целостность исходной летописи нарушена; чтение заблокировано."
+        if genesis_read:
+            kind,n=genesis_read[1],int(genesis_read[2])
+            if kind=="вариант":
+                try: ok=n in (1,2) and soul_genesis.select_variant(db,n)
+                except (ValueError,TypeError): ok=False
+                return "Вариант выбран. Прочитайте черновик перед утверждением." if ok else "Вариант не доступен."
+            return soul_genesis.extras(db,n,"letter" if kind=="письмо" else "perspective")
+        if genesis_arc: return soul_genesis.read_arc(db,soul_saga.ALIASES[genesis_arc[1]],int(genesis_arc[2] or 1))
+        if q in ("летопись: любовь","летопись: прошлое"):
+            return soul_genesis.read_arc(db,"love" if q.endswith("любовь") else "past")
+        if q=="летопись: атлас": return soul_genesis.atlas(db)
+        if q=="летопись: законы": return "Правила художественного канона:\n"+"\n".join(f"Глава {n}: {rule}" for _,n,rule in soul_genesis.RULES)
+        if q=="летопись: варианты": return soul_genesis.variants(db)
+        if q=="летопись: план 100":
+            return "Предварительный план, не канон:\n"+"\n".join(f"{p['number']}. Том {p['book']} · {soul_saga.ARC_LABELS[p['arc']]} — {p['beat']}" for p in soul_genesis.roadmap(db))
+        if q in ("летопись: энциклопедия","летопись: судьбы","летопись: персонажи"):
+            state=soul_genesis.state(db)
+            if q=="летопись: судьбы":
+                return "Причины и последствия:\n"+"\n".join(f"Глава {p['from']} → {p['to']}: {p['event']}" for p in state["consequences"][-50:]) if state["consequences"] else "Новые связи причин и последствий ещё не записаны."
+            actors="\n".join(f"{a['name']}: главы {a['first']}–{a['last']}, событий {a['count']}" for a in state["actors"][-50:])
+            if q=="летопись: персонажи": return "Персонажи новых глав:\n"+(actors or "Ещё нет новых карточек.")
+            return soul_genesis.atlas(db)+"\n\nПерсонажи:\n"+actors+"\n\nОткрытые загадки:\n"+"\n".join(p["question"] for p in state["open"][:30])
         if read_match or q=="летопись: продолжить чтение":
             n=int(read_match[1]) if read_match else soul_omega.bookmark(db)
             result=soul_saga.read(db,n)
@@ -125,8 +156,8 @@ def chronicle_command(content):
         if omega_search:
             term=omega_search[2]
             if omega_search[1]=="персонаж": return soul_omega.character(db,term)
-            rows=soul_omega.search(db,term,12)
-            return "Найденные главы (по словам):\n"+"\n".join(f"{p['number']}. {p['title']}" for p in rows) if rows else "Ничего не найдено."
+            rows=soul_genesis.recall(db,term,12)
+            return "Найденные главы (локальный тематический индекс):\n"+"\n".join(f"{p['number']}. {p['title']}" for p in rows) if rows else "Ничего не найдено."
         if q=="летопись: книги": return soul_omega.books(db)
         if q=="летопись: дневник героини": return soul_omega.diary(db)
         if q=="летопись: качество": return soul_omega.quality(db)
@@ -183,6 +214,7 @@ def chronicle_worker(stop):
         try:
             with LOCK, closing(connect()) as db, db:
                 soul_chronicle.collect(db)
+                if soul_chronicle.canon_ok(db): soul_genesis.consolidate(db)
             if CHRONICLE["enabled"]:
                 generate_chronicle(background=True)
         except (sqlite3.Error,ValueError,OSError):
