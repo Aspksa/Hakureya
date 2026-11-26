@@ -77,7 +77,7 @@ class WriterVolumeTest(unittest.TestCase):
             self.assertNotEqual(a[0],old[0])
             p=draft()
             p["title"]="Новая сцена "+str(i)
-            p["story"]=(("Хакурэя смотрела на новый сад. " if i==0 else "Императрица изучала древний архив. ")*200)[:4500]
+            p["story"]=(("Хакурэя смотрела на новый сад. " if i==0 else "Императрица изучала древний архив. ")*200)[:4499]+"."
             c.finish(self.db,a,p)
             self.assertEqual(v.job(self.db)["chars"],i*4500)
             did=c.latest_pending(self.db)["id"]
