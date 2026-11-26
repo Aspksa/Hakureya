@@ -194,6 +194,8 @@ export function layout(snapshot){
  if(snapshot.network){
   const positions={"lit:db":[-.60,0],"brain:plot":[-.38,-.25],"brain:characters":[-.38,.25],"brain:relations":[-.12,-.36],"brain:magic":[-.12,.36],"brain:time":[.12,-.38],"brain:memory":[.12,.38],"brain:editor":[.37,-.25],"brain:analytics":[.37,.25],"brain:twist":[.58,0],"brain:coordinator":[.12,0],"root":[-.12,0],"cloud:api":[0,.64],"hub:4":[0,-.64]};
   for(const n of nodes){const p=positions[n.key];if(p){n.x=p[0];n.y=p[1]}}
+  // Avoid generic category spokes hiding the actual dependency links.
+  edges.splice(0,edges.length,...edges.filter(e=>e.kind!=="category"));
  }
  const seen=new Set(edges.map(e=>e.a+"|"+e.b+"|"+e.kind));
  for(const e of snapshot.edges||[]){const k=e.a+"|"+e.b+"|"+e.kind;if(typeof e.kind==="string"&&byKey.has(e.a)&&byKey.has(e.b)&&e.a!==e.b&&!seen.has(k)){edges.push(e);seen.add(k)}}
