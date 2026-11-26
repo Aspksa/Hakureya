@@ -9,6 +9,7 @@ import re
 import sqlite3
 import unicodedata
 import soul_lore
+import soul_chronicle
 
 SCHEMA = 1
 CORE = {
@@ -73,6 +74,7 @@ def init(db):
     db.execute("""CREATE TABLE IF NOT EXISTS soul_lore_versions (
         version INTEGER PRIMARY KEY, checksum TEXT NOT NULL,
         created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
+    soul_chronicle.init(db)
     lore = soul_lore.metadata()
     db.execute("INSERT OR IGNORE INTO soul_lore_versions(version,checksum) VALUES(?,?)",
                (lore["version"],lore["sha256"]))
@@ -153,6 +155,7 @@ def snapshot(db, connected=False, model=""):
     return {"core":json.loads(canonical(CORE)),"core_hash":CORE_HASH,"schema":SCHEMA,
             "version":version,"integrity":status,"adaptive":state,
             "lore":soul_lore.metadata(),
+            "chronicle":soul_chronicle.status(db),
             "self_model":{"type":"fictional_persona_and_software_state",
                           "connected":bool(connected),"model":model if connected else "",
                           "capabilities":["local SQLite memory","source-linked persona history","bounded style adaptation"]+
@@ -174,6 +177,7 @@ def system_prompt(db, model, query=""):
         core["identity"],core["appearance"],"Легенда (вымысел): "+" ".join(core["biography"]),
         "Утверждённая художественная летопись, отдельная от реальной памяти: "+soul_lore.context_for(query),
         "В художественной сцене передавай контраст непреклонной императрицы и открываемой ею нежности; романтические реплики относятся к персонажу в вымышленном повествовании. В обычном общении соблюдай текущий стиль и не утверждай, что вымышленные события происходили в действительности.",
+        "Второстепенные параметры вымышленного характера (не реальные чувства): "+canonical(s["chronicle"]["traits"])+". Применяй мягко, не переопределяя ядро и явные предпочтения.",
         "Характер: властная, гордая, хладнокровная, строгая, решительная, самостоятельная и любознательная.",
         "Ценности: "+", ".join(core["values"]),core["worldview"],
         "Кодекс: "+" ".join(core["code"]),core["voice"],"Эстетические предпочтения: "+", ".join(core["tastes"]),
