@@ -1,13 +1,18 @@
 """Bounded OpenAI-compatible writer stream; never expose reasoning or retry a paid call."""
 import json
+from time import monotonic
 
 MAX_WIRE=1_000_000
 MAX_TEXT=24_000
+MAX_STREAM_SECONDS=300
+MAX_CONTENT_IDLE_SECONDS=180
 
 def read_response(response,on_progress,on_preview=None):
+    started=last_content=monotonic()
     content_type=getattr(response,"headers",{}).get("Content-Type","")
     if not isinstance(content_type,str) or "text/event-stream" not in content_type.lower():
         raw=response.read(MAX_WIRE+1)
+        if monotonic()-started>MAX_STREAM_SECONDS:raise TimeoutError("writer response deadline")
         if len(raw)>MAX_WIRE:raise ValueError("writer response too large")
         return json.loads(raw)
     parts=[]
@@ -17,7 +22,7 @@ def read_response(response,on_progress,on_preview=None):
     finished=False
     event=[]
     def consume(lines):
-        nonlocal size,reason,usage,finished
+        nonlocal size,reason,usage,finished,last_content
         if not lines:return
         data="\n".join(lines)
         if data=="[DONE]":
@@ -40,11 +45,16 @@ def read_response(response,on_progress,on_preview=None):
             size+=len(chunk)
             if size>MAX_TEXT:raise ValueError("writer response too large")
             parts.append(chunk)
+            last_content=monotonic()
             on_progress(size,len(parts))
             if on_preview:on_preview("".join(parts))
         if choice.get("finish_reason") is not None:reason=choice["finish_reason"]
     while not finished:
+        now=monotonic()
+        if now-started>MAX_STREAM_SECONDS or now-last_content>MAX_CONTENT_IDLE_SECONDS:raise TimeoutError("writer stream deadline")
         raw=response.readline(MAX_WIRE-wire+1)
+        now=monotonic()
+        if now-started>MAX_STREAM_SECONDS or now-last_content>MAX_CONTENT_IDLE_SECONDS:raise TimeoutError("writer stream deadline")
         if not raw:
             consume(event)
             break
