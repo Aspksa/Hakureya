@@ -141,7 +141,7 @@ def chronicle_command(content):
             state=soul_genesis.state(db)
             if q=="летопись: судьбы":
                 return "Причины и последствия:\n"+"\n".join(f"Глава {p['from']} → {p['to']}: {p['event']}" for p in state["consequences"][-50:]) if state["consequences"] else "Новые связи причин и последствий ещё не записаны."
-            actors="\n".join(f"{a['name']}: главы {a['first']}–{a['last']}, событий {a['count']}" for a in state["actors"][-50:])
+            actors="\n".join(f"{a['name']}: главы {a['first']}–{a['last']}, событий {a['count']}"+(" — "+a["portrait"]+"; мотив: "+a["motive"]+"; родство: "+a["lineage"]+" (гл. "+str(a["source"])+")" if "portrait" in a else "") for a in state["actors"][-50:])
             if q=="летопись: персонажи": return "Персонажи новых глав:\n"+(actors or "Ещё нет новых карточек.")
             return soul_genesis.atlas(db)+"\n\nПерсонажи:\n"+actors+"\n\nОткрытые загадки:\n"+"\n".join(p["question"] for p in state["open"][:30])
         if read_match or q=="летопись: продолжить чтение":
