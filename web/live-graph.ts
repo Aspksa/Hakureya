@@ -41,7 +41,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement){
   const now=performance.now();
   for(const n of next.records){if(/^c:[1-9]\d*$/.test(n.key)){const id=Number(n.key.slice(2));if(receivedSnapshot&&id>maxChapter&&!motion.matches)births.set(n.key,now);}}
   for(const n of next.records){if(/^c:[1-9]\d*$/.test(n.key))maxChapter=Math.max(maxChapter,Number(n.key.slice(2)));}
-  receivedSnapshot=true;
+  if(!initial)receivedSnapshot=true;
   snapshot=next;graph=layout(next);items.clear();links.replaceChildren();dots.replaceChildren();overlay.replaceChildren();
   // Always preserve root, categories and canon links; thin dense secondary edges only.
   const essential=graph.edges.filter(e=>e.kind==="category"||e.kind==="chronology"||e.a.startsWith("canon:")||e.kind==="draft");
