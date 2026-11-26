@@ -139,7 +139,7 @@ function savePosition(){
  const d=novelDoc,p=novelPages[novelIndex],generation=readerGeneration;
  if(!d||!p||book.hidden||chat.hidden)return Promise.resolve();
  positionChain=positionChain.catch(()=>{}).then(async()=>{
-  if(generation!==readerGeneration||book.hidden||chat.hidden)return;
+  if(generation!==readerGeneration)return;
   await api("reader",{action:"position",hash:d.hash,start:p.start,end:p.end});
  }).catch(e=>{if(generation===readerGeneration&&!book.hidden)$("book-status").textContent="Закладка: "+String(e)});
  return positionChain;
