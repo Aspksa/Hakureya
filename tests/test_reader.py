@@ -58,3 +58,30 @@ class ReaderTest(unittest.TestCase):
         self.assertEqual(r.bookmark(self.db),old)
         self.db.execute("UPDATE book_reader SET source_hash='bad'")
         self.assertIn("изменился",r.move(self.db,"next"))
+
+
+    def test_adaptive_bookmark_and_unicode(self):
+        r.move(self.db,"chapter",5)
+        doc=r.view(self.db)["document"]
+        self.assertNotIn("Художественный канон",doc["text"])
+        self.assertNotIn("### Глава",doc["text"])
+        start=137
+        r.position(self.db,doc["hash"],start,start+500)
+        self.assertEqual(r.document(self.db)["offset"],start)
+        self.db.commit();self.db.close();self.db=self.connect()
+        r.move(self.db,"pause")
+        self.assertIsNone(r.view(self.db))
+        r.move(self.db,"resume")
+        self.assertEqual(r.document(self.db)["offset"],start)
+        with self.assertRaises(ValueError):r.position(self.db,"bad",0,10)
+        self.assertEqual(r.document(self.db)["offset"],start)
+
+    def test_adaptive_adjacent_documents(self):
+        r.move(self.db,"start")
+        r.adjacent(self.db,"advance")
+        self.assertEqual(r.document(self.db)["chapter"],2)
+        r.adjacent(self.db,"retreat")
+        d=r.document(self.db)
+        self.assertEqual(d["chapter"],1)
+        self.assertEqual(d["offset"],len(d["text"]))
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM chronicle_attempts").fetchone()[0],0)
