@@ -86,6 +86,31 @@ def verified_source(db,n,arc,title,story,checksum,did):
         if (arc,title,story,checksum,did)!=(row[0],p["title"],p["story"],row[2],row[3]):
             raise ValueError("published index mismatch")
 
+def rebuild_publication_index(db):
+    import soul_chronicle as ch
+    import soul_saga
+    import soul_lore
+    if not ch.canon_ok(db):raise ValueError("canon integrity")
+    canon=soul_saga.canonical_chapters()
+    if len(canon)!=13:raise ValueError("canon incomplete")
+    digest=soul_lore.metadata()["sha256"]
+    expected=[(n,"past" if n<=4 else "meeting" if n<=8 else "love" if n<=11 else "future",title,story,digest,None) for n,title,story in canon]
+    for n,arc,did,raw,h in db.execute("""SELECT a.number,a.arc,d.id,d.payload,d.checksum FROM saga_arcs a
+         JOIN chronicle_drafts d ON a.draft_id=d.id WHERE d.status='approved' AND a.number IS NOT NULL ORDER BY a.number"""):
+        p=ch.unpack(raw,h)
+        if n!=len(expected)+1 or arc not in o.ARCS:raise ValueError("publication order")
+        expected.append((n,arc,p["title"],p["story"],h,did))
+    db.execute("SAVEPOINT universe_repair")
+    try:
+        db.execute("DELETE FROM omega_index")
+        db.executemany("INSERT INTO omega_index VALUES(?,?,?,?,?,?)",expected)
+        result=refresh(db,True)
+        db.execute("RELEASE universe_repair")
+        return result
+    except BaseException:
+        db.execute("ROLLBACK TO universe_repair");db.execute("RELEASE universe_repair")
+        raise
+
 def term_weights(body,heading,title):
     raw=body+" "+heading+" "+title
     allowed=o.tokens(raw)
@@ -254,7 +279,7 @@ def report(db,mode,query=""):
         return ("Последний сохранённый план (спойлеры, не канон):\n"+o.dump(p)) if p else "Писатель ещё не сохранил план Universe."
     if mode=="repair":
         if db.execute("PRAGMA quick_check").fetchone()[0]!="ok":return "SQLite повреждена; нужен проверенный снимок."
-        return f"Перестроен индекс сцен: {refresh(db,True)} глав. Текст не изменён."
+        return f"Перестроен индекс сцен: {rebuild_publication_index(db)} глав. Текст не изменён."
     if mode=="knowledge":
         facts=[dict(chapter=n,**f) for n,_,p in ev.published(db) for f in p["facts"] if f["kind"] in ("knowledge","secret") and ev.readable(db,n)]
         return "\n".join(f"{f['chapter']}: {f['subject']} — {f['detail']} | свидетели: {', '.join(f['knows']) or 'не подтверждены'}" for f in facts[-40:]) or "Нет доступных подтверждённых записей о знаниях."
@@ -277,7 +302,10 @@ def report(db,mode,query=""):
             lines.append(f"Царство {i}: "+("; ".join(f"{p['name']} — {p['description']} (гл. {p['chapter']})" for p in places) if places else "нет доступных сведений"))
         return "\n".join(lines)
     if mode=="audit":
-        refresh(db)
+        expected=13+db.execute("SELECT COUNT(*) FROM saga_arcs a JOIN chronicle_drafts d ON a.draft_id=d.id WHERE d.status=\'approved\' AND a.number IS NOT NULL").fetchone()[0]
+        if db.execute("SELECT COUNT(*) FROM omega_index").fetchone()[0]!=expected:return "Индекс публикаций неполон; требуется восстановление."
+        try:refresh(db)
+        except ValueError:return "Индекс публикаций повреждён; требуется восстановление."
         for n,arc,title,story,digest,did in db.execute("SELECT number,arc,title,story,checksum,draft_id FROM omega_index"):
             verified_source(db,n,arc,title,story,digest,did)
             expected=list(split(story))
