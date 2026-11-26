@@ -722,6 +722,9 @@ export const commandGroups = [
       ]
     ]
   ]
+  ,["Литературная вселенная",[
+    ["Обзор романа","Литературная вселенная"],["Согласованный план","Координатор сюжета"],["Матрица знаний","Матрица знаний"],["Поиск сцены","Поиск сцены ","первое прикосновение"],["Перестроить сцены","Восстановить индекс сцен"]
+  ]]
 ];
 export const commandCount = commandGroups.reduce((n,[,entries])=>n+entries.length,0);
 export function searchCommands(query,category=""){
