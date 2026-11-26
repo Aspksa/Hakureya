@@ -29,6 +29,7 @@ import soul_immortal
 import soul_novel
 import soul_infinite
 import soul_intelligence
+import soul_network
 import soul_director
 import soul_dynasty
 import soul_universe
@@ -289,8 +290,17 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
 
 def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan):
     try:
-        for brain in plan.get("intelligence",{}).get("completed",[]):
-            graph_activity.update(activity,"brain:"+brain,"brain:"+brain,plan.get("intelligence",{}).get("timings_ms",{}).get(brain))
+        intelligence=plan.get("intelligence",{})
+        trace=intelligence.get("network")
+        if trace:
+            soul_network.validate_trace(trace)
+            for event in trace["events"]:
+                brain=event["brain"]
+                graph_activity.update(activity,"brain:"+brain,"brain:"+brain,event["duration_ms"],
+                    [x["from"] for x in event["inputs"]],event["bytes"],brain=="coordinator" or brain in trace["included"])
+        else:
+            for brain in intelligence.get("completed",[]):
+                graph_activity.update(activity,"brain:"+brain,"brain:"+brain,intelligence.get("timings_ms",{}).get(brain))
         graph_activity.update(activity,"context","root")
         payload={"model":model,"messages":soul_chronicle.prompt(reservation,traits,previous,plan),"max_tokens":writer_volume.JOB_OUTPUT_LIMIT if plan.get("writer_job") else cloud_writer.LIMIT,"stream":True,"stream_options":{"include_usage":True}}
         req=Request(API,data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
@@ -428,6 +438,17 @@ def chronicle_command(content):
     scene_query=re.fullmatch(r"поиск сцены (.{2,180})",q)
     actor_query=re.fullmatch(r"история персонажа (.{2,80})",q)
     timeline_query=re.fullmatch(r"хронология вселенной ([1-9][0-9]{0,5})",q)
+    if q in ("проверить 10 мозгов","сеть мозгов","диагностика мозгов"):
+        with LOCK, closing(connect()) as db, db:
+            if not soul_chronicle.canon_ok(db):return "Целостность канона нарушена."
+            try:
+                # Real dry-run with the current publication index, no quota reservation or paid request.
+                plan=soul_saga.plan(db,"future")
+                soul_intellect.prepare(db,plan)
+                soul_intelligence.prepare(db,plan)
+                return soul_network.report(db,plan["intelligence"]["network"])
+            except (ValueError,TypeError,KeyError,IndexError,sqlite3.Error):
+                return "Сеть мозгов: локальная диагностика обнаружила ошибку данных. Платный запрос не отправлен."
     intellect_commands={"литературный интеллект":"overview","проверка противоречий":"issues","открытые сюжетные нити":"threads","история знаний":"knowledge","проверить свидетельства":"audit","восстановить свидетельства":"repair","забытые герои":"forgotten","проверка связей модулей":"modules","хронология мира":"world_time"}
     intellect_search=re.fullmatch(r"смысловой поиск (.{2,180})",q)
     intellect_profile=re.fullmatch(r"личная память (.{2,80})",q)
@@ -877,6 +898,12 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == "/api/chronicle":
             with closing(connect()) as db:
                 return self.respond({"status":soul_chronicle.status(db),"graph":soul_chronicle.biography_graph(db)})
+        if self.path=="/api/graph/network":
+            try:
+                with closing(connect()) as db:
+                    if not soul_chronicle.canon_ok(db):return self.respond({"error":"Канон повреждён"},409)
+                    return self.respond(soul_network.snapshot(db,soul_intelligence.BRAINS))
+            except (ValueError,TypeError,KeyError,sqlite3.Error):return self.respond({"error":"Журнал сети повреждён"},409)
         atlas_match=re.fullmatch(r"/api/graph/atlas(?:/([1-9][0-9]{0,6})/([1-9][0-9]{0,6}))?",self.path)
         if atlas_match:
             try:
