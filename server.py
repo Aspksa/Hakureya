@@ -143,7 +143,7 @@ class Handler(SimpleHTTPRequestHandler):
                     reply = "Сообщение сохранено локально. Для ответа подключите Cloud.ru через меню аватара."
                     return self.respond({"reply":reply,"connected":False})
                 with closing(connect()) as db:
-                    persona = soul_core.system_prompt(db, CONFIG["model"])
+                    persona = soul_core.system_prompt(db, CONFIG["model"], content.strip())
                 payload = {"model":CONFIG["model"],"messages":[{"role":"system","content":persona}]+history(24),"max_tokens":1200,"stream":False}
                 req = Request(API, data=json.dumps(payload).encode(), headers={"Authorization":"Bearer "+CONFIG["key"],"Content-Type":"application/json"}, method="POST")
                 try:
