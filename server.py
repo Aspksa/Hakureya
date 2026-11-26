@@ -32,6 +32,8 @@ import soul_intelligence
 import soul_director
 import soul_dynasty
 import soul_universe
+import soul_intellect
+import soul_atlas
 import soul_export
 import graph_activity
 import writer_activity
@@ -81,7 +83,11 @@ def writer_status(db):
     elif not CONFIG["key"]:reason="Cloud.ru не подключён"
     elif mode=="off" and not CHRONICLE["enabled"]:reason="Автоматическое написание выключено"
     elif not soul_chronicle.canon_ok(db):reason="Нарушена целостность канона"
-    elif reserved:reason="Запрос уже выполняется или ожидает восстановления"
+    elif reserved:
+        active=next((x for x in graph_activity.snapshot()["active"] if x["kind"]=="chronicle"),None)
+        if active and active.get("stalled"):reason="Долгое ожидание ответа Cloud.ru; новая платная попытка не запускается."
+        elif active:reason="Литературный запрос выполняется · "+str(active["age_seconds"])+" сек."
+        else:reason="Есть зарезервированная попытка; ожидается безопасное восстановление."
     elif pending:reason="Разовое задание приостановлено: требуется решение по черновику" if once else "Черновик ожидает решения"
     elif once and task["model"]!=model:reason="Модель задания изменена; остановите задание и подтвердите новое."
     elif once:reason="Разовое задание активно. Ожидание следующего цикла планировщика."
@@ -239,7 +245,14 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                         db.execute("DELETE FROM chronicle_attempts WHERE day=? AND status='reserved'",(reservation[0],))
                         if once:writer_volume.close_job(db,"error","Несогласованные сюжетные планы; платный запрос не отправлен.")
                         return "Несогласованные сюжетные планы; платный запрос не отправлен."
-                    soul_intelligence.prepare(db,plan)
+                    try:
+                        soul_intellect.prepare(db,plan)
+                        soul_intelligence.prepare(db,plan)
+                    except (ValueError,TypeError,KeyError,IndexError):
+                        db.execute("DELETE FROM writer_job_attempt WHERE day=?",(reservation[0],))
+                        db.execute("DELETE FROM chronicle_attempts WHERE day=? AND status='reserved'",(reservation[0],))
+                        if once:writer_volume.close_job(db,"error","Литературные свидетельства не прошли проверку; платный запрос не отправлен.")
+                        return "Литературный интеллект: проверьте свидетельства и связи модулей."
             previous=[]
             if plan:
                 previous=[{"number":n,"title":t,"story":s[-2200:]} for n,t,s in reversed(db.execute("SELECT number,title,story FROM omega_index WHERE arc=? AND number>13 ORDER BY number DESC LIMIT 2",(plan["arc"],)).fetchall())]
@@ -262,6 +275,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                 soul_evolution.reserve_cost(db,reservation[0],model,cost)
                 soul_intelligence.record_run(db,reservation[0],plan)
                 soul_universe.record(db,reservation[0],plan)
+                soul_intellect.record_run(db,reservation[0],plan)
                 visual_sources=writer_activity.context_keys(db,plan,previous)
         if not reservation:
             if once:
@@ -276,14 +290,24 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
 def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan):
     try:
         for brain in plan.get("intelligence",{}).get("completed",[]):
-            graph_activity.update(activity,"brain:"+brain,"brain:"+brain)
+            graph_activity.update(activity,"brain:"+brain,"brain:"+brain,plan.get("intelligence",{}).get("timings_ms",{}).get(brain))
         graph_activity.update(activity,"context","root")
         payload={"model":model,"messages":soul_chronicle.prompt(reservation,traits,previous,plan),"max_tokens":writer_volume.JOB_OUTPUT_LIMIT if plan.get("writer_job") else cloud_writer.LIMIT,"stream":True,"stream_options":{"include_usage":True}}
         req=Request(API,data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
         graph_activity.update(activity,"waiting")
+        checkpoint=[time.monotonic(),0]
+        def preview(raw):
+            writer_preview.push(activity,raw)
+            body=writer_preview.fragment(activity)
+            graph_activity.prose(activity,len(body))
+            now=time.monotonic()
+            if body and len(body)>checkpoint[1] and (now-checkpoint[0]>=3 or len(body)-checkpoint[1]>=800):
+                with LOCK, closing(connect()) as db, db:
+                    soul_universe.save_fragment(db,reservation[0],body,"stream_checkpoint")
+                checkpoint[:]=[now,len(body)]
         try:
             with urlopen(req,timeout=60) as res:
-                result=writer_stream.read_response(res,lambda chars,chunks:graph_activity.progress(activity,chars,chunks),lambda raw:writer_preview.push(activity,raw))
+                result=writer_stream.read_response(res,lambda chars,chunks:graph_activity.progress(activity,chars,chunks),preview)
         except (HTTPException,URLError,TimeoutError,ValueError,OSError):
             with LOCK, closing(connect()) as db, db:
                 soul_universe.save_fragment(db,reservation[0],writer_preview.fragment(activity),"interrupted")
@@ -314,6 +338,7 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
                 return "Настройки изменились; черновик отброшен."
             graph_activity.update(activity,"saving","hub:4")
             soul_chronicle.finish(db,reservation,value,plan)
+            db.execute("DELETE FROM universe_fragments WHERE attempt=?",(reservation[0],))
             pending=soul_chronicle.latest_pending(db)
             editorial=soul_omega.metadata(db,pending["id"])
             scene_report=soul_romance.report(db,pending["id"])
@@ -403,6 +428,31 @@ def chronicle_command(content):
     scene_query=re.fullmatch(r"поиск сцены (.{2,180})",q)
     actor_query=re.fullmatch(r"история персонажа (.{2,80})",q)
     timeline_query=re.fullmatch(r"хронология вселенной ([1-9][0-9]{0,5})",q)
+    intellect_commands={"литературный интеллект":"overview","проверка противоречий":"issues","открытые сюжетные нити":"threads","история знаний":"knowledge","проверить свидетельства":"audit","восстановить свидетельства":"repair","забытые герои":"forgotten","проверка связей модулей":"modules","хронология мира":"world_time"}
+    intellect_search=re.fullmatch(r"смысловой поиск (.{2,180})",q)
+    intellect_profile=re.fullmatch(r"личная память (.{2,80})",q)
+    identity_create=re.fullmatch(r"разделить личности\s+([^|]+)\s*\|\s*([1-9][0-9]{0,6})\s*\|\s*(.+)",content.strip(),re.I)
+    identity_assign=re.fullmatch(r"назначить свидетельство ([0-9a-f]{32}) (person:[0-9a-f]{24})",q)
+    if q in intellect_commands or intellect_search or intellect_profile or identity_create or identity_assign:
+        with LOCK, closing(connect()) as db, db:
+            if not soul_chronicle.canon_ok(db):return "Целостность канона нарушена."
+            db.execute("SAVEPOINT intellect_command")
+            try:
+                if identity_create:
+                    result="Создан отдельный ID личности: "+soul_intellect.create_identity(db,identity_create[1].strip(),int(identity_create[2]),identity_create[3].strip())
+                elif identity_assign:
+                    soul_intellect.refresh(db)
+                    soul_intellect.assign_identity(db,identity_assign[1],identity_assign[2])
+                    result="Свидетельство назначено указанной личности; исходный текст не изменён."
+                elif intellect_search:result=soul_intellect.report(db,"search",intellect_search[1])
+                elif intellect_profile:result=soul_intellect.report(db,"profile",intellect_profile[1])
+                else:result=soul_intellect.report(db,intellect_commands[q])
+                db.execute("RELEASE intellect_command")
+                return result
+            except (ValueError,TypeError,KeyError,IndexError,sqlite3.Error):
+                db.execute("ROLLBACK TO intellect_command");db.execute("RELEASE intellect_command")
+                return "Свидетельство не подтверждено или литературный индекс недоступен. Платный запрос не отправлен."
+    if q in ("смысловой поиск","личная память","разделить личности","назначить свидетельство"):return "Укажите параметры литературной команды; платный запрос не отправлен."
     if q=="восстановить фрагмент":
         with LOCK, closing(connect()) as db:return soul_universe.fragment_text(db)
     if q in ("поиск сцены","история персонажа"):return "Укажите запрос после названия команды. Запрос Cloud.ru не отправлен."
@@ -747,6 +797,7 @@ def chronicle_worker(stop):
                         soul_novel.forecast(db)
                         soul_infinite.refresh_forecast(db)
                         soul_intelligence.refresh(db)
+                        soul_intellect.refresh(db)
                         repaired=soul_intelligence.sweep(db)
                         if repaired:LOG.info("repaired derived literary records: %d",repaired)
                 writer_volume.reconcile_job(db)
@@ -826,7 +877,14 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == "/api/chronicle":
             with closing(connect()) as db:
                 return self.respond({"status":soul_chronicle.status(db),"graph":soul_chronicle.biography_graph(db)})
-        volume_match=re.fullmatch(r"/api/graph/volume/([1-9][0-9]{0,5})",self.path)
+        atlas_match=re.fullmatch(r"/api/graph/atlas(?:/([1-9][0-9]{0,6})/([1-9][0-9]{0,6}))?",self.path)
+        if atlas_match:
+            try:
+                with closing(connect()) as db:
+                    bounds=[int(atlas_match[i]) for i in (1,2)] if atlas_match[1] else []
+                    return self.respond(soul_atlas.snapshot(db,*bounds))
+            except (ValueError,TypeError,KeyError,sqlite3.Error):return self.respond({"error":"Область атласа недоступна"},400)
+        volume_match=re.fullmatch(r"/api/graph/volume/([1-9][0-9]{0,6})",self.path)
         if volume_match:
             try:
                 with closing(connect()) as db:

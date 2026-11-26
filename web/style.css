@@ -190,3 +190,5 @@ dialog button:hover{background:#d5b38b12}
 #universe-galaxies,#universe-actors{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}#universe-galaxies button{display:grid;justify-items:center;gap:4px;background:radial-gradient(ellipse,#c9a76516,transparent 70%);border:0;color:#e5cc98;padding:6px;min-width:76px}#universe-galaxies svg{width:64px;height:64px;filter:drop-shadow(0 0 4px #d9b46977)}#universe-family{white-space:pre-wrap;color:#b9aa91;font-size:.85rem;line-height:1.6;margin:8px 0}
 
 #writer-error{display:block;color:#ffad9a;white-space:pre-wrap;line-height:1.45}#writer-error:empty{display:none}#writer-stop:not([hidden]){border-color:#b88866;color:#edc4aa}
+
+#atlas-open,#atlas-back{position:absolute;z-index:5;right:16px;top:104px;width:36px;height:36px;border:1px solid #c9a76544;border-radius:50%;background:#151312b8;color:#ead6a1;font-size:19px;cursor:pointer}#atlas-back{top:148px}#atlas-open[aria-pressed="true"]{color:#fff3ca;border-color:#e7c46d}#atlas-back[hidden]{display:none}

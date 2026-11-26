@@ -1,5 +1,6 @@
 """Local graph, backed exclusively by persisted records. No invented nodes."""
 import re
+import sqlite3
 import soul_chronicle
 import soul_omega
 from contextlib import closing
@@ -166,6 +167,12 @@ def snapshot(db, limit=5000):
         except (ValueError,TypeError,KeyError,IndexError):
             warnings.append("Не удалось прочитать локальный отчёт проверки")
         pending["review_warnings"]=list(dict.fromkeys(w[:160] for w in warnings if isinstance(w,str)))[:6]
+    try:
+        import soul_intellect
+        soul_intellect.refresh(db)
+        soul_intellect.graph_notices(db,records)
+    except (ValueError,TypeError,KeyError,IndexError,sqlite3.Error):
+        pass
     assign_slots(db,records)
     visible={n["key"] for n in records}
     edges.extend(e for e in chronicle_edges+biography_edges if e["a"] in visible and e["b"] in visible)

@@ -96,9 +96,9 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
    await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))");
    assert.equal(await evaluate("document.querySelector('#stage').classList.contains('stellar-cinema')"),false);
    if(width===1920){
-    activity={session:"test",revision:2,active:[{id:"fixture-writer",kind:"chronicle",source:"root",target:"root",stage:"streaming",response_chars:240,chunks:3,sources:["root"],events:[{seq:1,stage:"context",target:"root"},{seq:2,stage:"streaming",target:"root"}]}],recent:[]};
+    activity={session:"test",revision:2,active:[{id:"fixture-writer",kind:"chronicle",source:"root",target:"root",stage:"streaming",response_chars:240,prose_chars:180,chunks:3,sources:["root"],events:[{seq:1,stage:"context",target:"root"},{seq:2,stage:"streaming",target:"root"}]}],recent:[]};
     await waitFor(()=>evaluate("!document.querySelector('.stellar-ledger').hidden && document.querySelector('.stellar-ledger .stellar-current')?.textContent.includes('поступает текст')"));
-    assert.ok(await evaluate("document.querySelector('.stellar-ledger').textContent.includes('240 символов ответа')"));
+    assert.ok(await evaluate("document.querySelector('.stellar-ledger').textContent.includes('180 знаков прозы')"));
     activity={session:"test",revision:3,active:[],recent:[]};
     await waitFor(()=>evaluate("document.querySelector('.stellar-ledger').hidden"));
    }
@@ -110,7 +110,7 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
    if(width>=1050){assert.ok(chat.width>=600&&chat.width<=700);assert.ok(Math.abs(chat.width+chat.graph-width)<2)}else assert.equal(chat.width,width);
    await evaluate("document.querySelector('#command-plus').click()");
    assert.equal(await evaluate("document.querySelector('#command-dialog').open"),true);
-   assert.equal(await evaluate("document.querySelectorAll('#command-results .command-item').length"),172);
+   assert.equal(await evaluate("document.querySelectorAll('#command-results .command-item').length"),185);
    const palette=await evaluate("(()=>{const r=document.querySelector('#command-dialog').getBoundingClientRect();return {w:r.width,h:r.height}})()");
    assert.ok(palette.w<=width&&palette.h<=height,JSON.stringify(palette));
    await evaluate("(()=>{const s=document.querySelector('#command-search');s.value='статус развития';s.dispatchEvent(new Event('input',{bubbles:true}));return true})()");

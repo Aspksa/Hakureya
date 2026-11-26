@@ -3,6 +3,7 @@ import json
 import re
 from collections import Counter, defaultdict
 from difflib import SequenceMatcher
+from time import perf_counter
 import soul_omega as o
 import soul_genesis as ge
 import soul_evolution as ev
@@ -20,7 +21,7 @@ BRAINS=(
  ("time","Хронология"),("memory","Память"),("editor","Редактор"),("analytics","Аналитика"),
  ("twist","Повороты"),("coordinator","Координатор"))
 RELATIONS={"love","trust","ally","conflict","family","rival","friend"}
-KINDS={"character","biography","trait","habit","fear","goal","voice","power","limit","law","knowledge","location","world","place","artifact","prophecy","interpretation","promise","secret","clue","consequence","letter","tradition","event","age",*RELATIONS}
+KINDS={"character","biography","trait","habit","fear","goal","voice","power","limit","law","knowledge","location","world","place","artifact","prophecy","interpretation","promise","secret","clue","consequence","letter","tradition","event","age","identity","origin","belief","intention","emotion","diary","knowledge_transfer","world_time",*RELATIONS}
 ALIASES={"герой легенды":"герой","императрица":"хакурэя"}
 def norm(s):return ALIASES.get(o.normalized(s),o.normalized(s))
 def identifier(name):return "lit:actor:"+o.digest(norm(name))[:24]
@@ -67,7 +68,7 @@ def validate(db,story,raw):
         kind=f["kind"];subject=o.clean(f["subject"],2,60);obj=o.clean(f["object"],0,70)
         value=o.clean(f["value"],2,180);quote=o.clean(f["quote"],12,240);cause=f["cause"]
         if quote not in story or o.normalized(subject) not in o.normalized(quote):raise ValueError("unverified literary fact")
-        if kind in RELATIONS:
+        if kind in RELATIONS or kind=="knowledge_transfer":
             if not obj or norm(obj)==norm(subject) or o.normalized(obj) not in o.normalized(quote):raise ValueError("unverified relation")
         elif obj and o.normalized(obj) not in o.normalized(quote):raise ValueError("unverified object")
         if o.normalized(value) not in o.normalized(quote):raise ValueError("unverified value")
@@ -170,9 +171,9 @@ def collect_chapter(db,n,story,did):
     if ip:
         for f in ip["facts"]:add(f["kind"],f["key"],f["detail"],f["evidence"],cause=f["cause"])
     for f in extra(db,did):
-        if f["kind"] in {"character","biography","trait","habit","fear","goal","voice","age",*RELATIONS}:
+        if f["kind"] in {"character","biography","trait","habit","fear","goal","voice","age","identity","origin","belief","intention","emotion","diary","knowledge_transfer","world_time",*RELATIONS}:
             mention(f["subject"],f["quote"])
-        if f["kind"] in RELATIONS:mention(f["object"],f["quote"])
+        if f["kind"] in RELATIONS or f["kind"]=="knowledge_transfer":mention(f["object"],f["quote"])
         add(f["kind"],f["subject"],f["value"],f["quote"],f["object"],f["cause"])
     return records
 
@@ -287,8 +288,10 @@ def prepare(db,plan):
     facts,threads,_=inf.ledger(list(inf.published(db)))
     open_lines=[t for t in threads.values() if t["closed"] is None and last+1-t["chapter"]>=t["delay"]]
     theme=plan.get("universe") or plan.get("infinite",{}).get("selected") or plan.get("director") or plan.get("evolution",{}).get("chosen") or {}
-    completed=[];result={}
+    completed=[];result={};timings={};clock=perf_counter()
     def brain(name,value):
+        nonlocal clock
+        now=perf_counter();timings[name]=round((now-clock)*1000,3);clock=now
         result[name]=value;completed.append(name)
     brain("plot",{"theme":theme.get("theme",plan["arc"]),"open":[{"chapter":t["chapter"],"value":t["value"]} for t in open_lines[:2]],"guide":"Соблюдай обязательный текущий этап, не раскрывай ранние тайны."})
     forgotten=sorted((a for a in actors.values() if last-a["last"]>=8),key=lambda a:a["last"])
@@ -321,7 +324,7 @@ def prepare(db,plan):
         candidate={**selected,k:result[k]}
         if len(o.dump(candidate).encode("utf-8"))<=budget:selected[k]=result[k]
     brain("coordinator",{"included":list(selected),"bytes":len(o.dump(selected).encode("utf-8"))})
-    plan["intelligence"]={"context":selected,"completed":completed,"bytes":result["coordinator"]["bytes"],"recalled":[x["number"] for x in selected.get("memory",[])]}
+    plan["intelligence"]={"context":selected,"completed":completed,"timings_ms":timings,"bytes":result["coordinator"]["bytes"],"recalled":[x["number"] for x in selected.get("memory",[])]}
     return plan
 
 def record_run(db,day,plan):
@@ -336,6 +339,7 @@ def instruction(plan):
       "При необходимости дополнительно верни intelligence: список до двух записей {kind,subject,object,value,quote,cause}. "
       "kind: "+",".join(sorted(KINDS))+". subject и value дословно присутствуют в quote (12–240 символов из story); "
       "object пустая строка либо дословное второе имя/предмет в той же цитате. Для love/trust/ally/conflict/family/rival/friend укажи обоих героев. "
+      "Для knowledge_transfer явно назови отправителя (subject), получателя (object), содержание (value) и точную цитату. Для world_time укажи только явно написанное время, не вычисляй дату. diary — субъективная запись, intention — заявленное намерение. "
       "cause — номер уже опубликованной части либо null. Не выдумывай метаданные, при нехватке места пропусти их. "
       "Приоритет художественного текста и обязательных полей старых саг.")
 
@@ -423,6 +427,9 @@ def graph(db,existing=(),volume=None):
                 k="lit:family:"+o.digest(o.dump(sorted((norm(x["a"]),norm(x["b"])))))[:24]
                 node(k,"Семейная связь: "+x["a"]+" · "+x["b"],"lit_family",infinite_group=k)
                 edge(a,k,"lit_rel_family");edge(b,k,"lit_rel_family")
+    import soul_intellect
+    separated,links=soul_intellect.identity_graph(db,[*existing,*nodes],volume)
+    nodes.extend(separated);edges.extend(links)
     return nodes,edges
 
 
