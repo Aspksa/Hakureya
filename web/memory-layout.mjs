@@ -13,10 +13,12 @@ export function cell(slot){
  const a=corners[side],b=corners[side+1],q=a[0]+(b[0]-a[0])*k/ring,r=a[1]+(b[1]-a[1])*k/ring;
  return {x:STEP*(q+r*.5),y:STEP*Math.sqrt(3)*r*.5};
 }
+export function detailLevel(count,zoom){return count<800||zoom>=2.4?2:zoom>=1.25?1:0}
 export function layout(snapshot){
  const nodes=[{key:"root",group:-1,x:0,y:0,r:3.6,label:"hakureya"}],edges=[],byKey=new Map([[ "root",nodes[0] ]]);
  const count=categories.map(()=>0),radius=categories.map(()=>.035),valid=(Array.isArray(snapshot.records)?snapshot.records:[]).filter(n=>Number.isInteger(n.group)&&n.group>=0&&n.group<categories.length&&typeof n.key==="string");
  const occupied=categories.map(()=>new Set());
+ const bio=[];
  for(const n of valid){
   if(byKey.has(n.key))continue;
   const g=n.group;
@@ -25,10 +27,20 @@ export function layout(snapshot){
   while(occupied[g].has(slot))slot++;
   occupied[g].add(slot);count[g]++;
   const p=cell(slot);
-  radius[g]=Math.max(radius[g],Math.hypot(p.x,p.y)+.035);
+  const nested=g===4&&["past","meeting","love","future"].includes(n.sector)&&Number.isSafeInteger(n.book)&&n.book>=0&&n.book<=1000000&&Number.isSafeInteger(n.chapter_slot)&&n.chapter_slot>=0&&n.chapter_slot<=12;
+  if(!nested)radius[g]=Math.max(radius[g],Math.hypot(p.x,p.y)+.035);
   const r=n.kind==="fictional_chapter"?2.7:n.kind==="draft"?2.1:n.kind==="theme"?1.7:1.5;
   const item={...n,slot,x:p.x,y:p.y,r};nodes.push(item);byKey.set(item.key,item);
+  if(nested)bio.push(item);
   edges.push({a:"hub:"+g,b:item.key,kind:"category"});
+ }
+ // Four epoch galaxies surround the permanent biography hub. Each volume occupies a hex cell;
+ // chapters retain their publication slot inside that volume, independent of insertion/eviction.
+ if(bio.length){
+  const sectors=["past","meeting","love","future"], extent=[.08,.08,.08,.08];
+  for(const n of bio){const i=sectors.indexOf(n.sector);const book=n.book===0?{x:0,y:0}:cell(n.book-1);const local=n.book===0?{x:0,y:0}:cell(n.chapter_slot);n.x=book.x*7+local.x;n.y=book.y*7+local.y;extent[i]=Math.max(extent[i],Math.hypot(n.x,n.y)+.06)}
+  const central=radius[4];const spacing=Math.max(central,...extent)+.10;
+  for(const n of bio){const i=sectors.indexOf(n.sector),angle=-Math.PI/2+i*Math.PI/2;const distance=central+extent[i]+spacing; n.x+=Math.cos(angle)*distance;n.y+=Math.sin(angle)*distance;radius[4]=Math.max(radius[4],Math.hypot(n.x,n.y)+.04)}
  }
  let spread=1;
  for(let i=0;i<centers.length;i++){
