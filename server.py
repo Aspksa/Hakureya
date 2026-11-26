@@ -52,11 +52,12 @@ def generate_chronicle(background=False):
             soul_chronicle.collect(db)
             reservation=soul_chronicle.reserve(db)
             traits=soul_chronicle.profile(db)
+            previous=[{"title":p["title"],"story":p["story"][:1200],"tags":p["tags"]} for p in soul_chronicle.approved(db,2)]
         if not reservation:
             return "Нет новой записи дневника, есть ожидающий черновик, нарушена целостность канона или исчерпан дневной лимит."
         key, model, epoch=CONFIG["key"],CONFIG["model"],CHRONICLE["epoch"]
     try:
-        payload={"model":model,"messages":soul_chronicle.prompt(reservation,traits),"max_tokens":1800,"stream":False}
+        payload={"model":model,"messages":soul_chronicle.prompt(reservation,traits,previous),"max_tokens":1800,"stream":False}
         req=Request(API,data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
         with urlopen(req,timeout=60) as res:
             result=json.loads(res.read(1_000_000))
