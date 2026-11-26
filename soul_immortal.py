@@ -260,7 +260,16 @@ def volume_graph(db,volume):
             k=f"immortal:fact:{did}:{j}"
             records.append({"key":k,"label":f["detail"][:54],"group":4,"kind":"immortal_fact","slot":slot})
             slot+=1;edges.append({"a":key,"b":k,"kind":"immortal_"+f["kind"]})
-    return {"records":records,"edges":edges,"total":len(records),"limited":False,"volume":volume}
+    import soul_intelligence as li
+    import memory_graph
+    extra,links=li.graph(db,records,volume=volume)
+    combined=[{**n,"content":n.get("content",n.get("label",""))} for n in records]+extra
+    combined,edges=memory_graph.reconcile_actors(combined,edges+links)
+    keys={n["key"] for n in combined}
+    for i,n in enumerate(combined):
+        n["label"]=n.get("label",n["content"][:54]);n.pop("content",None);n.pop("order",None);n.setdefault("slot",i)
+    edges=[e for e in edges if e["a"] in keys and e["b"] in keys]
+    return {"records":combined,"edges":edges,"total":len(combined),"limited":False,"volume":volume}
 
 
 def editor_prompt(db,draft):
