@@ -331,10 +331,23 @@ def encyclopedia(db,page=1):
     names.setdefault(o.normalized("Хакурэя"),("Хакурэя",13))
     names.setdefault(o.normalized("Герой"),("Герой",13))
     values=sorted(names.values(),key=lambda p:o.normalized(p[0]))
-    return "Энциклопедия опубликованных персонажей:\n"+"\n".join(f"{name} — последнее доступное свидетельство: глава {n}" for name,n in values[(page-1)*25:page*25]) if values[(page-1)*25:page*25] else "Нет записей на этой странице."
+    page_rows=values[(page-1)*25:page*25]
+    lines=["Энциклопедия опубликованных персонажей:"]+[f"{name} — последнее доступное свидетельство: глава {n}" for name,n in page_rows]
+    if page==1:
+        lines.extend(["\nКанонические законы:"]+[f"Глава {n}: {label}" for _,n,label in ge.RULES])
+        lines.append("Девять сил: "+", ".join(ge.POWERS))
+        places=[x for x in ge.state(db)["places"] if source_visible(db,x["chapter"])]
+        lines.extend(f"Место: {x['name']} — {x['description']} (глава {x['chapter']})" for x in places[-10:])
+    return "\n".join(lines) if page_rows or page==1 else "Нет записей на этой странице."
 
 def character_text(db,name):
     key=o.normalized(name);lines=[]
+    if key in ("хакурэя","императрица","герой","герой легенды"):
+        ids=("origin","nine","touch","warmth","choice","return") if key in ("хакурэя","императрица") else ("immunity","choice")
+        lines.extend(f"Канон, глава {n}: {label}" for k,n,label in ge.RULES if k in ids)
+    for actor in gu.CAST:
+        if o.normalized(actor[1])==key:
+            lines.append("Установленный профиль хранительницы (план саги, не опубликованное событие): "+actor[4]+"; голос: "+actor[7])
     for n,did in db.execute("SELECT number,draft_id FROM omega_index WHERE draft_id IS NOT NULL ORDER BY number"):
         if not source_visible(db,n):continue
         w=ge.world(db,did)
