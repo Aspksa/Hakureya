@@ -167,7 +167,7 @@ def instruction(p):
        "; subject — id персонажа из известных карточек, либо null; detail — краткий вывод; evidence — точная цитата 12–240 символов; "
        "cause — номер уже опубликованной главы либо null; realm — 1..9 только при установленной связи с царством, иначе null. "
        "Для character укажи id и имя в цитате. Для travel/realm оставь realm=null для внешнего или человеческого мира. "
-       "Для prophecy с cause укажи главу прежнего открытого пророчества. Не выдавай гипотезу за факт. "
+       "Для alliance можно добавить other — id второго названного персонажа; для travel можно добавить origin — номер исходного царства 1..9, отличный от realm. Для prophecy с cause укажи главу прежнего открытого пророчества. Не выдавай гипотезу за факт. "
        "Если этап не завершён, не добавляй destiny; приоритет — текст сцены. Остальные метаданные необязательны.")
 
 def save(db,did,story,raw,p):
@@ -189,7 +189,7 @@ def save(db,did,story,raw,p):
     closed={f["cause"] for _,_,_,data in previous for f in data["facts"] if f["kind"]=="prophecy" and f["cause"] is not None}
     out=[]
     for f in facts:
-        if not isinstance(f,dict) or set(f)!={"kind","subject","detail","evidence","cause","realm"} or f["kind"] not in KINDS:raise ValueError("invalid destiny fact")
+        if not isinstance(f,dict) or not {"kind","subject","detail","evidence","cause","realm"}<=set(f) or set(f)-{"kind","subject","detail","evidence","cause","realm","other","origin"} or f["kind"] not in KINDS:raise ValueError("invalid destiny fact")
         kind,subject,cause,realm=f["kind"],f["subject"],f["cause"],f["realm"]
         quote=o.clean(f["evidence"],12,240)
         if quote not in story:raise ValueError("destiny fact not quoted")
@@ -202,7 +202,12 @@ def save(db,did,story,raw,p):
             if cause not in prop or cause in closed:raise ValueError("prophecy not open")
             closed.add(cause)
         if realm is not None and (type(realm) is not int or not 1<=realm<=9):raise ValueError("invalid realm")
-        out.append({"kind":kind,"subject":subject,"detail":o.clean(f["detail"],8,180),"evidence":quote,"cause":cause,"realm":realm})
+        other,origin=f.get("other"),f.get("origin")
+        if other is not None:
+            if kind!="alliance" or not isinstance(other,str) or other not in ACTORS or other==subject or subject is None or (other in {a[0] for a in CAST} and other not in introduced):raise ValueError("invalid alliance partner")
+            if ACTORS[other][0].casefold()[:3] not in quote.casefold():raise ValueError("alliance partner not in excerpt")
+        if origin is not None and (kind!="travel" or type(origin) is not int or not 1<=origin<=9 or origin==realm):raise ValueError("invalid travel origin")
+        out.append({"kind":kind,"subject":subject,"detail":o.clean(f["detail"],8,180),"evidence":quote,"cause":cause,"realm":realm,"other":other,"origin":origin})
     payload=o.dump({"evidence":evidence,"facts":out})
     source=db.execute("SELECT checksum FROM chronicle_drafts WHERE id=?",(did,)).fetchone()[0]
     db.execute("INSERT INTO destiny_drafts VALUES(?,?,?,?,?,?)",(did,p["beat"],payload,source,o.digest(o.dump([p["beat"],payload,source,VERSION])),VERSION))
@@ -273,6 +278,10 @@ def graph(db):
                 a=f["subject"];target=first_char.get(a) or ("guardian:"+a if a in gu.BY_ID else "character:"+a)
                 edge(target,key,"actor")
             if f["realm"] is not None:edge("realm:"+str(f["realm"]),key,"realm")
+            if f.get("origin") is not None:edge("realm:"+str(f["origin"]),key,"departure")
+            if f.get("other") is not None:
+                a=f["other"];target=first_char.get(a) or ("guardian:"+a if a in gu.BY_ID else "character:"+a)
+                edge(target,key,"alliance_partner")
             if f["cause"] is not None:
                 cause=f["cause"];source=chapter_event.get(cause)
                 if source is None:
