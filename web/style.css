@@ -36,7 +36,7 @@
 /* Large, readable desktop UI. The same canvas-free dark background remains. */
 :root{--chat-width:clamp(600px,42vw,700px);--reading-width:min(820px,60vw);--ui-font:system-ui,"Segoe UI",sans-serif}
 html,body{font:15px/1.6 var(--ui-font)}
-#stage{background:radial-gradient(ellipse at 50% 48%,#0c0b0b 0%,#080808 72%);transition:right .24s ease-out}
+#stage{background:radial-gradient(ellipse at 50% 48%,#0c0b0b 0%,#080808 72%);transition:none}
 #graph{font-family:var(--ui-font)}
 #info{font-size:13px;color:#c7abae;max-width:calc(100% - 32px);overflow-wrap:anywhere}
 #replay{font-size:25px;min-width:44px;min-height:44px}
