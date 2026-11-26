@@ -28,7 +28,8 @@ async function refreshActivity(){
 function scheduleActivity(){clearTimeout(activityTimer);if(document.hidden)return;activityTimer=window.setTimeout(async()=>{await refreshActivity();scheduleActivity()},activityActive||busy?400:1200)}
 document.addEventListener("visibilitychange",()=>{clearTimeout(activityTimer);if(!document.hidden){void refreshGraph();void refreshActivity();scheduleActivity()}});
 const avatar=$("avatar"),chat=$("chat"),prompt=$("prompt") as HTMLTextAreaElement,menu=$("menu"),config=$("config") as HTMLDialogElement;
-function toggle(open=chat.hidden){chat.hidden=!open;avatar.setAttribute("aria-expanded",String(open));avatar.setAttribute("aria-label",open?"Свернуть чат":"Открыть чат Hakureya");if(open){if(!book.hidden)$("book-scroll").focus();else prompt.focus()}else avatar.focus()}
+function syncGraphViewport(){const stage=$("stage");stage.classList.toggle("chat-open",!chat.hidden);stage.classList.toggle("book-open",!chat.hidden&&!book.hidden);stage.classList.toggle("book-full",!chat.hidden&&!book.hidden&&focused);live?.resize()}
+function toggle(open=chat.hidden){chat.hidden=!open;syncGraphViewport();avatar.setAttribute("aria-expanded",String(open));avatar.setAttribute("aria-label",open?"Свернуть чат":"Открыть чат Hakureya");if(open){if(!book.hidden)$("book-scroll").focus();else prompt.focus()}else avatar.focus()}
 avatar.onclick=()=>toggle();$("close").onclick=()=>toggle(false);avatar.oncontextmenu=e=>{e.preventDefault();menu.hidden=!menu.hidden};document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(!menu.hidden)menu.hidden=true;else if(!chat.hidden&&!config.open)toggle(false)}});document.addEventListener("click",e=>{if(!menu.contains(e.target as Node)&&!avatar.contains(e.target as Node))menu.hidden=true});
 function message(role:string,content:string){const p=document.createElement("p");p.className="message "+role;p.textContent=content;$("messages").append(p);p.scrollIntoView({block:"end"});return p}
 async function api(path:string,data?:unknown){const response=await fetch("/api/"+path,data===undefined?{}:{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});const value=await response.json();if(!response.ok)throw Error(value.error||"Ошибка сервера");return value}
@@ -111,12 +112,12 @@ $("note-save").onclick=async()=>{const content=($("note-text") as HTMLTextAreaEl
 // Reading is a separate local presentation of the same immutable SQLite bookmark.
 type BookPage={chapter:number,title:string,volume:number,page:number,pages:number,text:string,chapter_progress:number,volume_progress:number,can_back:boolean,can_next:boolean,last_published:boolean};
 const book=$("book"),scroll=$("book-scroll");
-let font=18,spacing=1.8,focused=false,reading=false;
-try{const saved=JSON.parse(localStorage.getItem("hakureya-reading-style")||"{}");if(Number.isFinite(saved.font))font=Math.min(26,Math.max(15,saved.font));if(Number.isFinite(saved.spacing))spacing=Math.min(2.2,Math.max(1.5,saved.spacing))}catch{}
-function readerStyle(){book.style.setProperty("--book-font",font+"px");book.style.setProperty("--book-spacing",String(spacing));try{localStorage.setItem("hakureya-reading-style",JSON.stringify({font,spacing}))}catch{}}
+let font=21,spacing=1.8,focused=false,reading=false;
+try{const saved=JSON.parse(localStorage.getItem("hakureya-reading-style")||"{}");if(Number.isFinite(saved.font))font=Math.min(32,Math.max(16,saved.font===18&&!saved.largeUI?21:saved.font));if(Number.isFinite(saved.spacing))spacing=Math.min(2.2,Math.max(1.5,saved.spacing))}catch{}
+function readerStyle(){book.style.setProperty("--book-font",font+"px");book.style.setProperty("--book-spacing",String(spacing));try{localStorage.setItem("hakureya-reading-style",JSON.stringify({font,spacing,largeUI:true}))}catch{}}
 readerStyle();
 function showBook(p:BookPage){
- book.hidden=false;chat.classList.add("reading");$("messages").hidden=true;$("composer").hidden=true;$("status").hidden=true;
+ book.hidden=false;chat.classList.add("reading");syncGraphViewport();$("messages").hidden=true;$("composer").hidden=true;$("status").hidden=true;
  $("book-kicker").textContent="ТОМ "+p.volume+" · ГЛАВА "+p.chapter;
  $("book-title").textContent=p.title;
  // Never interpret model output as HTML. Keep paragraph and dialogue boundaries.
@@ -134,17 +135,17 @@ function showBook(p:BookPage){
  scroll.scrollTop=0;
  $("book-page").animate?.([{opacity:.3,transform:"translateY(5px)"},{opacity:1,transform:"none"}],{duration:window.matchMedia("(prefers-reduced-motion: reduce)").matches?0:180});
 }
-function exitBook(){book.hidden=true;chat.classList.remove("reading","book-focus");focused=false;$("book-focus").setAttribute("aria-pressed","false");$("messages").hidden=false;$("composer").hidden=false;$("status").hidden=false;prompt.focus()}
+function exitBook(){book.hidden=true;chat.classList.remove("reading","book-focus");focused=false;syncGraphViewport();$("book-focus").setAttribute("aria-pressed","false");$("messages").hidden=false;$("composer").hidden=false;$("status").hidden=false;prompt.focus()}
 async function turn(action:string){
  if(reading||busy)return;
  reading=true;
  try{const result=await api("reader",{action});if(action==="pause"){exitBook();return}if(result.reader){showBook(result.reader);if(!String(result.reply).includes(" · Страница "))$("book-status").textContent=result.reply}else $("book-status").textContent=result.reply||"Страница недоступна"}catch(e){$("book-status").textContent=String(e)}finally{reading=false}
 }
 $("book-prev").onclick=()=>void turn("back");$("book-next").onclick=()=>void turn("next");$("book-exit").onclick=()=>void turn("pause");
-$("book-smaller").onclick=()=>{font=Math.max(15,font-1);readerStyle()};
-$("book-larger").onclick=()=>{font=Math.min(26,font+1);readerStyle()};
+$("book-smaller").onclick=()=>{font=Math.max(16,font-1);readerStyle()};
+$("book-larger").onclick=()=>{font=Math.min(32,font+1);readerStyle()};
 $("book-spacing").onclick=()=>{spacing=spacing>=2.15?1.5:Math.min(2.2,Math.round((spacing+.15)*100)/100);readerStyle()};
-$("book-focus").onclick=()=>{focused=!focused;chat.classList.toggle("book-focus",focused);$("book-focus").setAttribute("aria-pressed",String(focused))};
+$("book-focus").onclick=()=>{focused=!focused;chat.classList.toggle("book-focus",focused);syncGraphViewport();$("book-focus").setAttribute("aria-pressed",String(focused))};
 document.addEventListener("keydown",e=>{if(book.hidden||chat.hidden||config.open||e.altKey||e.ctrlKey||e.metaKey||e.shiftKey||e.repeat||window.getSelection()?.toString())return;if(e.target instanceof HTMLInputElement||e.target instanceof HTMLTextAreaElement||e.target instanceof HTMLButtonElement)return;if(e.key==="ArrowRight"||e.key==="ArrowLeft"){e.preventDefault();void turn(e.key==="ArrowRight"?"next":"back")}});
 let touch:{x:number,y:number}|null=null;
 scroll.addEventListener("touchstart",e=>{touch=e.touches.length===1?{x:e.touches[0].clientX,y:e.touches[0].clientY}:null},{passive:true});

@@ -1,7 +1,7 @@
 // Stable hex-lattice slots and separated constellation envelopes, all SVG.
 export const palette=["#e8ce72","#f5a064","#ed657d","#df6e9e","#e8c6ed"];
 export const categories=["Запросы","Знания","Ответы","Опыт","Биография"];
-const centers=[[-.026,-.28],[.082,-.042],[-.078,.182],[.069,.408],[.36,-.13]];
+
 const STEP=.026;
 // Slot zero is the first cell of ring 1; the hub owns the origin.
 export function cell(slot){
@@ -13,12 +13,52 @@ export function cell(slot){
  const a=corners[side],b=corners[side+1],q=a[0]+(b[0]-a[0])*k/ring,r=a[1]+(b[1]-a[1])*k/ring;
  return {x:STEP*(q+r*.5),y:STEP*Math.sqrt(3)*r*.5};
 }
+// Pack a small number of circular envelopes without a cumulative radial staircase.
+// Local lattice positions never change; only constellation centers can move.
+export function packCircles(disks,core=.09,gap=.045){
+ const placed=[{key:"core",x:0,y:0,r:core}],result=new Map();
+ for(const disk of [...disks].sort((a,b)=>b.r-a.r)){
+  const r=disk.r;
+  let best=null,bestScore=Infinity;
+  for(const anchor of placed){
+   for(let i=0;i<72;i++){
+    const a=-Math.PI/2+i*Math.PI/36,d=anchor.r+r+gap;
+    const x=anchor.x+Math.cos(a)*d,y=anchor.y+Math.sin(a)*d;
+    if(placed.some(p=>Math.hypot(x-p.x,y-p.y)<r+p.r+gap-1e-8))continue;
+    const all=[...placed,{x,y,r}];
+    const left=Math.min(...all.map(p=>p.x-p.r)),right=Math.max(...all.map(p=>p.x+p.r));
+    const top=Math.min(...all.map(p=>p.y-p.r)),bottom=Math.max(...all.map(p=>p.y+p.r));
+    const width=right-left,height=bottom-top;
+    const score=Math.max(width/1.5,height)+.12*(width+height)+.03*Math.hypot(x,y);
+    if(score<bestScore){bestScore=score;best={key:disk.key,x,y,r}}
+   }
+  }
+  if(!best){
+   const x=Math.max(...placed.map(p=>p.x+p.r))+gap+r;
+   best={key:disk.key,x,y:0,r};
+  }
+  placed.push(best);result.set(disk.key,best);
+ }
+ return result;
+}
+export function graphBounds(nodes){
+ let left=0,right=0,top=0,bottom=0;
+ for(const n of nodes){left=Math.min(left,n.x);right=Math.max(right,n.x);top=Math.min(top,n.y);bottom=Math.max(bottom,n.y)}
+ return {left,right,top,bottom};
+}
+// Fit the actual bounds to the available viewport; glyphs are separately screen-sized.
+export function cameraFrame(bounds,width,height){
+ const w=Math.max(1,width),h=Math.max(1,height),pad=Math.min(56,w*.12,h*.12);
+ const bw=Math.max(.18,bounds.right-bounds.left),bh=Math.max(.18,bounds.bottom-bounds.top);
+ const scale=Math.min(1200,Math.max(1,(w-2*pad))/bw,Math.max(1,(h-2*pad))/bh);
+ return {scale,cx:(bounds.left+bounds.right)/2,cy:(bounds.top+bounds.bottom)/2,pad};
+}
 export function detailLevel(count,zoom){return count<800||zoom>=2.4?2:zoom>=1.25?1:0}
 export function layout(snapshot){
- const nodes=[{key:"root",kind:"root",group:-1,x:0,y:0,r:3.6,label:"hakureya"}],edges=[],byKey=new Map([[ "root",nodes[0] ]]);
+ const nodes=[{key:"root",kind:"root",group:-1,x:0,y:0,r:9,label:"HAKUREYA"}],edges=[],byKey=new Map([[ "root",nodes[0] ]]);
  const count=categories.map(()=>0),radius=categories.map(()=>.035),valid=(Array.isArray(snapshot.records)?snapshot.records:[]).filter(n=>Number.isInteger(n.group)&&n.group>=0&&n.group<categories.length&&typeof n.key==="string");
  const occupied=categories.map(()=>new Set());
- const bio=[],heart=[],shadow=[],guardians=[],destiny=[],immortal=[];
+ const bio=[],heart=[],shadow=[],guardians=[],destiny=[],immortal=[],areas=[];
  const destinyTopics=["love","power","guardians","court","worlds","cast","growth",...["iori","lian","kaen","meixiu","jun","renho","setsuna","nari","kagari","orum"].map(k=>"actor:"+k),...Array.from({length:9},(_,i)=>"realm:"+(i+1))];
  const guardianActors=["reika","seirana","mikage","tokihana","akatsuki","shiori","yumeka","meirin","amatsuka"];
  const shadowTopics=["court","visits","suitors","threat","mask","power"];
@@ -26,7 +66,7 @@ export function layout(snapshot){
  for(const n of valid){
   if(byKey.has(n.key))continue;
   const g=n.group;
-  if(!count[g]){const key="hub:"+g,hub={key,kind:"hub",group:g,x:0,y:0,r:3.5,label:categories[g]};nodes.push(hub);byKey.set(key,hub);edges.push({a:"root",b:key,kind:"category"})}
+  if(!count[g]){const key="hub:"+g,hub={key,kind:"hub",group:g,x:0,y:0,r:5.2,label:categories[g]};nodes.push(hub);byKey.set(key,hub);edges.push({a:"root",b:key,kind:"category"})}
   let slot=Number.isSafeInteger(n.slot)&&n.slot>=0?n.slot:count[g];
   while(occupied[g].has(slot))slot++;
   occupied[g].add(slot);count[g]++;
@@ -38,7 +78,7 @@ export function layout(snapshot){
   const destinyNode=g===4&&(n.destiny_topic==="root"||destinyTopics.includes(n.destiny_topic))&&Number.isSafeInteger(n.destiny_slot)&&n.destiny_slot>=-1&&n.destiny_slot<=1000000;
   const immortalNode=g===4&&Number.isSafeInteger(n.immortal_slot)&&n.immortal_slot>=-1&&n.immortal_slot<=10000000;
   if(!nested&&!heartNode&&!shadowNode&&!guardianNode&&!destinyNode&&!immortalNode)radius[g]=Math.max(radius[g],Math.hypot(p.x,p.y)+.035);
-  const r=n.kind==="immortal_root"?3.8:n.kind==="immortal_saga"?3:n.kind==="immortal_stage"?2.2:n.kind==="living_root"?3.8:n.kind==="living_topic"?2.8:n.kind==="living_subject"?2.2:n.kind==="living_fact"?1.6:n.kind==="destiny_root"?4.2:n.kind==="destiny_topic"||n.kind==="destiny_character"||n.kind==="realm"?3.1:n.kind==="destiny_fact"||n.kind==="destiny_event"?1.8:n.kind==="guardian_root"?4.2:n.kind==="guardian_character"?3.1:n.kind==="guardian_memory"?1.8:n.kind==="shadow_root"?4.2:n.kind==="shadow_topic"?3.1:n.kind==="shadow_event"?1.8:n.kind==="heart_root"?4.2:n.kind==="heart_topic"?3.1:n.kind==="heart_moment"?1.8:n.kind==="epoch"?3.6:n.kind==="book_segment"?3:n.kind==="fictional_chapter"?2.7:n.kind==="draft"?2.1:n.kind==="theme"?1.7:1.5;
+  const r=1.35*(n.kind==="immortal_root"?3.8:n.kind==="immortal_saga"?3:n.kind==="immortal_stage"?2.2:n.kind==="living_root"?3.8:n.kind==="living_topic"?2.8:n.kind==="living_subject"?2.2:n.kind==="living_fact"?1.6:n.kind==="destiny_root"?4.2:n.kind==="destiny_topic"||n.kind==="destiny_character"||n.kind==="realm"?3.1:n.kind==="destiny_fact"||n.kind==="destiny_event"?1.8:n.kind==="guardian_root"?4.2:n.kind==="guardian_character"?3.1:n.kind==="guardian_memory"?1.8:n.kind==="shadow_root"?4.2:n.kind==="shadow_topic"?3.1:n.kind==="shadow_event"?1.8:n.kind==="heart_root"?4.2:n.kind==="heart_topic"?3.1:n.kind==="heart_moment"?1.8:n.kind==="epoch"?3.6:n.kind==="book_segment"?3:n.kind==="fictional_chapter"?2.7:n.kind==="draft"?2.1:n.kind==="theme"?1.7:1.5);
   const item={...n,kind:typeof n.kind==="string"?n.kind:"memory",label:typeof n.label==="string"?n.label:n.key,slot,x:p.x,y:p.y,r};nodes.push(item);byKey.set(item.key,item);
   if(nested)bio.push(item);
   if(heartNode)heart.push(item);
@@ -53,8 +93,7 @@ export function layout(snapshot){
  if(bio.length){
   const sectors=["past","meeting","love","future"], extent=[.08,.08,.08,.08];
   for(const n of bio){const i=sectors.indexOf(n.sector);const book=n.book===0?{x:0,y:0}:cell(n.book-1);const local=n.book===0||n.chapter_slot===-1?{x:0,y:0}:cell(n.chapter_slot);n.x=book.x*7+local.x;n.y=book.y*7+local.y;extent[i]=Math.max(extent[i],Math.hypot(n.x,n.y)+.06)}
-  const central=radius[4];const spacing=Math.max(central,...extent)+.10;
-  for(const n of bio){const i=sectors.indexOf(n.sector),angle=-Math.PI/2+i*Math.PI/2;const distance=central+extent[i]+spacing; n.x+=Math.cos(angle)*distance;n.y+=Math.sin(angle)*distance;radius[4]=Math.max(radius[4],Math.hypot(n.x,n.y)+.04)}
+  for(let i=0;i<sectors.length;i++){const members=bio.filter(n=>n.sector===sectors[i]);if(members.length)areas.push({key:"epoch:"+sectors[i],r:extent[i],members})}
  }
  // Dedicated Heart constellation inside biography, outside existing epoch envelopes.
  if(heart.length){
@@ -63,11 +102,9 @@ export function layout(snapshot){
    const p=cell(n.heart_slot);n.x=p.x;n.y=p.y;ext[i]=Math.max(ext[i],Math.hypot(p.x,p.y)+.045)}
   const ring=2*Math.max(...ext)+.09;
   const area=ring+Math.max(...ext)+.045;
-  const distance=radius[4]+area+.10;
-  const cx=distance/Math.SQRT2,cy=distance/Math.SQRT2;
   for(const n of heart){const i=heartTopics.indexOf(n.heart_topic),angle=-Math.PI/2+i*Math.PI/3;
-   n.x+=cx+(i>=0?Math.cos(angle)*ring:0);n.y+=cy+(i>=0?Math.sin(angle)*ring:0)}
-  radius[4]=Math.max(radius[4],distance+area);
+   n.x+=i>=0?Math.cos(angle)*ring:0;n.y+=i>=0?Math.sin(angle)*ring:0}
+  areas.push({key:"heart",r:area,members:heart});
  }
  // Court intrigue occupies a separate envelope from Heart and the four epochs.
  if(shadow.length){
@@ -75,10 +112,9 @@ export function layout(snapshot){
   for(const n of shadow){const i=shadowTopics.indexOf(n.shadow_topic);if(i<0||n.shadow_slot<0){n.x=0;n.y=0;continue}
    const p=cell(n.shadow_slot);n.x=p.x;n.y=p.y;ext[i]=Math.max(ext[i],Math.hypot(p.x,p.y)+.045)}
   const ring=2*Math.max(...ext)+.09,area=ring+Math.max(...ext)+.045;
-  const distance=radius[4]+area+.10,cx=distance/Math.SQRT2,cy=-distance/Math.SQRT2;
   for(const n of shadow){const i=shadowTopics.indexOf(n.shadow_topic),angle=-Math.PI/2+i*Math.PI/3;
-   n.x+=cx+(i>=0?Math.cos(angle)*ring:0);n.y+=cy+(i>=0?Math.sin(angle)*ring:0)}
-  radius[4]=Math.max(radius[4],distance+area);
+   n.x+=i>=0?Math.cos(angle)*ring:0;n.y+=i>=0?Math.sin(angle)*ring:0}
+  areas.push({key:"shadow",r:area,members:shadow});
  }
  // Nine personal constellations, with ring radius based on the closest neighboring pair.
  if(guardians.length){
@@ -86,10 +122,9 @@ export function layout(snapshot){
   for(const n of guardians){const i=guardianActors.indexOf(n.guardian_actor);if(i<0||n.guardian_slot<0){n.x=0;n.y=0;continue}
    const p=cell(n.guardian_slot);n.x=p.x;n.y=p.y;ext[i]=Math.max(ext[i],Math.hypot(p.x,p.y)+.045)}
   const max=Math.max(...ext),ring=(2*max+.06)/(2*Math.sin(Math.PI/9)),area=ring+max+.045;
-  const distance=radius[4]+area+.10,cx=-distance/Math.SQRT2,cy=distance/Math.SQRT2;
   for(const n of guardians){const i=guardianActors.indexOf(n.guardian_actor),angle=-Math.PI/2+i*2*Math.PI/9;
-   n.x+=cx+(i>=0?Math.cos(angle)*ring:0);n.y+=cy+(i>=0?Math.sin(angle)*ring:0)}
-  radius[4]=Math.max(radius[4],distance+area);
+   n.x+=i>=0?Math.cos(angle)*ring:0;n.y+=i>=0?Math.sin(angle)*ring:0}
+  areas.push({key:"guardians",r:area,members:guardians});
  }
  // Destiny topics and introduced character groups have independent envelopes.
  if(destiny.length){
@@ -97,27 +132,23 @@ export function layout(snapshot){
   for(const n of destiny){const i=destinyTopics.indexOf(n.destiny_topic);if(i<0||n.destiny_slot<0){n.x=0;n.y=0;continue}
    const p=cell(n.destiny_slot);n.x=p.x;n.y=p.y;ext[i]=Math.max(ext[i],Math.hypot(p.x,p.y)+.045)}
   const max=Math.max(...ext),ring=(2*max+.06)/(2*Math.sin(Math.PI/destinyTopics.length)),area=ring+max+.045;
-  const distance=radius[4]+area+.10,cx=-distance/Math.SQRT2,cy=-distance/Math.SQRT2;
   for(const n of destiny){const i=destinyTopics.indexOf(n.destiny_topic),angle=-Math.PI/2+i*2*Math.PI/destinyTopics.length;
-   n.x+=cx+(i>=0?Math.cos(angle)*ring:0);n.y+=cy+(i>=0?Math.sin(angle)*ring:0)}
-  radius[4]=Math.max(radius[4],distance+area);
+   n.x+=i>=0?Math.cos(angle)*ring:0;n.y+=i>=0?Math.sin(angle)*ring:0}
+  areas.push({key:"destiny",r:area,members:destiny});
  }
  if(immortal.length){
   let area=.05;
   for(const n of immortal){const p=n.immortal_slot<0?{x:0,y:0}:cell(n.immortal_slot);n.x=p.x;n.y=p.y;area=Math.max(area,Math.hypot(p.x,p.y)+.05)}
-  const distance=radius[4]+area+.10;
-  for(const n of immortal){n.x+=distance;n.y+=0}
-  radius[4]=Math.max(radius[4],distance+area);
+  areas.push({key:"immortal",r:area,members:immortal});
  }
- let spread=1;
- for(let i=0;i<centers.length;i++){
-  if(!count[i])continue;
-  spread=Math.max(spread,(radius[i]+.05)/Math.hypot(...centers[i]));
-  for(let j=0;j<i;j++)if(count[j])spread=Math.max(spread,(radius[i]+radius[j]+.035)/Math.hypot(centers[i][0]-centers[j][0],centers[i][1]-centers[j][1]));
- }
- for(const n of nodes)if(n.group>=0){n.x+=centers[n.group][0]*spread;n.y+=centers[n.group][1]*spread}
+ const packed=packCircles(areas,radius[4],.035);
+ for(const a of areas){const p=packed.get(a.key);for(const n of a.members){n.x+=p.x;n.y+=p.y}radius[4]=Math.max(radius[4],Math.hypot(p.x,p.y)+a.r)}
+ const groupPositions=packCircles(count.map((c,i)=>({key:i,r:radius[i],count:c})).filter(d=>d.count),.10,.045);
+ for(const n of nodes)if(n.group>=0){const p=groupPositions.get(n.group);n.x+=p.x;n.y+=p.y}
+ const spread=1;
  const seen=new Set(edges.map(e=>e.a+"|"+e.b+"|"+e.kind));
  for(const e of snapshot.edges||[]){const k=e.a+"|"+e.b+"|"+e.kind;if(typeof e.kind==="string"&&byKey.has(e.a)&&byKey.has(e.b)&&e.a!==e.b&&!seen.has(k)){edges.push(e);seen.add(k)}}
- const extent=Math.max(.45,...nodes.map(n=>Math.max(Math.abs(n.x)*1.35,Math.abs(n.y))));
- return {nodes,edges,byKey,extent,spread,radius};
+ const bounds=graphBounds(nodes);
+ const extent=Math.max(.45,Math.abs(bounds.left),Math.abs(bounds.right),Math.abs(bounds.top),Math.abs(bounds.bottom));
+ return {nodes,edges,byKey,extent,bounds,spread,radius};
 }
