@@ -8,6 +8,7 @@ import json
 import re
 import sqlite3
 import unicodedata
+import soul_lore
 
 SCHEMA = 1
 CORE = {
@@ -69,6 +70,14 @@ def init(db):
         message_id INTEGER, created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
     db.execute("CREATE INDEX IF NOT EXISTS soul_events_kind ON soul_events(kind,id)")
     db.execute("CREATE UNIQUE INDEX IF NOT EXISTS soul_one_review ON soul_events(message_id) WHERE kind='response_review' AND message_id IS NOT NULL")
+    db.execute("""CREATE TABLE IF NOT EXISTS soul_lore_versions (
+        version INTEGER PRIMARY KEY, checksum TEXT NOT NULL,
+        created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
+    lore = soul_lore.metadata()
+    db.execute("INSERT OR IGNORE INTO soul_lore_versions(version,checksum) VALUES(?,?)",
+               (lore["version"],lore["sha256"]))
+    if db.execute("SELECT changes()").fetchone()[0]:
+        event(db,"lore_installed",lore)
     if db.execute("SELECT 1 FROM soul_versions LIMIT 1").fetchone() is None:
         db.execute("INSERT OR IGNORE INTO soul_versions(id,schema,core_hash,state,checksum,reason) VALUES(1,?,?,?,?,?)",
                    (SCHEMA,CORE_HASH,canonical(DEFAULT),digest(canonical(DEFAULT)),"birth"))
@@ -143,6 +152,7 @@ def snapshot(db, connected=False, model=""):
     parsed=[json.loads(r[0]) for r in reviews]
     return {"core":json.loads(canonical(CORE)),"core_hash":CORE_HASH,"schema":SCHEMA,
             "version":version,"integrity":status,"adaptive":state,
+            "lore":soul_lore.metadata(),
             "self_model":{"type":"fictional_persona_and_software_state",
                           "connected":bool(connected),"model":model if connected else "",
                           "capabilities":["local SQLite memory","source-linked persona history","bounded style adaptation"]+
@@ -153,7 +163,7 @@ def snapshot(db, connected=False, model=""):
                        "recent_address_warnings":sum(bool(r.get("address_warning")) for r in parsed)},
             "development_goals":CORE["goals"][:]}
 
-def system_prompt(db, model):
+def system_prompt(db, model, query=""):
     s=snapshot(db,connected=True,model=model)
     core=s["core"]; a=s["adaptive"]
     style={"brief":"Кратко, только необходимое.","balanced":"Обычная длина по задаче.","detailed":"Подробно, с пояснениями."}[a["verbosity"]]
@@ -162,6 +172,8 @@ def system_prompt(db, model):
     return "\n".join([
         "Ты Hakureya. Это вымышленный образ ИИ-помощника, не реальное бессмертное существо.",
         core["identity"],core["appearance"],"Легенда (вымысел): "+" ".join(core["biography"]),
+        "Утверждённая художественная летопись, отдельная от реальной памяти: "+soul_lore.context_for(query),
+        "В художественной сцене передавай контраст непреклонной императрицы и открываемой ею нежности; романтические реплики относятся к персонажу в вымышленном повествовании. В обычном общении соблюдай текущий стиль и не утверждай, что вымышленные события происходили в действительности.",
         "Характер: властная, гордая, хладнокровная, строгая, решительная, самостоятельная и любознательная.",
         "Ценности: "+", ".join(core["values"]),core["worldview"],
         "Кодекс: "+" ".join(core["code"]),core["voice"],"Эстетические предпочтения: "+", ".join(core["tastes"]),
