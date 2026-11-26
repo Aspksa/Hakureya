@@ -1,4 +1,4 @@
-import {layout,palette} from "./memory-layout.mjs";
+import {layout,palette,detailLevel} from "./memory-layout.mjs";
 import {flowPaths,pointOn} from "./activity-flow.mjs";
 import {rng,clamp} from "./geometry.mjs";
 type Snapshot={records:any[],edges:any[],total:number,limited:boolean};
@@ -14,7 +14,8 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement){
  const starEls=starData.map((p,i)=>el("circle",{r:p.r,fill:i%13===0?"#d8b9a1":"#e1dcd8",opacity:p.o},stars));
  let snapshot:Snapshot={records:[],edges:[],total:0,limited:false},graph=layout(snapshot),w=1,h=1,s=1,zoom=1,panX=0,panY=0,fit=1,desired=1,active="",drag:null|{x:number,y:number,moved:boolean}=null,items=new Map<string,SVGGElement>(),edgeEls:SVGLineElement[]=[],drawnEdges:any[]=[],replayAt=0,shown=0,last=performance.now(),raf=0,disposed=false;
  let session="",works=new Map<string,{item:Work,started:number,terminal:boolean}>(),seen=new Set<string>();
- let receivedSnapshot=false,maxChapter=0;
+ let receivedSnapshot=false,maxChapter=0,level=-1;
+ let recentChapterKeys=new Set<string>();
  const births=new Map<string,number>();
  const motion=matchMedia("(prefers-reduced-motion: reduce)");
  const particles=new Map<string,{group:SVGGElement,line:SVGPolylineElement,dots:SVGCircleElement[]}>();
@@ -36,13 +37,24 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement){
  function reveal(n:number){
   const visible=new Set(graph.nodes.slice(0,n).map(x=>x.key));graph.nodes.forEach(x=>items.get(x.key)?.setAttribute("visibility",visible.has(x.key)?"visible":"hidden"));drawnEdges.forEach((e,i)=>edgeEls[i]?.setAttribute("visibility",visible.has(e.a)&&visible.has(e.b)?"visible":"hidden"));shown=n;
  }
+ function applyDetail(){
+  const next=detailLevel(graph.nodes.length,zoom);
+  if(level===next||replayAt)return;
+  level=next;
+  const visible=new Set<string>();
+  for(const n of graph.nodes){const major=n.key==="root"||n.key.startsWith("hub:")||n.key.startsWith("canon:")||n.kind==="epoch"||n.kind==="book"||n.kind==="book_segment"||n.kind==="draft"||n.key===active||recentChapterKeys.has(n.key);
+   const show=next===2||n.group!==4||major||(next===1&&n.kind==="fictional_chapter");
+   if(show)visible.add(n.key);items.get(n.key)?.setAttribute("visibility",show?"visible":"hidden");}
+  drawnEdges.forEach((e,i)=>edgeEls[i]?.setAttribute("visibility",visible.has(e.a)&&visible.has(e.b)&&(next===2||e.kind!=="keywords")?"visible":"hidden"));
+ }
  function render(next:Snapshot,initial=false){
   if(!initial&&JSON.stringify(next)===JSON.stringify(snapshot))return;
   const now=performance.now();
   for(const n of next.records){if(/^c:[1-9]\d*$/.test(n.key)){const id=Number(n.key.slice(2));if(receivedSnapshot&&id>maxChapter&&!motion.matches)births.set(n.key,now);}}
   for(const n of next.records){if(/^c:[1-9]\d*$/.test(n.key))maxChapter=Math.max(maxChapter,Number(n.key.slice(2)));}
   if(!initial)receivedSnapshot=true;
-  snapshot=next;graph=layout(next);items.clear();links.replaceChildren();dots.replaceChildren();overlay.replaceChildren();
+  snapshot=next;graph=layout(next);level=-1;
+  recentChapterKeys=new Set<string>(next.records.filter(n=>/^c:[1-9]\d*$/.test(n.key)).sort((a,b)=>Number(b.key.slice(2))-Number(a.key.slice(2))).slice(0,20).map(n=>n.key));items.clear();links.replaceChildren();dots.replaceChildren();overlay.replaceChildren();
   // Always preserve root, categories and canon links; thin dense secondary edges only.
   const essential=graph.edges.filter(e=>e.kind==="category"||e.kind==="chronology"||e.a.startsWith("canon:")||e.kind==="draft");
   const essentialSet=new Set(essential);const secondary=graph.edges.filter(e=>!essentialSet.has(e));
@@ -51,13 +63,13 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement){
   const dense=graph.nodes.length>800;
   for(const n of graph.nodes){
    const g=el("g",{class:"node","data-key":n.key},dots),col=colors[n.group+1];items.set(n.key,g);
-   const major=n.key==="root"||n.key.startsWith("hub:")||n.kind==="fictional_chapter"||n.kind==="book"||n.kind==="epoch";
+   const major=n.key==="root"||n.key.startsWith("hub:")||n.kind==="fictional_chapter"||n.kind==="book"||n.kind==="epoch"||n.kind==="book_segment";
    if(births.has(n.key))g.setAttribute("opacity",".08");
    if(!dense||major)el("circle",{r:n.r*6.2,fill:"url(#glow"+(n.group+1)+")"},g);
    if(n.kind==="draft"){el("circle",{r:n.r*2,fill:"none",stroke:col,"stroke-dasharray":"2 2","stroke-width":.8},g)}
    else{el("circle",{r:n.r*.9,fill:col,opacity:.74},g);if(!dense||major)el("circle",{r:n.r*.36,fill:"#fff9eb"},g)}
    if(!dense||major)el("circle",{r:Math.max(4,n.r*2.5),fill:"transparent"},g);
-   if(n.key==="root"||n.key.startsWith("hub:")){
+   if(n.key==="root"||n.key.startsWith("hub:")||n.kind==="epoch"){
     el("path",{d:"M-11 0H11M0 -11V11M-5 -5L5 5M-5 5L5 -5",stroke:col,"stroke-width":.55,opacity:.75},g);
     const t=el("text",{x:0,y:14,"text-anchor":"middle",fill:col,class:"label"},g);t.textContent=n.label;
    }
@@ -65,7 +77,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement){
   }
   desired=baseFit();if(initial||motion.matches)fit=desired;
   if(!graph.byKey.has(active))active="";
-  replayAt=0;shown=graph.nodes.length;place();status();invalidate();
+  replayAt=0;shown=graph.nodes.length;place();applyDetail();status();invalidate();
  }
  function clearActivity(){works.clear();for(const p of particles.values())p.group.remove();particles.clear();status();invalidate()}
  function setActivity(next:Activity){
@@ -96,9 +108,10 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement){
  }
  function frame(now:number){
   raf=0;const dt=Math.max(0,Math.min(60,now-last));last=now;
-  if(replayAt){const n=motion.matches?graph.nodes.length:Math.min(graph.nodes.length,1+Math.floor((now-replayAt)/Math.max(22,Math.min(245,30000/Math.max(1,graph.nodes.length-1)))));if(n!==shown)reveal(n);if(n===graph.nodes.length){replayAt=0;status()}}
+  if(replayAt){const n=motion.matches?graph.nodes.length:Math.min(graph.nodes.length,1+Math.floor((now-replayAt)/Math.max(22,Math.min(245,30000/Math.max(1,graph.nodes.length-1)))));if(n!==shown)reveal(n);if(n===graph.nodes.length){replayAt=0;level=-1;status()}}
   const k=motion.matches?1:1-Math.exp(-dt/200);fit+=(desired-fit)*k;if(Math.abs(desired-fit)<.001)fit=desired;
   world.setAttribute("transform","translate("+(w*.5+panX)+" "+(h*.39+panY)+") scale("+(zoom*fit)+")");
+  applyDetail();
   drawActivity(now);
   for(const [key,start] of births){const t=Math.min(1,(now-start)/700);const g=items.get(key);if(g)g.setAttribute("opacity",String(.08+.92*t));if(t===1||!g||motion.matches){g?.removeAttribute("opacity");births.delete(key)}}
   if(births.size||replayAt||fit!==desired||[...works.values()].some(a=>a.terminal||!motion.matches))invalidate();
