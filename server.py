@@ -31,6 +31,7 @@ import soul_intelligence
 import soul_director
 import soul_dynasty
 import soul_universe
+import soul_export
 import graph_activity
 import writer_activity
 import instance_guard
@@ -727,6 +728,19 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if not self.local():
             return self.respond({"error":"Доступ только локально"},403)
+        export_match=re.fullmatch(r"/api/universe/export/(epub|docx|html)",self.path)
+        if export_match:
+            try:
+                with LOCK, closing(connect()) as db:
+                    raw,mime,filename=soul_export.export(db,export_match[1])
+                self.send_response(200)
+                self.send_header("Content-Type",mime)
+                self.send_header("Cache-Control","no-store")
+                self.send_header("Content-Length",str(len(raw)))
+                if filename:self.send_header("Content-Disposition",'attachment; filename="'+filename+'"')
+                self.end_headers();self.wfile.write(raw)
+                return
+            except (ValueError,TypeError,KeyError,sqlite3.Error):return self.respond({"error":"Экспорт недоступен"},409)
         universe_match=re.fullmatch(r"/api/universe(?:/([1-9][0-9]{0,5}))?",self.path)
         if universe_match:
             try:
