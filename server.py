@@ -83,7 +83,11 @@ def writer_status(db):
     elif not CONFIG["key"]:reason="Cloud.ru не подключён"
     elif mode=="off" and not CHRONICLE["enabled"]:reason="Автоматическое написание выключено"
     elif not soul_chronicle.canon_ok(db):reason="Нарушена целостность канона"
-    elif reserved:reason="Запрос уже выполняется или ожидает восстановления"
+    elif reserved:
+        active=next((x for x in graph_activity.snapshot()["active"] if x["kind"]=="chronicle"),None)
+        if active and active.get("stalled"):reason="Долгое ожидание ответа Cloud.ru; новая платная попытка не запускается."
+        elif active:reason="Литературный запрос выполняется · "+str(active["age_seconds"])+" сек."
+        else:reason="Есть зарезервированная попытка; ожидается безопасное восстановление."
     elif pending:reason="Разовое задание приостановлено: требуется решение по черновику" if once else "Черновик ожидает решения"
     elif once and task["model"]!=model:reason="Модель задания изменена; остановите задание и подтвердите новое."
     elif once:reason="Разовое задание активно. Ожидание следующего цикла планировщика."
@@ -280,14 +284,23 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
 def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan):
     try:
         for brain in plan.get("intelligence",{}).get("completed",[]):
-            graph_activity.update(activity,"brain:"+brain,"brain:"+brain)
+            graph_activity.update(activity,"brain:"+brain,"brain:"+brain,plan.get("intelligence",{}).get("timings_ms",{}).get(brain))
         graph_activity.update(activity,"context","root")
         payload={"model":model,"messages":soul_chronicle.prompt(reservation,traits,previous,plan),"max_tokens":writer_volume.JOB_OUTPUT_LIMIT if plan.get("writer_job") else cloud_writer.LIMIT,"stream":True,"stream_options":{"include_usage":True}}
         req=Request(API,data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
         graph_activity.update(activity,"waiting")
+        checkpoint=[time.monotonic(),0]
+        def preview(raw):
+            writer_preview.push(activity,raw)
+            body=writer_preview.fragment(activity)
+            now=time.monotonic()
+            if body and len(body)>checkpoint[1] and (now-checkpoint[0]>=3 or len(body)-checkpoint[1]>=800):
+                with LOCK, closing(connect()) as db, db:
+                    soul_universe.save_fragment(db,reservation[0],body,"stream_checkpoint")
+                checkpoint[:]=[now,len(body)]
         try:
             with urlopen(req,timeout=60) as res:
-                result=writer_stream.read_response(res,lambda chars,chunks:graph_activity.progress(activity,chars,chunks),lambda raw:writer_preview.push(activity,raw))
+                result=writer_stream.read_response(res,lambda chars,chunks:graph_activity.progress(activity,chars,chunks),preview)
         except (HTTPException,URLError,TimeoutError,ValueError,OSError):
             with LOCK, closing(connect()) as db, db:
                 soul_universe.save_fragment(db,reservation[0],writer_preview.fragment(activity),"interrupted")
@@ -318,6 +331,7 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
                 return "Настройки изменились; черновик отброшен."
             graph_activity.update(activity,"saving","hub:4")
             soul_chronicle.finish(db,reservation,value,plan)
+            db.execute("DELETE FROM universe_fragments WHERE attempt=?",(reservation[0],))
             pending=soul_chronicle.latest_pending(db)
             editorial=soul_omega.metadata(db,pending["id"])
             scene_report=soul_romance.report(db,pending["id"])
@@ -407,7 +421,7 @@ def chronicle_command(content):
     scene_query=re.fullmatch(r"поиск сцены (.{2,180})",q)
     actor_query=re.fullmatch(r"история персонажа (.{2,80})",q)
     timeline_query=re.fullmatch(r"хронология вселенной ([1-9][0-9]{0,5})",q)
-    intellect_commands={"литературный интеллект":"overview","проверка противоречий":"issues","открытые сюжетные нити":"threads","история знаний":"knowledge","проверить свидетельства":"audit","восстановить свидетельства":"repair","забытые герои":"forgotten"}
+    intellect_commands={"литературный интеллект":"overview","проверка противоречий":"issues","открытые сюжетные нити":"threads","история знаний":"knowledge","проверить свидетельства":"audit","восстановить свидетельства":"repair","забытые герои":"forgotten","проверка связей модулей":"modules","хронология мира":"world_time"}
     intellect_search=re.fullmatch(r"смысловой поиск (.{2,180})",q)
     intellect_profile=re.fullmatch(r"личная память (.{2,80})",q)
     identity_create=re.fullmatch(r"разделить личности\s+([^|]+)\s*\|\s*([1-9][0-9]{0,6})\s*\|\s*(.+)",content.strip(),re.I)
