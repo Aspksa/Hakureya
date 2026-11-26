@@ -79,7 +79,7 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity):
                 return "Настройки изменились; черновик отброшен."
             soul_chronicle.finish(db,reservation,value)
             pending=soul_chronicle.latest_pending(db)
-        graph_activity.update(activity,"done",f"draft:{pending[\'id\']}" if pending else "hub:4")
+        graph_activity.update(activity,"done",f"draft:{pending['id']}" if pending else "hub:4")
         return "Черновик создан. Введите «летопись: черновик» для чтения и решения."
     except (URLError,TimeoutError,ValueError,KeyError,IndexError,TypeError,OSError,sqlite3.Error):
         with LOCK, closing(connect()) as db, db:
