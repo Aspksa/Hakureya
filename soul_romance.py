@@ -6,7 +6,7 @@ from collections import Counter
 import soul_omega as o
 
 VERSION=1
-FORMATS={"короткая":750,"обычная":2000,"большая":4000,"романтическая":3000}
+FORMATS={"обычная":1500,"большая":3000,"романтическая":6000,"короткая":750}
 # Separate story structure from vocabulary. These are local thematic heuristics.
 MOTIFS={
  "прикосновение":("прикоснов","ладон","объят","обня"),
@@ -93,10 +93,10 @@ def parts(db,cid):
         JOIN chronicle_drafts d ON d.id=r.draft_id WHERE r.cycle_id=? AND d.status='approved'
         ORDER BY a.number""",(cid,)).fetchall()
 
-def start_cycle(db,fmt,arc):
-    if fmt not in FORMATS or arc not in o.ARCS:return False
+def start_cycle(db,fmt,arc,target=None):
+    if fmt not in FORMATS or arc not in o.ARCS or (target is not None and (type(target) is not int or not 500<=target<=6000)):return False
     if current_cycle(db) or db.execute("SELECT 1 FROM chronicle_drafts WHERE status='pending'").fetchone() or db.execute("SELECT 1 FROM chronicle_attempts WHERE status='reserved'").fetchone():return False
-    db.execute("INSERT INTO romance_cycles(arc,format,target,status) VALUES(?,?,?,'open')",(arc,fmt,FORMATS[fmt]))
+    db.execute("INSERT INTO romance_cycles(arc,format,target,status) VALUES(?,?,?,'open')",(arc,fmt,target if target is not None else FORMATS[fmt]))
     return True
 
 def close_cycle(db):
