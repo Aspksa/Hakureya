@@ -20,6 +20,7 @@ import soul_guardians
 import soul_destiny
 import soul_living
 import cloud_writer
+import writer_stream
 import soul_evolution
 import soul_immortal
 import soul_novel
@@ -172,11 +173,11 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
         for brain in plan.get("intelligence",{}).get("completed",[]):
             graph_activity.update(activity,"brain:"+brain,"brain:"+brain)
         graph_activity.update(activity,"context","root")
-        payload={"model":model,"messages":soul_chronicle.prompt(reservation,traits,previous,plan),"max_tokens":cloud_writer.LIMIT,"stream":False}
+        payload={"model":model,"messages":soul_chronicle.prompt(reservation,traits,previous,plan),"max_tokens":cloud_writer.LIMIT,"stream":True,"stream_options":{"include_usage":True}}
         req=Request(API,data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
         graph_activity.update(activity,"waiting")
         with urlopen(req,timeout=60) as res:
-            result=json.loads(res.read(1_000_000))
+            result=writer_stream.read_response(res,lambda chars,chunks:graph_activity.progress(activity,chars,chunks))
         graph_activity.update(activity,"received","hub:4")
         graph_activity.update(activity,"validating","hub:4")
         with LOCK, closing(connect()) as db, db:

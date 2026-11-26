@@ -12,7 +12,7 @@ let busy=false;
 $("replay").onclick=()=>{selectedVolume=null;void refreshGraph().then(()=>live?.replay())};$("reset").onclick=()=>{selectedVolume=null;void refreshGraph().then(()=>live?.replay());$("menu").hidden=true};
 let graphRequest=0;
 async function refreshGraph(){const id=++graphRequest;try{const data=await api(selectedVolume===null?"graph":"graph/volume/"+selectedVolume);if(id===graphRequest)ensureGraph()?.render(data)}catch(e){console.error("Hakureya graph refresh",e);if(id===graphRequest)$("info").textContent="Область недоступна · ↻ для общей карты"}}
-let activityBusy=false,activityRevision="",activityTimer=0,activityActive=false;
+let activityBusy=false,activityRevision="",activityTimer=0,activityActive=false,activityGraphSignature="";
 async function refreshActivity(){
  if(document.hidden||activityBusy)return;
  activityBusy=true;
@@ -23,8 +23,8 @@ async function refreshActivity(){
   activityActive=data.active.length>0;
   live?.setActivity(data);
   const revision=data.session+":"+data.revision;
-  if(revision!==activityRevision){activityRevision=revision;if(!activityActive||selectedVolume===null)void refreshGraph()}
- }catch{activityRevision="";activityActive=false;live?.clearActivity()}finally{activityBusy=false}
+  if(revision!==activityRevision){activityRevision=revision;const signature=JSON.stringify([data.session,data.active.map((a:any)=>[a.id,a.stage,a.target]),data.recent.map((a:any)=>[a.id,a.stage,a.target])]);if(signature!==activityGraphSignature){activityGraphSignature=signature;if(!activityActive||selectedVolume===null)void refreshGraph()}}
+ }catch{activityRevision="";activityGraphSignature="";activityActive=false;live?.clearActivity()}finally{activityBusy=false}
 }
 function scheduleActivity(){clearTimeout(activityTimer);if(document.hidden)return;activityTimer=window.setTimeout(async()=>{await refreshActivity();scheduleActivity()},activityActive||busy?400:1200)}
 document.addEventListener("visibilitychange",()=>{clearTimeout(activityTimer);if(!document.hidden){void refreshGraph();void refreshActivity();scheduleActivity()}});

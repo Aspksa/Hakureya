@@ -12,7 +12,7 @@ SESSION=uuid4().hex
 REV=0
 TERMINAL=("done","error","discarded","published","saved")
 BRAIN_STAGES=tuple("brain:"+x for x in ("plot","characters","relations","magic","time","memory","editor","analytics","twist","coordinator"))
-STAGES=("request","context","waiting","received","validating","saving",*BRAIN_STAGES,*TERMINAL)
+STAGES=("request","context","waiting","streaming","received","validating","saving",*BRAIN_STAGES,*TERMINAL)
 KEY=re.compile(r"[a-zA-Z0-9:_-]{1,100}")
 
 def safe_key(value):
@@ -29,6 +29,22 @@ def update(key,stage,target=None):
         REV+=1
         item["events"].append({"seq":REV,"stage":stage,"target":item["target"]})
         item["events"]=item["events"][-24:]
+
+def progress(key,chars,chunks):
+    """Count only received output content, never model reasoning or text."""
+    global REV
+    with LOCK:
+        item=ACTIVE.get(key)
+        if item is None or item["kind"]!="chronicle":return
+        if item["stage"] not in ("waiting","streaming"):return
+        if item["stage"]!="streaming":
+            item["stage"]="streaming"
+            REV+=1
+            item["events"].append({"seq":REV,"stage":"streaming","target":item["target"]})
+            item["events"]=item["events"][-24:]
+        item["response_chars"]=chars
+        item["chunks"]=chunks
+        REV+=1
 
 @contextmanager
 def track(kind,source="root",sources=()):

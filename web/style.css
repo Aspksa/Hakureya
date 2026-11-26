@@ -115,3 +115,14 @@ dialog button:hover{background:#d5b38b12}
 #book-status:empty{display:none}
 #book-scroll{scrollbar-gutter:stable}
 @media(max-width:600px){#book-page{padding-block:10px 16px}}
+
+/* Literary Genesis — compact local settings, no external fonts or render dependencies. */
+.genesis-settings{position:absolute;bottom:16px;left:49px;z-index:2;max-width:min(240px,calc(100% - 80px));font:12px/1.45 system-ui,sans-serif;color:#dbc294;touch-action:auto}
+.genesis-settings summary{cursor:pointer;list-style:none;padding:5px 9px;border-radius:8px;background:#15110ddd;border:1px solid #c3a16c33}
+.genesis-settings summary::-webkit-details-marker{display:none}
+.genesis-settings[open]{background:#12100fee;border:1px solid #b79b6333;border-radius:10px;padding:8px;box-shadow:0 6px 24px #0007}
+.genesis-settings[open] summary{background:none;border:none;padding:3px 4px 8px}
+.genesis-settings label{display:grid;grid-template-columns:72px minmax(65px,1fr);align-items:center;gap:8px;padding:5px 4px}
+.genesis-settings input{width:100%;min-width:0;accent-color:#c9a86b}
+.genesis-settings summary:focus-visible{outline:1px solid #e6c380;outline-offset:3px}
+#stage.book-full .genesis-settings{display:none}
