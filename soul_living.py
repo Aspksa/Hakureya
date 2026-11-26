@@ -84,9 +84,22 @@ def queue(db):
     for i in range(100):
         _,_,key,title,guide=ranked[i%len(ranked)]
         result.append({"number":latest+i+1,"volume":o.volume(latest+i+1),"theme":key,"title":title,"guide":guide})
-    # Existing fixed saga takes precedence; this is a forecast, not 100 authored chapters.
-    fixed=None if (gu.audit(db) or sh.audit(db) or de.audit(db)) else gu.plan(db) or sh.plan(db) or de.plan(db)
-    if fixed:result[0].update(title=fixed["title"],guide=fixed["guide"],theme="fixed")
+    # Simulate remaining approved-stage prerequisites without advancing the actual saga.
+    fixed=None
+    if not (gu.audit(db) or sh.audit(db) or de.audit(db)):
+        si,gi,di=len(sh.completed(db)),len(gu.published(db)),len(de.published(db))
+        for item in result:
+            if gi<len(gu.STEPS) and si>=gu.STEPS[gi][0]:
+                _,title,_,guide=gu.STEPS[gi];gi+=1
+            elif si<len(sh.STEPS):
+                _,title,guide=sh.STEPS[si];si+=1
+            elif gi<len(gu.STEPS):
+                break
+            elif di<len(de.ORDER):
+                title,guide=de.BEATS[de.ORDER[di]-1];di+=1
+            else:break
+            item.update(title=title,guide=guide,theme="fixed")
+            fixed=True
     payload={"version":VERSION,"based_on":latest,"items":result,
              "forgotten":data["forgotten"][:4],"open":data["open"][:4],
              "romance_threads":[]}
@@ -111,9 +124,14 @@ def enrich(db,plan,background=False):
     if fixed:head={**head,"theme":"fixed","guide":"Следуй главному замыслу текущей ветки."}
     elif head["theme"]=="fixed":head={**head,"theme":"growth","guide":"Продолжай явно выбранную ветку без раскрытия чужих тайн."}
     known=list(published(db))[-8:]
+    # Keep the latest source-linked fact per subject rather than inventing character memories.
+    subjects={}
+    for n,_,p in published(db):
+        for fact in p["facts"]:subjects[(o.normalized(fact["name"]),fact["kind"])]=dict(chapter=n,**fact)
+    context=sorted(subjects.values(),key=lambda x:x["chapter"],reverse=True)[:6]
     plan["living"]={"theme":head["theme"],"head":head,"background":bool(background),
         "forgotten":q["forgotten"],"open":q["open"],"romance_threads":q["romance_threads"],
-        "recent":[{"chapter":n,"facts":p["facts"][:1]} for n,_,p in known]}
+        "recent":[{"chapter":n,"facts":p["facts"][:1]} for n,_,p in known],"subject_context":context}
     return plan
 
 def instruction(plan):
@@ -161,7 +179,9 @@ def eligible(db,did):
 
 def publish_if_allowed(db,did):
     import soul_chronicle as c
-    if not eligible(db,did):
+    try:allowed=eligible(db,did)
+    except (ValueError,TypeError,KeyError,sqlite3.Error):allowed=False
+    if not allowed:
         log(db,"manual_review","Черновик оставлен на ручную проверку")
         return False
     db.execute("SAVEPOINT living_publish")
@@ -209,7 +229,9 @@ def status(db):
 
 def news(db):
     rows=db.execute("SELECT number,title FROM omega_index WHERE number>13 ORDER BY number DESC LIMIT 5").fetchall()
-    return "Последние утверждённые главы:\n"+"\n".join(f"{n}. {t}" for n,t in rows) if rows else "Новых утверждённых глав пока нет."
+    pending=db.execute("SELECT COUNT(*) FROM chronicle_drafts WHERE status='pending'").fetchone()[0]
+    result="Последние утверждённые главы:\n"+"\n".join(f"{n}. {t}" for n,t in rows) if rows else "Новых утверждённых глав пока нет."
+    return result+("\n\nЕсть черновик: «Покажи черновик»." if pending else "")
 
 def graph(db):
     nodes=[];edges=[];seen=set()
@@ -220,7 +242,10 @@ def graph(db):
     edges.append({"a":"destiny:root","b":"living:root","kind":"living_branch"})
     if audit(db):return nodes,edges
     # Bounded recent detail; old facts remain in the archive.
-    rows=list(published(db))[-80:]
+    all_rows=list(published(db));rows=all_rows[-80:]
+    if len(all_rows)>80:
+        node("living:archive",f"Архив: {len(all_rows)-80} глав","theme")
+        edges.append({"a":"living:root","b":"living:archive","kind":"living_archive"})
     for n,did,p in rows:
         t="living:theme:"+p["theme"];node(t,next((v[1] for v in THEMES if v[0]==p["theme"]),"Основная сага"),"theme")
         edges.extend([{"a":"living:root","b":t,"kind":"living_branch"},{"a":t,"b":f"c:{did}","kind":"living_chapter"}])
