@@ -121,7 +121,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   for(const {cloud,node,rx,ry} of nebulaEls.values()){cloud.setAttribute("cx",String(node.x*s));cloud.setAttribute("cy",String(node.y*s));cloud.setAttribute("rx",String(rx*s));cloud.setAttribute("ry",String(ry*s))}
   if(redraw)redrawSelection();
  }
- function stepLayout(now:number,finish=false){if(!layoutMotion)return;const t=finish?1:Math.min(1,(now-layoutMotion.start)/480),e=smoothStep(t);for(const m of layoutMotion.moves){m.node.x=m.x+(m.tx-m.x)*e;m.node.y=m.y+(m.ty-m.y)*e}place(false);if(t===1)layoutMotion=null}
+ function stepLayout(now:number,finish=false){if(!layoutMotion)return;const t=finish?1:Math.min(1,(now-layoutMotion.start)/480),e=smoothStep(t);for(const m of layoutMotion.moves){m.node.x=m.x+(m.tx-m.x)*e;m.node.y=m.y+(m.ty-m.y)*e}place(t===1&&!!active);if(t===1)layoutMotion=null}
  function invalidate(){if(!raf&&!disposed&&!document.hidden&&!paused)raf=requestAnimationFrame(frame)}
  function resize(){const nw=Math.max(1,svg.clientWidth),nh=Math.max(1,svg.clientHeight);if(nw===w&&nh===h)return;
   autoReturnAt=0;focusMotion=null;const oldScale=Math.max(.00001,s*fit*zoom),dx=panX/oldScale,dy=panY/oldScale;
@@ -157,6 +157,8 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   const animate=!initial&&!firstSnapshot&&!scopeChanged&&!paused&&!document.hidden&&!motion.matches;
   const changes=isNewPublication&&animate?publicationChanges(previousSnapshot,next,publication):{nodes:[],edges:[]};
   for(const key of changes.nodes)births.set(key,now);
+  const newDraft=animate?next.records.find(n=>n.kind==="draft"&&!oldKeys.has(n.key)):null;
+  if(newDraft)births.set(newDraft.key,now);
   for(const e of changes.edges)edgeBirths.set(edgeKey(e),now);
   while(births.size>40)births.delete(births.keys().next().value!);
   snapshot=next;graph=layout({...next,transport:true});level=-1;
@@ -200,6 +202,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   replayAt=0;shown=graph.nodes.length;place();applyDetail();updateGlyphs();
   if(isNewPublication&&publication&&!motion.matches&&!paused&&!document.hidden){for(const [i,link] of publicationLinks(publication,graph).entries())birthTrails.set("birth:"+publication.number+":"+i,{...link,at:now});while(birthTrails.size>10)birthTrails.delete(birthTrails.keys().next().value!);pulse(publication.key,"#ffe2a0",now);births.set(publication.key,now);if(publication.first){for(const key of [publication.segment,"book:"+publication.volume])if(graph.byKey.has(key)){births.set(key,now);pulse(key,"#e7c46d",now)}if((publication.volume-1)%8===0){const key="novel:epoch:"+publication.epoch;if(graph.byKey.has(key)){births.set(key,now);pulse(key,"#c0a9e8",now)}}}if(publication.complete)pulse(publication.segment,"#fff3cb",now);if(!readerOpen&&!active&&!drag&&now>manualUntil&&zoom===1&&graph.byKey.has(publication.key)){const n=graph.byKey.get(publication.key),target=1.35,k=target*desired;focusMotion={start:now,fromZoom:zoom,toZoom:target,fromX:panX,fromY:panY,toX:-(n.x-camera.cx)*s*k,toY:-(n.y-camera.cy)*s*k};autoReturnAt=now+2400}}
   if(isNewPublication&&!paused&&!motion.matches){for(const n of next.records){if((n.key.startsWith("draft:")||n.kind==="lit_character"||n.kind==="lit_world"||n.kind==="lit_power"||n.kind==="lit_place"||n.kind==="lit_family")&&!oldKeys.has(n.key)){births.set(n.key,now);pulse(n.key,"#e8c6ed",now)}}}
+  if(newDraft)pulse(newDraft.key,"#f3cd76",now);
   for(const [i,e] of changes.edges.slice(0,12).entries())if(graph.byKey.has(e.a)&&graph.byKey.has(e.b))birthTrails.set("stellar:"+publication?.number+":"+i,{a:e.a,b:e.b,color:stellarColor(graph.byKey.get(e.b)),at:now});
   while(birthTrails.size>16)birthTrails.delete(birthTrails.keys().next().value!);
   status();invalidate();
