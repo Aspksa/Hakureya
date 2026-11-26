@@ -1,5 +1,6 @@
 import "./style.css";
 import {mountGraph} from "./live-graph";
+import {measuredPages,pageAt} from "./reader-pagination.mjs";
 const $=(id:string)=>document.getElementById(id)!;
 let selectedVolume:number|null=null;
 let live:ReturnType<typeof mountGraph>|null=null;
@@ -29,7 +30,7 @@ function scheduleActivity(){clearTimeout(activityTimer);if(document.hidden)retur
 document.addEventListener("visibilitychange",()=>{clearTimeout(activityTimer);if(!document.hidden){void refreshGraph();void refreshActivity();scheduleActivity()}});
 const avatar=$("avatar"),chat=$("chat"),prompt=$("prompt") as HTMLTextAreaElement,menu=$("menu"),config=$("config") as HTMLDialogElement;
 function syncGraphViewport(){const stage=$("stage");stage.classList.toggle("chat-open",!chat.hidden);stage.classList.toggle("book-open",!chat.hidden&&!book.hidden);stage.classList.toggle("book-full",!chat.hidden&&!book.hidden&&focused);live?.resize()}
-function toggle(open=chat.hidden){chat.hidden=!open;syncGraphViewport();avatar.setAttribute("aria-expanded",String(open));avatar.setAttribute("aria-label",open?"Свернуть чат":"Открыть чат Hakureya");if(open){if(!book.hidden)$("book-scroll").focus();else prompt.focus()}else avatar.focus()}
+function toggle(open=chat.hidden){chat.hidden=!open;syncGraphViewport();avatar.setAttribute("aria-expanded",String(open));avatar.setAttribute("aria-label",open?"Свернуть чат":"Открыть чат Hakureya");if(open){if(!book.hidden){$("book-scroll").focus();scheduleReflow()}else prompt.focus()}else avatar.focus()}
 avatar.onclick=()=>toggle();$("close").onclick=()=>toggle(false);avatar.oncontextmenu=e=>{e.preventDefault();menu.hidden=!menu.hidden};document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(!menu.hidden)menu.hidden=true;else if(!chat.hidden&&!config.open)toggle(false)}});document.addEventListener("click",e=>{if(!menu.contains(e.target as Node)&&!avatar.contains(e.target as Node))menu.hidden=true});
 function message(role:string,content:string){const p=document.createElement("p");p.className="message "+role;p.textContent=content;$("messages").append(p);p.scrollIntoView({block:"end"});return p}
 async function api(path:string,data?:unknown){const response=await fetch("/api/"+path,data===undefined?{}:{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});const value=await response.json();if(!response.ok)throw Error(value.error||"Ошибка сервера");return value}
@@ -110,42 +111,140 @@ $("note-save").onclick=async()=>{const content=($("note-text") as HTMLTextAreaEl
 
 
 // Reading is a separate local presentation of the same immutable SQLite bookmark.
-type BookPage={chapter:number,title:string,volume:number,page:number,pages:number,text:string,chapter_progress:number,volume_progress:number,can_back:boolean,can_next:boolean,last_published:boolean};
+type NovelDocument={chapter:number,last_chapter:number,title:string,volume:number,text:string,hash:string,offset:number,latest:number,volume_count:number,volume_ordinal:number,parts:number,epoch:number,segments:{number:number,start:number,end:number,hash:string}[]};
+type BookPage={chapter:number,title:string,volume:number,page:number,pages:number,text:string,chapter_progress:number,volume_progress:number,can_back:boolean,can_next:boolean,last_published:boolean,document?:NovelDocument|null};
 const book=$("book"),scroll=$("book-scroll");
 let font=21,spacing=1.8,focused=false,reading=false;
+let novelDoc:NovelDocument|null=null,novelPages:{start:number,end:number,text:string}[]=[],novelIndex=0,layoutKey="",reflowTimer=0,positionChain:Promise<unknown>=Promise.resolve();
+let readerGeneration=0;
 try{const saved=JSON.parse(localStorage.getItem("hakureya-reading-style")||"{}");if(Number.isFinite(saved.font))font=Math.min(32,Math.max(16,saved.font===18&&!saved.largeUI?21:saved.font));if(Number.isFinite(saved.spacing))spacing=Math.min(2.2,Math.max(1.5,saved.spacing))}catch{}
-function readerStyle(){book.style.setProperty("--book-font",font+"px");book.style.setProperty("--book-spacing",String(spacing));try{localStorage.setItem("hakureya-reading-style",JSON.stringify({font,spacing,largeUI:true}))}catch{}}
+function readerStyle(){book.style.setProperty("--book-font",font+"px");book.style.setProperty("--book-spacing",String(spacing));try{localStorage.setItem("hakureya-reading-style",JSON.stringify({font,spacing,largeUI:true}))}catch{}scheduleReflow()}
 readerStyle();
-function showBook(p:BookPage){
- book.hidden=false;chat.classList.add("reading");syncGraphViewport();$("messages").hidden=true;$("composer").hidden=true;$("status").hidden=true;
- $("book-kicker").textContent="ТОМ "+p.volume+" · ГЛАВА "+p.chapter;
- $("book-title").textContent=p.title;
- // Never interpret model output as HTML. Keep paragraph and dialogue boundaries.
+function renderProse(text:string){
  const body=$("book-text");body.replaceChildren();
- for(const paragraph of p.text.split(/\n\s*\n/)){
+ for(const paragraph of text.split(/\n\s*\n/)){
+  if(!paragraph.trim())continue;
   const el=document.createElement("p");el.textContent=paragraph;body.append(el);
  }
+}
+function animatePage(){
+ scroll.scrollTop=0;
+ $("book-page").animate?.([{opacity:.38,transform:"translateY(4px)"},{opacity:1,transform:"none"}],{duration:window.matchMedia("(prefers-reduced-motion: reduce)").matches?0:180});
+}
+function heading(first:boolean){
+ $("book-title").hidden=!first;
+ $("book-ornament").hidden=!first;
+}
+function savePosition(){
+ const d=novelDoc,p=novelPages[novelIndex],generation=readerGeneration;
+ if(!d||!p||book.hidden||chat.hidden)return Promise.resolve();
+ positionChain=positionChain.catch(()=>{}).then(async()=>{
+  if(generation!==readerGeneration||book.hidden||chat.hidden)return;
+  await api("reader",{action:"position",hash:d.hash,start:p.start,end:p.end});
+ }).catch(e=>{if(generation===readerGeneration&&!book.hidden)$("book-status").textContent="Закладка: "+String(e)});
+ return positionChain;
+}
+function renderNovelPage(animate=false){
+ const d=novelDoc,p=novelPages[novelIndex];if(!d||!p)return;
+ heading(novelIndex===0);renderProse(p.text);
+ const length=Array.from(d.text).length;
+ const progress=length?p.end/length:1;
+ $("book-position").textContent="Страница "+(novelIndex+1)+" из "+novelPages.length;
+ ($("book-progress") as HTMLProgressElement).value=progress;
+ ($("book-volume") as HTMLProgressElement).value=Math.min(1,(d.volume_ordinal-1+progress*d.parts)/Math.max(1,d.volume_count));
+ ($("book-prev") as HTMLButtonElement).disabled=novelIndex===0&&d.chapter===1;
+ ($("book-next") as HTMLButtonElement).disabled=novelIndex===novelPages.length-1&&d.last_chapter>=d.latest;
+ $("book-end").hidden=!(novelIndex===novelPages.length-1&&d.last_chapter>=d.latest);
+ $("book-status").textContent="";
+ if(animate)animatePage();else scroll.scrollTop=0;
+}
+function reflowNovel(anchor?:number,animate=false){
+ const d=novelDoc;if(!d||book.hidden||chat.hidden)return;
+ const height=scroll.clientHeight,width=scroll.clientWidth;
+ if(height<1||width<1)return;
+ const offset=anchor??novelPages[novelIndex]?.start??d.offset;
+ const key=[d.hash,width,height,font,spacing,offset].join(":");
+ if(key===layoutKey&&novelPages.length)return;
+ layoutKey=key;
+ $("book-end").hidden=true;
+ novelPages=measuredPages(d.text,(text,start)=>{
+  heading(start===0);renderProse(text);
+  return $("book-page").getBoundingClientRect().height<=height+1;
+ },offset);
+ novelIndex=pageAt(novelPages,offset);
+ renderNovelPage(animate);
+ void savePosition();
+}
+function scheduleReflow(){
+ clearTimeout(reflowTimer);
+ if(!novelDoc||book.hidden||chat.hidden)return;
+ reflowTimer=window.setTimeout(()=>reflowNovel(),100);
+}
+function showBook(p:BookPage){
+ readerGeneration++;
+ book.hidden=false;chat.classList.add("reading");syncGraphViewport();$("messages").hidden=true;$("composer").hidden=true;$("status").hidden=true;
+ novelDoc=p.document||null;novelPages=[];novelIndex=0;layoutKey="";
+ const d=novelDoc;
+ $("book-kicker").textContent="ТОМ "+(d?.volume??p.volume)+" · ГЛАВА "+(d?.chapter??p.chapter);
+ $("book-title").textContent=d?.title??p.title;
+ heading(true);
+ if(d&&!chat.hidden&&scroll.clientHeight>0){reflowNovel(d.offset,true);return}
+ renderProse(p.text);
  $("book-position").textContent="Страница "+p.page+" из "+p.pages;
  ($("book-progress") as HTMLProgressElement).value=p.chapter_progress;
  ($("book-volume") as HTMLProgressElement).value=p.volume_progress;
  ($("book-prev") as HTMLButtonElement).disabled=!p.can_back;
  ($("book-next") as HTMLButtonElement).disabled=!p.can_next;
- $("book-end").hidden=!p.last_published;
- $("book-status").textContent="";
- scroll.scrollTop=0;
- $("book-page").animate?.([{opacity:.3,transform:"translateY(5px)"},{opacity:1,transform:"none"}],{duration:window.matchMedia("(prefers-reduced-motion: reduce)").matches?0:180});
+ $("book-end").hidden=!p.last_published;$("book-status").textContent="";
+ animatePage();scheduleReflow();
 }
-function exitBook(){book.hidden=true;chat.classList.remove("reading","book-focus");focused=false;syncGraphViewport();$("book-focus").setAttribute("aria-pressed","false");$("messages").hidden=false;$("composer").hidden=false;$("status").hidden=false;prompt.focus()}
+function exitBook(){readerGeneration++;novelDoc=null;novelPages=[];layoutKey="";book.hidden=true;chat.classList.remove("reading","book-focus");focused=false;syncGraphViewport();$("book-focus").setAttribute("aria-pressed","false");$("messages").hidden=false;$("composer").hidden=false;$("status").hidden=false;prompt.focus()}
 async function turn(action:string){
  if(reading||busy)return;
  reading=true;
- try{const result=await api("reader",{action});if(action==="pause"){exitBook();return}if(result.reader){showBook(result.reader);if(!String(result.reply).includes(" · Страница "))$("book-status").textContent=result.reply}else $("book-status").textContent=result.reply||"Страница недоступна"}catch(e){$("book-status").textContent=String(e)}finally{reading=false}
+ try{
+  if(novelDoc&&novelPages.length&&(action==="next"||action==="back")){
+   const delta=action==="next"?1:-1,next=novelIndex+delta;
+   if(next>=0&&next<novelPages.length){novelIndex=next;renderNovelPage(true);await savePosition();return}
+   if(delta>0&&novelDoc.last_chapter>=novelDoc.latest)return;
+   if(delta<0&&novelDoc.chapter===1)return;
+   action=delta>0?"advance":"retreat";
+  }
+  await positionChain;
+  const result=await api("reader",{action});
+  if(action==="pause"){exitBook();return}
+  if(result.reader)showBook(result.reader);
+  else $("book-status").textContent=result.reply||"Страница недоступна";
+ }catch(e){$("book-status").textContent=String(e)}finally{reading=false}
 }
+let presenceBusy=false;
+async function readerPresence(){
+ if(presenceBusy||reading||busy||book.hidden||chat.hidden||document.hidden)return;
+ presenceBusy=true;
+ const generation=readerGeneration;
+ try{
+  await positionChain;
+  const result=await api("reader",{action:"presence"});
+  if(generation!==readerGeneration||reading||book.hidden||chat.hidden)return;
+  const incoming:NovelDocument|undefined=result.reader?.document;
+  if(!incoming||!novelDoc)return;
+  if(incoming.chapter!==novelDoc.chapter)return;
+  if(incoming.hash!==novelDoc.hash){
+   const anchor=novelPages[novelIndex]?.start??incoming.offset;
+   novelDoc=incoming;layoutKey="";reflowNovel(anchor);
+  }else if(incoming.latest!==novelDoc.latest){
+   novelDoc=incoming;renderNovelPage();
+  }
+ }catch{}finally{presenceBusy=false}
+}
+if(typeof ResizeObserver==="function"){const observer=new ResizeObserver(scheduleReflow);observer.observe(scroll)}
+else window.addEventListener("resize",scheduleReflow);
+setInterval(()=>void readerPresence(),35000);
 $("book-prev").onclick=()=>void turn("back");$("book-next").onclick=()=>void turn("next");$("book-exit").onclick=()=>void turn("pause");
 $("book-smaller").onclick=()=>{font=Math.max(16,font-1);readerStyle()};
 $("book-larger").onclick=()=>{font=Math.min(32,font+1);readerStyle()};
 $("book-spacing").onclick=()=>{spacing=spacing>=2.15?1.5:Math.min(2.2,Math.round((spacing+.15)*100)/100);readerStyle()};
-$("book-focus").onclick=()=>{focused=!focused;chat.classList.toggle("book-focus",focused);syncGraphViewport();$("book-focus").setAttribute("aria-pressed",String(focused))};
+$("book-focus").onclick=()=>{focused=!focused;chat.classList.toggle("book-focus",focused);syncGraphViewport();scheduleReflow();$("book-focus").setAttribute("aria-pressed",String(focused))};
 document.addEventListener("keydown",e=>{if(book.hidden||chat.hidden||config.open||e.altKey||e.ctrlKey||e.metaKey||e.shiftKey||e.repeat||window.getSelection()?.toString())return;if(e.target instanceof HTMLInputElement||e.target instanceof HTMLTextAreaElement||e.target instanceof HTMLButtonElement)return;if(e.key==="ArrowRight"||e.key==="ArrowLeft"){e.preventDefault();void turn(e.key==="ArrowRight"?"next":"back")}});
 let touch:{x:number,y:number}|null=null;
 scroll.addEventListener("touchstart",e=>{touch=e.touches.length===1?{x:e.touches[0].clientX,y:e.touches[0].clientY}:null},{passive:true});
