@@ -1,7 +1,7 @@
 import {layout,palette,detailLevel} from "./memory-layout.mjs";
 import {flowPaths,pointOn} from "./activity-flow.mjs";
 import {rng,clamp} from "./geometry.mjs";
-type Snapshot={records:any[],edges:any[],total:number,limited:boolean};
+type Snapshot={records:any[],edges:any[],total:number,limited:boolean,volume?:number};
 type Work={id:string,kind:string,source:string,target:string,stage:string};
 type Activity={session:string,revision:number,active:Work[],recent:Work[]};
 export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:number)=>void){
@@ -20,7 +20,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
  const motion=matchMedia("(prefers-reduced-motion: reduce)");
  const particles=new Map<string,{group:SVGGElement,line:SVGPolylineElement,dots:SVGCircleElement[]}>();
  function baseFit(){return Math.min(1,.45/graph.extent)}
- function status(){const count=[...works.values()].filter(a=>!a.terminal).length;info.textContent=snapshot.total+" записей · "+graph.edges.length+" связей"+(snapshot.limited?" · ограничено 5000":"")+(count?" · Cloud.ru: "+count:"")}
+ function status(){const count=[...works.values()].filter(a=>!a.terminal).length;info.textContent=(snapshot.volume?"Том "+snapshot.volume+" · ":"")+snapshot.total+" записей · "+graph.edges.length+" связей"+(snapshot.limited?" · ограничено 5000":"")+(snapshot.volume?" · ↻ общая карта":"")+(count?" · Cloud.ru: "+count:"")}
  function redrawSelection(){
   overlay.replaceChildren();const n=graph.byKey.get(active);if(!n)return;
   const g=el("g",{transform:"translate("+n.x*s+" "+n.y*s+")"},overlay),color=colors[n.group+1];
@@ -50,7 +50,9 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
  function render(next:Snapshot,initial=false){
   if(!initial&&JSON.stringify(next)===JSON.stringify(snapshot))return;
   const now=performance.now();
-  for(const n of next.records){if(/^c:[1-9]\d*$/.test(n.key)){const id=Number(n.key.slice(2));if(receivedSnapshot&&id>maxChapter&&!motion.matches)births.set(n.key,now);}}
+  const scopeChanged=snapshot.volume!==next.volume;
+  if(scopeChanged){zoom=1;panX=0;panY=0;active="";births.clear();replayAt=0;}
+  for(const n of next.records){if(/^c:[1-9]\d*$/.test(n.key)){const id=Number(n.key.slice(2));if(receivedSnapshot&&!scopeChanged&&!next.volume&&id>maxChapter&&!motion.matches)births.set(n.key,now);}}
   for(const n of next.records){if(/^c:[1-9]\d*$/.test(n.key))maxChapter=Math.max(maxChapter,Number(n.key.slice(2)));}
   if(!initial)receivedSnapshot=true;
   snapshot=next;graph=layout(next);level=-1;
