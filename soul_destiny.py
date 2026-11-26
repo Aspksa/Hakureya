@@ -95,7 +95,7 @@ CAST=(
 # Interleave by round. Introduce the external empire after the gateway to it.
 ORDER=tuple(n for row in zip(*(range(i,i+10) for i in (1,11,21,31,41,51,61))) for n in row)
 # Explicit late introductions: external ruler follows discovery of external universe.
-ORDER=tuple(n for n in ORDER if n!=52)+(52,)
+ORDER=tuple(n for n in ORDER if n not in (52,70))+(52,70,)
 ACTORS={k:(name,desc) for k,name,desc in CAST}
 ACTORS.update({p[0]:(p[1],p[4]) for p in gu.CAST})
 ACTORS.update({"empress":("Хакурэя","Императрица девяти небес"),"hero":("герой","Возлюбленный императрицы")})
@@ -149,10 +149,12 @@ def plan(db):
     if 21<=beat<=29:cast.append(list(gu.CAST[beat-21]))
     if beat==30:cast.extend([list(p[:3]) for p in gu.CAST])
     recent=[{"chapter":n,"beat":b,"excerpt":p["evidence"]} for _,n,b,p in done[-4:]]
+    related=[{"chapter":n,"beat":b,"excerpt":p["evidence"]} for _,n,b,p in done if topic(b)==topic(beat)][-3:]
+    known_cast=[list(CAST[b-51]) for _,_,b,_ in done if 51<=b<=60]
     # Track unresolved prophecies by explicit source references.
     resolved={f["cause"] for _,_,_,p in done for f in p["facts"] if f["kind"]=="prophecy" and f["cause"] is not None}
     open_prop=[{"chapter":n,"detail":f["detail"]} for _,n,_,p in done for f in p["facts"] if f["kind"]=="prophecy" and f["cause"] is None and n not in resolved]
-    return {"beat":beat,"topic":topic(beat),"title":title,"guide":guide,"cast":cast,"recent":recent,"open_prophecies":open_prop[-3:]}
+    return {"beat":beat,"topic":topic(beat),"title":title,"guide":guide,"cast":cast,"recent":recent,"related":related,"known_cast":known_cast,"open_prophecies":open_prop[-3:]}
 
 def instruction(p):
     if not p:return ""
@@ -241,21 +243,32 @@ def graph(db):
         if shared is not None:e["shared"]=shared
         edges.append(e)
     node("destiny:root","За пределами девяти небес","destiny_root","root")
+    edge("canon:13","destiny:root","anchor")
     for t,label in zip(TOPICS,LABELS):
         key="destiny:topic:"+t;node(key,label,"destiny_topic",t);edge("destiny:root",key,"branch")
     for a,b in (("heart:root","love"),("shadow:topic:power","power"),("guardians:root","guardians"),("shadow:topic:court","court"),("character:empress","growth")):edge(a,"destiny:topic:"+b,"bridge")
     for i in range(1,10):edge("realm:"+str(i),"destiny:topic:worlds","realm")
     if audit(db):return nodes,edges
-    rows=published(db);previous=None;first_char={};chapter_event={n:f"destiny:event:{b}" for _,n,b,_ in rows}
+    rows=published(db);previous=None;first_char={};last_travel=None;last_growth=None;last_power=None;chapter_event={n:f"destiny:event:{b}" for _,n,b,_ in rows}
     for did,n,b,data in rows:
         t=topic(b);k=f"destiny:event:{b}";node(k,BEATS[b-1][0]+" · гл. "+str(n),"destiny_event",t,(b-1)*4)
         edge("destiny:topic:"+t,k,"event");edge(f"c:{did}",k,"source")
         if previous:edge(previous,k,"sequence")
         previous=k
         if 51<=b<=60:
-            a,name,_=CAST[b-51];key="destiny:actor:"+a;node(key,name,"destiny_character","cast",(b-1)*4+3);edge(k,key,"introduced");first_char[a]=key
+            a,name,_=CAST[b-51];key="destiny:actor:"+a;node(key,name,"destiny_character","actor:"+a,-1);edge(k,key,"introduced");first_char[a]=key
         for j,f in enumerate(data["facts"]):
-            kind=f["kind"];key=f"destiny:fact:{did}:{j}";node(key,f["detail"],"destiny_fact",t,(b-1)*4+j+1);edge(k,key,kind)
+            kind=f["kind"];key=f"destiny:fact:{did}:{j}";area="actor:"+f["subject"] if f["subject"] in first_char else t
+            node(key,f["detail"],"destiny_fact",area,(b-1)*4+j+1);edge(k,key,kind)
+            if kind=="travel":
+                if last_travel:edge(last_travel,key,"travel_sequence")
+                last_travel=key
+            if kind=="growth":
+                if last_growth:edge(last_growth,key,"growth_sequence")
+                last_growth=key
+            if kind=="power":
+                if last_power:edge(last_power,key,"power_sequence")
+                last_power=key
             if f["subject"] is not None:
                 a=f["subject"];target=first_char.get(a) or ("guardian:"+a if a in gu.BY_ID else "character:"+a)
                 edge(target,key,"actor")
