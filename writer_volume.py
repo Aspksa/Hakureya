@@ -62,3 +62,12 @@ def auto_block(db,day):
     """Stop repeated automatic charges after an uncertain or rejected generation."""
     rows=attempts(db,day)
     return any(status in ("failed","interrupted") for _,status in rows)
+
+
+def cooldown(db,interval):
+    row=db.execute("SELECT MAX(created) FROM chronicle_attempts").fetchone()
+    if not row or not row[0]:return 0
+    try:when=datetime.fromisoformat(row[0]).replace(tzinfo=timezone.utc)
+    except ValueError:return interval
+    elapsed=(datetime.now(timezone.utc)-when).total_seconds()
+    return max(0,min(interval,int(interval-elapsed)))
