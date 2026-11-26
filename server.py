@@ -166,6 +166,47 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
         graph_activity.update(activity,"error")
         return "Черновик не создан: ответ модели не прошёл проверку или запрос завершился ошибкой. Дневная попытка учтена."
 
+def independent_editor():
+    """Explicit request shares the writer's daily quota; no implicit extra model calls."""
+    with LOCK:
+        if not CONFIG["key"]:return "Сначала подключите Cloud.ru."
+        with closing(connect()) as db, db:
+            if not soul_chronicle.canon_ok(db) or soul_genesis.audit(db) or soul_immortal.audit(db):return "Проверка остановлена: повреждён канон или история."
+            draft=soul_chronicle.latest_pending(db)
+            if not draft:return "Нет черновика для редактора."
+            did=draft["id"]
+            source=db.execute("SELECT checksum FROM chronicle_drafts WHERE id=?",(did,)).fetchone()[0]
+            model=cloud_writer.selected(db) or CONFIG["model"]
+            day=datetime.now(timezone.utc).date().isoformat()
+            if db.execute("SELECT 1 FROM chronicle_attempts WHERE day=? OR status='reserved'",(day,)).fetchone():return "Суточная попытка уже использована. Редактор не запускался."
+            messages=soul_immortal.editor_prompt(db,draft)
+            allowed,cost=soul_evolution.budget_check(db,model,messages,cloud_writer.LIMIT,day)
+            if not allowed:return "Редактор остановлен: проверьте бюджет или тариф модели."
+            seed=db.execute("SELECT MIN(diary_id) FROM chronicle_attempts").fetchone()[0]
+            db.execute("INSERT INTO chronicle_attempts(day,diary_id,status) VALUES(?,?,'reserved')",(day,min(0,seed or 0)-1))
+            soul_evolution.reserve_cost(db,day,model,cost)
+        key,epoch=CONFIG["key"],CHRONICLE["epoch"]
+    try:
+        req=Request(API,data=json.dumps({"model":model,"messages":messages,"max_tokens":cloud_writer.LIMIT,"stream":False}).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
+        with urlopen(req,timeout=60) as res:
+            result=json.loads(res.read(1_000_000))
+        with LOCK, closing(connect()) as db, db:
+            cloud_writer.usage(db,day,model,result)
+            soul_evolution.settle_cost(db,day,result)
+        choice=result["choices"][0]
+        raw=choice["message"]["content"]
+        if choice.get("finish_reason")=="length" or not isinstance(raw,str) or len(raw)>24000:raise ValueError("incomplete report")
+        value=json.loads(raw)
+        with LOCK, closing(connect()) as db, db:
+            if CHRONICLE["epoch"]!=epoch:raise ValueError("settings changed")
+            soul_immortal.editor_save(db,did,model,value,source)
+            db.execute("UPDATE chronicle_attempts SET status='reviewed' WHERE day=? AND status='reserved'",(day,))
+            return soul_immortal.editor_text(db,did)
+    except (URLError,TimeoutError,ValueError,KeyError,IndexError,TypeError,OSError,sqlite3.Error):
+        with LOCK, closing(connect()) as db, db:
+            db.execute("UPDATE chronicle_attempts SET status='failed' WHERE day=? AND status='reserved'",(day,))
+        return "Редактор не завершил проверку. Черновик сохранён, дневная попытка учтена."
+
 def chronicle_command(content):
     q=" ".join(content.strip().casefold().split()).rstrip(".!?")
     aliases={"оглавление":"летопись: содержание","покажи оглавление":"летопись: содержание","прочитать последнюю главу":"летопись: последняя","покажи последнюю главу":"летопись: последняя","создай новую главу":"летопись: создать","продолжи нашу историю любви":"летопись: создать любовь"}
@@ -248,6 +289,13 @@ def chronicle_command(content):
             if soul_living.audit(db) or soul_shadow.audit(db) or soul_guardians.audit(db) or soul_destiny.audit(db):return "Сюжетные данные повреждены."
             qplan=soul_living.queue(db)
             return "План (пересматриваемый прогноз, со спойлерами):\n"+"\n".join(f"{p['number']}. {p['title']}" for p in qplan["items"])
+    if q=="проверить черновик редактором":return independent_editor()
+    if q=="отчёт редактора":
+        with LOCK, closing(connect()) as db:
+            p=soul_chronicle.latest_pending(db)
+            if not p:return "Нет черновика."
+            try:return soul_immortal.editor_text(db,p["id"])
+            except ValueError:return "Отчёт повреждён или устарел."
     immortal_length=re.fullmatch(r"длина сцены (короткая|обычная|большая)",q)
     immortal_idle=re.fullmatch(r"интервал писателя (20|30|60|120)",q)
     immortal_volume=re.fullmatch(r"качество тома ([1-9][0-9]{0,5})",q)
