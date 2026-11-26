@@ -16,7 +16,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
  const starEls=starData.map((p,i)=>el("circle",{r:p.r,fill:i%13===0?"#d8b9a1":"#e1dcd8",opacity:p.o},stars));
  let snapshot:Snapshot={records:[],edges:[],total:0,limited:false},graph=layout({...snapshot,transport:true}),w=1,h=1,s=1,zoom=1,panX=0,panY=0,fit=1,desired=1,active="",drag:null|{x:number,y:number,moved:boolean}=null,items=new Map<string,SVGGElement>(),edgeEls:SVGLineElement[]=[],drawnEdges:any[]=[],replayAt=0,shown=0,last=performance.now(),raf=0,disposed=false;
  let session="",works=new Map<string,{item:Work,started:number,terminal:boolean}>(),seen=new Set<string>();
- let receivedSnapshot=false,maxChapter=0,level=-1,lastPublication=0,manualUntil=0,readerOpen=false,paused=false;
+ let receivedSnapshot=false,maxChapter=0,level=-1,lastPublication=0,manualUntil=0,autoReturnAt=0,readerOpen=false,paused=false;
  const birthTrails=new Map<string,{a:string,b:string,color:string,at:number}>();
  const waves=new Map<string,{at:number,color:string,rings:SVGCircleElement[]}>();
  const stages=new Map<string,{seq:number,queue:Work[],started:number,current:Work,terminal:boolean}>();
@@ -75,7 +75,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   redrawSelection();
  }
  function invalidate(){if(!raf&&!disposed&&!document.hidden&&!paused)raf=requestAnimationFrame(frame)}
- function resize(){const nw=Math.max(1,svg.clientWidth),nh=Math.max(1,svg.clientHeight);if(nw===w&&nh===h)return;focusMotion=null;panX=panY=0;zoom=1;active="";level=-1;w=nw;h=nh;s=Math.max(1,Math.min(w,h));desired=baseFit();fit=desired;svg.setAttribute("viewBox","0 0 "+w+" "+h);starEls.forEach((e,i)=>{e.setAttribute("cx",String(starData[i].x*w));e.setAttribute("cy",String(starData[i].y*h))});place();glyphScale=NaN;invalidate()}
+ function resize(){const nw=Math.max(1,svg.clientWidth),nh=Math.max(1,svg.clientHeight);if(nw===w&&nh===h)return;autoReturnAt=0;focusMotion=null;panX=panY=0;zoom=1;active="";level=-1;w=nw;h=nh;s=Math.max(1,Math.min(w,h));desired=baseFit();fit=desired;svg.setAttribute("viewBox","0 0 "+w+" "+h);starEls.forEach((e,i)=>{e.setAttribute("cx",String(starData[i].x*w));e.setAttribute("cy",String(starData[i].y*h))});place();glyphScale=NaN;invalidate()}
  function reveal(n:number){
   const visible=new Set(graph.nodes.slice(0,n).map(x=>x.key));graph.nodes.forEach(x=>items.get(x.key)?.setAttribute("visibility",visible.has(x.key)?"visible":"hidden"));drawnEdges.forEach((e,i)=>edgeEls[i]?.setAttribute("visibility",visible.has(e.a)&&visible.has(e.b)?"visible":"hidden"));shown=n;
  }
@@ -94,7 +94,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   const now=performance.now();
   const oldKeys=new Set(snapshot.records.map(n=>n.key));
   const scopeChanged=snapshot.volume!==next.volume,firstSnapshot=!receivedSnapshot&&!initial;
-  if(scopeChanged){zoom=1;panX=0;panY=0;active="";births.clear();replayAt=0;focusMotion=null;}
+  if(scopeChanged){autoReturnAt=0;zoom=1;panX=0;panY=0;active="";births.clear();replayAt=0;focusMotion=null;}
   for(const n of next.records){if(/^c:[1-9]\d*$/.test(n.key)){const id=Number(n.key.slice(2));if(receivedSnapshot&&!scopeChanged&&!next.volume&&id>maxChapter&&!motion.matches&&!paused&&!document.hidden)births.set(n.key,now);}}
   for(const n of next.records){if(/^c:[1-9]\d*$/.test(n.key))maxChapter=Math.max(maxChapter,Number(n.key.slice(2)));}
   if(!initial)receivedSnapshot=true;
@@ -132,7 +132,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   desired=baseFit();if(initial||firstSnapshot||scopeChanged||motion.matches)fit=desired;
   if(!graph.byKey.has(active))active="";
   replayAt=0;shown=graph.nodes.length;place();applyDetail();updateGlyphs();
-  if(isNewPublication&&publication&&!motion.matches&&!paused&&!document.hidden){for(const [i,link] of publicationLinks(publication,graph).entries())birthTrails.set("birth:"+publication.number+":"+i,{...link,at:now});while(birthTrails.size>10)birthTrails.delete(birthTrails.keys().next().value!);pulse(publication.key,"#ffe2a0",now);births.set(publication.key,now);if(publication.first){for(const key of [publication.segment,"book:"+publication.volume])if(graph.byKey.has(key)){births.set(key,now);pulse(key,"#e7c46d",now)}if((publication.volume-1)%8===0){const key="novel:epoch:"+publication.epoch;if(graph.byKey.has(key)){births.set(key,now);pulse(key,"#c0a9e8",now)}}}if(publication.complete)pulse(publication.segment,"#fff3cb",now);if(!readerOpen&&!active&&!drag&&now>manualUntil&&zoom===1&&graph.byKey.has(publication.key)){const n=graph.byKey.get(publication.key),target=1.35,k=target*desired;focusMotion={start:now,fromZoom:zoom,toZoom:target,fromX:panX,fromY:panY,toX:-(n.x-camera.cx)*s*k,toY:-(n.y-camera.cy)*s*k}}}
+  if(isNewPublication&&publication&&!motion.matches&&!paused&&!document.hidden){for(const [i,link] of publicationLinks(publication,graph).entries())birthTrails.set("birth:"+publication.number+":"+i,{...link,at:now});while(birthTrails.size>10)birthTrails.delete(birthTrails.keys().next().value!);pulse(publication.key,"#ffe2a0",now);births.set(publication.key,now);if(publication.first){for(const key of [publication.segment,"book:"+publication.volume])if(graph.byKey.has(key)){births.set(key,now);pulse(key,"#e7c46d",now)}if((publication.volume-1)%8===0){const key="novel:epoch:"+publication.epoch;if(graph.byKey.has(key)){births.set(key,now);pulse(key,"#c0a9e8",now)}}}if(publication.complete)pulse(publication.segment,"#fff3cb",now);if(!readerOpen&&!active&&!drag&&now>manualUntil&&zoom===1&&graph.byKey.has(publication.key)){const n=graph.byKey.get(publication.key),target=1.35,k=target*desired;focusMotion={start:now,fromZoom:zoom,toZoom:target,fromX:panX,fromY:panY,toX:-(n.x-camera.cx)*s*k,toY:-(n.y-camera.cy)*s*k};autoReturnAt=now+2400}}
   if(wasReceived&&!scopeChanged&&!paused&&!motion.matches){for(const n of next.records){if(n.key.startsWith("draft:")&&!oldKeys.has(n.key)){births.set(n.key,now);pulse(n.key,"#e8c6ed",now)}}}
   status();invalidate();
  }
@@ -210,22 +210,23 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   if(replayAt){const n=motion.matches?graph.nodes.length:Math.min(graph.nodes.length,1+Math.floor((now-replayAt)/Math.max(22,Math.min(245,30000/Math.max(1,graph.nodes.length-1)))));if(n!==shown)reveal(n);if(n===graph.nodes.length){replayAt=0;level=-1;status()}}
   const k=motion.matches?1:1-Math.exp(-dt/200);fit+=(desired-fit)*k;if(Math.abs(desired-fit)<.001)fit=desired;
   if(focusMotion){const f=focusMotion,t=motion.matches?1:Math.min(1,(now-f.start)/360),e=1-Math.pow(1-t,3);zoom=f.fromZoom+(f.toZoom-f.fromZoom)*e;panX=f.fromX+(f.toX-f.fromX)*e;panY=f.fromY+(f.toY-f.fromY)*e;if(t===1)focusMotion=null}
+  if(autoReturnAt&&now>=autoReturnAt){autoReturnAt=0;if(!readerOpen&&!active&&!drag&&now>manualUntil)focusNode("root")}
   const cameraOrigin=origin();world.setAttribute("transform","translate("+cameraOrigin.x+" "+cameraOrigin.y+") scale("+cameraOrigin.k+")");
   applyDetail();if(now-lastLabelFrame>80||fit!==desired||focusMotion||!stages.size){updateGlyphs();lastLabelFrame=now}
   drawActivity(now);
   for(const [key,start] of births){const t=Math.min(1,(now-start)/1000);const g=items.get(key);if(g)g.setAttribute("opacity",String(.08+.92*t));if(t===1||!g||motion.matches){g?.removeAttribute("opacity");births.delete(key)}}
-  if(births.size||waves.size||birthTrails.size||replayAt||focusMotion||fit!==desired||[...stages.values()].some(a=>a.terminal||a.queue.length||!motion.matches))invalidate();
+  if(births.size||waves.size||birthTrails.size||autoReturnAt||replayAt||focusMotion||fit!==desired||[...stages.values()].some(a=>a.terminal||a.queue.length||!motion.matches))invalidate();
  }
  resize();render(snapshot,true);
  const observer=typeof ResizeObserver==="function"?new ResizeObserver(resize):null;
  if(observer)observer.observe(svg);else window.addEventListener("resize",resize);
  function visibility(){if(document.hidden){cancelAnimationFrame(raf);raf=0;for(const key of births.keys())items.get(key)?.removeAttribute("opacity");births.clear();for(const wave of waves.values())for(const ring of wave.rings)ring.remove();waves.clear();birthTrails.clear();clearActivity()}else{last=performance.now();invalidate()}}
  document.addEventListener("visibilitychange",visibility);
- svg.addEventListener("wheel",e=>{e.preventDefault();manualUntil=performance.now()+60000;focusMotion=null;const rect=svg.getBoundingClientRect(),x=e.clientX-rect.left,y=e.clientY-rect.top,old=origin(),next=clamp(zoom*Math.exp(-e.deltaY*.001),.35,12),ratio=next/zoom;zoom=next;panX=x-(x-old.x)*ratio-w/2+camera.cx*s*zoom*fit;panY=y-(y-old.y)*ratio-h/2+camera.cy*s*zoom*fit;invalidate()},{passive:false});
- svg.addEventListener("pointerdown",e=>{if(e.button===0){manualUntil=performance.now()+60000;focusMotion=null;drag={x:e.clientX,y:e.clientY,moved:false}}});
+ svg.addEventListener("wheel",e=>{e.preventDefault();manualUntil=performance.now()+60000;autoReturnAt=0;focusMotion=null;const rect=svg.getBoundingClientRect(),x=e.clientX-rect.left,y=e.clientY-rect.top,old=origin(),next=clamp(zoom*Math.exp(-e.deltaY*.001),.35,12),ratio=next/zoom;zoom=next;panX=x-(x-old.x)*ratio-w/2+camera.cx*s*zoom*fit;panY=y-(y-old.y)*ratio-h/2+camera.cy*s*zoom*fit;invalidate()},{passive:false});
+ svg.addEventListener("pointerdown",e=>{if(e.button===0){manualUntil=performance.now()+60000;autoReturnAt=0;focusMotion=null;drag={x:e.clientX,y:e.clientY,moved:false}}});
  svg.addEventListener("pointermove",e=>{if(!drag)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.abs(dx)+Math.abs(dy)>2){drag.moved=true;if(!svg.hasPointerCapture(e.pointerId))svg.setPointerCapture(e.pointerId)}if(drag.moved){panX+=dx;panY+=dy;invalidate()}drag.x=e.clientX;drag.y=e.clientY});
  svg.addEventListener("pointerup",e=>{if(!drag?.moved){const key=(e.target as Element).closest("[data-key]")?.getAttribute("data-key");if(key&&graph.byKey.has(key)){active=key;redrawSelection();info.textContent=graph.byKey.get(key).label;const match=/^(?:book:|segment:[a-z]+:)([1-9]\d*)$/.exec(key);if(match&&zoom>=2.4)onVolume?.(Number(match[1]));else if(!match&&(labels.has(key)))focusNode(key);else invalidate()}}drag=null});
  svg.addEventListener("dblclick",e=>{const key=(e.target as Element).closest("[data-key]")?.getAttribute("data-key")||"";const match=/^(?:book:|segment:[a-z]+:)([1-9]\d*)$/.exec(key);if(match)onVolume?.(Number(match[1]))});
  for(const name of ["pointercancel","lostpointercapture"])svg.addEventListener(name,()=>{drag=null});
- return {render,setActivity,clearActivity,resize,setReader(open:boolean,full:boolean){readerOpen=open;paused=full;if(full){cancelAnimationFrame(raf);raf=0;for(const key of births.keys())items.get(key)?.removeAttribute("opacity");births.clear();focusMotion=null;clearActivity();for(const wave of waves.values())for(const ring of wave.rings)ring.remove();waves.clear();birthTrails.clear()}else{last=performance.now();invalidate()}},replay(){focusMotion=null;zoom=1;panX=panY=0;active="";redrawSelection();if(graph.nodes.length<=1){status();invalidate();return}replayAt=performance.now();reveal(1);invalidate()},dispose(){disposed=true;cancelAnimationFrame(raf);observer?.disconnect();if(!observer)window.removeEventListener("resize",resize);document.removeEventListener("visibilitychange",visibility);for(const wave of waves.values())for(const ring of wave.rings)ring.remove();waves.clear();birthTrails.clear();clearActivity()}};
+ return {render,setActivity,clearActivity,resize,setReader(open:boolean,full:boolean){readerOpen=open;paused=full;if(open){autoReturnAt=0;focusMotion=null}if(full){cancelAnimationFrame(raf);raf=0;for(const key of births.keys())items.get(key)?.removeAttribute("opacity");births.clear();focusMotion=null;clearActivity();for(const wave of waves.values())for(const ring of wave.rings)ring.remove();waves.clear();birthTrails.clear()}else{last=performance.now();invalidate()}},replay(){autoReturnAt=0;focusMotion=null;zoom=1;panX=panY=0;active="";redrawSelection();if(graph.nodes.length<=1){status();invalidate();return}replayAt=performance.now();reveal(1);invalidate()},dispose(){disposed=true;cancelAnimationFrame(raf);observer?.disconnect();if(!observer)window.removeEventListener("resize",resize);document.removeEventListener("visibilitychange",visibility);for(const wave of waves.values())for(const ring of wave.rings)ring.remove();waves.clear();birthTrails.clear();clearActivity()}};
 }
