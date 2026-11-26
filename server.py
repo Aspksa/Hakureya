@@ -20,6 +20,7 @@ import soul_destiny
 import soul_living
 import cloud_writer
 import soul_evolution
+import soul_immortal
 import graph_activity
 import time, re
 import base64, binascii
@@ -60,9 +61,10 @@ def store(role, content):
 def generate_chronicle(background=False, arc=None, alternative=False, shadow=False, guardians=False, destiny=False):
     # Reserve quota and snapshot under lock; do not block chat during network I/O.
     with LOCK:
-        if not CONFIG["key"] or (background and time.monotonic()-CHRONICLE["last_activity"]<1200):
+        if not CONFIG["key"]:
             return "Cloud.ru не подключён или фоновый сон не разрешён."
         with closing(connect()) as db, db:
+            if background and time.monotonic()-CHRONICLE["last_activity"]<soul_immortal.preferences(db)[1]:return "Ожидание фонового интервала."
             if background and not CHRONICLE["enabled"] and soul_living.mode(db)=="off":return "Автономное развитие выключено."
             soul_chronicle.collect(db)
             cycle=soul_romance.current_cycle(db)
@@ -80,7 +82,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
             if shadow and not (shadow_plan or guardian_plan or destiny_plan) and (soul_destiny.audit(db) or len(soul_destiny.published(db))!=len(soul_destiny.ORDER)):return "Сюжетные данные повреждены или продолжение недоступно."
             if shadow_plan or guardian_plan or destiny_plan:arc="future"
             elif arc is None and not alternative and not soul_destiny.audit(db) and len(soul_destiny.published(db))==len(soul_destiny.ORDER):arc="future"
-            reservation=soul_chronicle.reserve(db,allow_story=True) if not (soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)+soul_evolution.audit(db)) else None
+            reservation=soul_chronicle.reserve(db,allow_story=True) if not (soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)+soul_evolution.audit(db)+soul_immortal.audit(db)) else None
             traits=soul_chronicle.profile(db)
             plan=soul_genesis.enrich(db,soul_omega.enrich_plan(db,soul_saga.plan(db,arc))) if reservation else None
             if plan:
@@ -95,6 +97,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                 if not alternative:
                     soul_living.enrich(db,plan,background)
                     soul_evolution.enrich(db,plan)
+                    soul_immortal.enrich(db,plan)
             previous=[]
             if plan:
                 previous=[{"number":n,"title":t,"story":s[:1800]} for n,t,s in reversed(db.execute("SELECT number,title,story FROM omega_index WHERE arc=? AND number>13 ORDER BY number DESC LIMIT 2",(plan["arc"],)).fetchall())]
@@ -245,6 +248,22 @@ def chronicle_command(content):
             if soul_living.audit(db) or soul_shadow.audit(db) or soul_guardians.audit(db) or soul_destiny.audit(db):return "Сюжетные данные повреждены."
             qplan=soul_living.queue(db)
             return "План (пересматриваемый прогноз, со спойлерами):\n"+"\n".join(f"{p['number']}. {p['title']}" for p in qplan["items"])
+    immortal_length=re.fullmatch(r"длина сцены (короткая|обычная|большая)",q)
+    immortal_idle=re.fullmatch(r"интервал писателя (20|30|60|120)",q)
+    immortal_volume=re.fullmatch(r"качество тома ([1-9][0-9]{0,5})",q)
+    if immortal_length or immortal_idle or immortal_volume or q in ("бессмертная летопись","качество прозы","новые саги"):
+        with LOCK, closing(connect()) as db, db:
+            if immortal_length:
+                db.execute("UPDATE immortal_preferences SET length=? WHERE id=1",(immortal_length[1],))
+                return "Длина сцены: "+immortal_length[1]+". Лимит токенов сохранён."
+            if immortal_idle:
+                db.execute("UPDATE immortal_preferences SET idle=? WHERE id=1",(int(immortal_idle[1])*60,))
+                return "Интервал бездействия: "+immortal_idle[1]+" минут. Одна попытка в сутки."
+            if soul_immortal.audit(db):return "Литературные записи повреждены."
+            if immortal_volume:return soul_immortal.quality_text(db,int(immortal_volume[1]))
+            if q=="качество прозы":return soul_immortal.quality_text(db)
+            if q=="новые саги":return "Новые саги (замыслы, спойлеры):\n"+"\n".join(x[1] for x in soul_immortal.SAGAS)
+            return soul_immortal.status(db)
     reader_commands={"читать книгу":"resume","начать чтение":"resume","читать с начала":"start","начать с начала":"start","следующая страница":"next","предыдущая страница":"back","где остановился":"where","где я остановился":"where","остановить чтение":"pause","пауза чтения":"pause","летопись: продолжить чтение":"resume"}
     if q in reader_commands or q in ("дальше","назад","листай дальше"):
         with LOCK, closing(connect()) as db, db:
@@ -281,7 +300,7 @@ def chronicle_command(content):
         return generate_chronicle(arc=soul_saga.ALIASES.get(create_match[1]),alternative=create_match[1]=="варианты",shadow=create_match[1]=="сагу",guardians=create_match[1]=="хранительниц",destiny=create_match[1]=="судьбу")
     with LOCK, closing(connect()) as db, db:
         if q=="летопись: аудит":
-            issues=soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)+soul_evolution.audit(db)
+            issues=soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)+soul_evolution.audit(db)+soul_immortal.audit(db)
             return "Проверка целостности (не семантическая проверка): "+("\n"+"\n".join(issues) if issues else "нарушений не найдено.")
         if (destiny_read or q in destiny_commands or guardian_profile or q in guardian_commands or q in simple_commands or heart_read or q in heart_commands or romance_start or romance_read or q in romance_commands or genesis_read or genesis_arc or q in genesis_commands or omega_read or omega_search or q in omega_commands or read_match or q in ("летопись: содержание","летопись: последняя","летопись: главы")) and not soul_chronicle.canon_ok(db):
             return "Целостность исходной летописи нарушена; чтение заблокировано."
@@ -412,7 +431,7 @@ def chronicle_worker(stop):
                 soul_chronicle.collect(db)
                 if soul_chronicle.canon_ok(db):
                     soul_genesis.consolidate(db)
-                    if not (soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)+soul_evolution.audit(db)):soul_living.queue(db)
+                    if not (soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)+soul_evolution.audit(db)+soul_immortal.audit(db)):soul_living.queue(db)
                 enabled=CHRONICLE["enabled"] or soul_living.mode(db)!="off"
             with LOCK, closing(connect()) as db:
                 backed_up=db.execute("SELECT 1 FROM living_backups WHERE day=date('now')").fetchone()
@@ -480,6 +499,9 @@ class Handler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(raw)
             return
+        if self.path == "/api/reader":
+            with LOCK, closing(connect()) as db:
+                return self.respond({"reader":soul_reader.view(db)})
         if self.path == "/api/history":
             with LOCK:
                 return self.respond({"messages":history(), "connected":bool(CONFIG["key"])})
@@ -499,6 +521,12 @@ class Handler(SimpleHTTPRequestHandler):
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict):
                 raise ValueError("Некорректный JSON")
+            if self.path == "/api/reader":
+                action=data.get("action")
+                if action not in ("resume","next","back","pause","start"):raise ValueError("Недопустимое действие чтения")
+                with LOCK, closing(connect()) as db, db:
+                    reply=soul_reader.move(db,action)
+                    return self.respond({"reply":reply,"reader":soul_reader.view(db)})
             if self.path == "/api/avatar":
                 raw = base64.b64decode(data.get("png",""),validate=True)
                 if not 33 <= len(raw) <= 8_000_000 or raw[:8] != b"\x89PNG\r\n\x1a\n" or raw[12:16] != b"IHDR":
@@ -536,7 +564,9 @@ class Handler(SimpleHTTPRequestHandler):
                 CHRONICLE["last_activity"]=time.monotonic()
             command=chronicle_command(content)
             if command is not None:
-                return self.respond({"reply":command,"connected":bool(CONFIG["key"])})
+                with LOCK, closing(connect()) as db:
+                    reader=soul_reader.view(db) if command.startswith("Глава ") and " · Страница " in command.split("\n",1)[0] else None
+                return self.respond({"reply":command,"connected":bool(CONFIG["key"]),"reader":reader})
             with LOCK:
                 user_id=store("user",content.strip())
                 if not CONFIG["key"]:
