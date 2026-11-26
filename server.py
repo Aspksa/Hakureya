@@ -13,6 +13,7 @@ import soul_genesis
 import soul_romance
 import soul_heart
 import soul_shadow
+import soul_reader
 import graph_activity
 import time, re
 import base64, binascii
@@ -123,6 +124,13 @@ def chronicle_command(content):
     aliases={"оглавление":"летопись: содержание","покажи оглавление":"летопись: содержание","прочитать последнюю главу":"летопись: последняя","покажи последнюю главу":"летопись: последняя","создай новую главу":"летопись: создать","продолжи нашу историю любви":"летопись: создать любовь"}
     aliases.update({"летопись":"летопись: помощь","что дальше по сюжету":"летопись: сага","план саги":"летопись: сага план","продолжи сагу":"летопись: создать сагу","напиши следующую главу":"летопись: создать","покажи черновик":"летопись: черновик","продолжить чтение":"летопись: продолжить чтение","история любви":"летопись: сердце","принять главу":"летопись: принять текущую","отклонить главу":"летопись: отклонить текущую"})
     q=aliases.get(q,q)
+    reader_commands={"читать книгу":"resume","начать чтение":"resume","читать с начала":"start","начать с начала":"start","следующая страница":"next","предыдущая страница":"back","где остановился":"where","где я остановился":"where","остановить чтение":"pause","пауза чтения":"pause","летопись: продолжить чтение":"resume"}
+    if q in reader_commands or q in ("дальше","назад","листай дальше"):
+        with LOCK, closing(connect()) as db, db:
+            if q in reader_commands:return soul_reader.move(db,reader_commands[q])
+            if soul_reader.active(db):return soul_reader.move(db,"back" if q=="назад" else "next")
+        # Short ambiguous commands remain ordinary chat outside reader mode.
+        return None
     simple_commands=("летопись: помощь","летопись: сага","летопись: сага план","летопись: принять текущую","летопись: отклонить текущую")
     read_match=re.fullmatch(r"(?:летопись: читать|прочитай главу|читать главу) ([1-9][0-9]{0,8})",q)
     create_match=re.fullmatch(r"летопись: создать(?: (прошлое|встреча|любовь|будущее|варианты|сагу))?",q)
@@ -152,7 +160,7 @@ def chronicle_command(content):
         if (q in simple_commands or heart_read or q in heart_commands or romance_start or romance_read or q in romance_commands or genesis_read or genesis_arc or q in genesis_commands or omega_read or omega_search or q in omega_commands or read_match or q in ("летопись: содержание","летопись: последняя","летопись: главы")) and not soul_chronicle.canon_ok(db):
             return "Целостность исходной летописи нарушена; чтение заблокировано."
         if q=="летопись: помощь":
-            return "Летопись\n\nОглавление · Прочитай главу 5 · Продолжить чтение\nПродолжи сагу · Продолжи нашу историю любви\nПокажи черновик · Принять главу · Отклонить главу\nЧто дальше по сюжету · История любви\n\nПодробности при необходимости: «план саги» (со спойлерами), «летопись: качество»."
+            return "Летопись\n\nЧитать книгу · Дальше · Назад · Продолжить чтение\nГде остановился · Остановить чтение · Оглавление\nПродолжи сагу · Продолжи нашу историю любви\nПокажи черновик · Принять главу · Отклонить главу\nЧто дальше по сюжету · История любви\n\nПодробности при необходимости: «план саги» (со спойлерами), «летопись: качество»."
         if q in ("летопись: сага","летопись: сага план"):
             return soul_shadow.status(db,q.endswith(" план"))
         if q in ("летопись: принять текущую","летопись: отклонить текущую"):
@@ -205,11 +213,7 @@ def chronicle_command(content):
             actors="\n".join(f"{a['name']}: главы {a['first']}–{a['last']}, событий {a['count']}"+(" — "+a["portrait"]+"; мотив: "+a["motive"]+"; родство: "+a["lineage"]+" (гл. "+str(a["source"])+")" if "portrait" in a else "") for a in state["actors"][-50:])
             if q=="летопись: персонажи": return "Персонажи новых глав:\n"+(actors or "Ещё нет новых карточек.")
             return soul_genesis.atlas(db)+"\n\nПерсонажи:\n"+actors+"\n\nОткрытые загадки:\n"+"\n".join(p["question"] for p in state["open"][:30])
-        if read_match or q=="летопись: продолжить чтение":
-            n=int(read_match[1]) if read_match else soul_omega.bookmark(db)
-            result=soul_saga.read(db,n)
-            if result.startswith(("Художественный канон","Художественная глава")): soul_omega.mark(db,n)
-            return result
+        if read_match: return soul_reader.move(db,"chapter",int(read_match[1]))
         if omega_read:
             n=int(omega_read[2])
             if omega_read[1]=="читать том": return soul_omega.read_volume(db,n)
@@ -229,11 +233,7 @@ def chronicle_command(content):
         if q=="летопись: хронология":
             return "Художественные эпохи (главы в порядке публикации внутри эпохи):\n"+"\n\n".join(soul_omega.ERA[a]+":\n"+"\n".join(f"{n}. {t}" for n,t in db.execute("SELECT number,title FROM omega_index WHERE arc=? ORDER BY number",(a,))) for a in soul_omega.ARCS)
         if q=="летопись: содержание": return soul_saga.contents(db)
-        if q=="летопись: последняя":
-            n=db.execute("SELECT MAX(number) FROM omega_index").fetchone()[0] or 13
-            result=soul_saga.read(db,n)
-            if result.startswith(("Художественный канон","Художественная глава")): soul_omega.mark(db,n)
-            return result
+        if q=="летопись: последняя": return soul_reader.move(db,"latest")
         if q=="летопись: включить сон":
             if not CONFIG["key"]:
                 return "Сначала подключите Cloud.ru. Сон не включён."
