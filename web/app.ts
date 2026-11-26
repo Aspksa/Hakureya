@@ -114,6 +114,19 @@ async function renderUniverse(){
   $("universe-summary").textContent=data.chapters+" частей · "+data.scenes+" сцен · "+data.volumes+" томов · "+Math.round(data.chars/1800)+" усл. А4 · "+data.actors+" персонажей · "+data.pending+" черновиков";
   $("universe-page").textContent=universePage+" / "+data.pages;
   ($("universe-prev") as HTMLButtonElement).disabled=universePage<=1;($("universe-next") as HTMLButtonElement).disabled=universePage>=data.pages;
+  const galaxies=$("universe-galaxies");galaxies.replaceChildren();
+  for(const group of data.volume_groups){
+   const b=document.createElement("button"),star=document.createElementNS("http://www.w3.org/2000/svg","svg");
+   b.type="button";b.className="universe-volume";b.setAttribute("aria-label","Открыть карту тома "+group.volume);
+   star.setAttribute("viewBox","0 0 64 64");star.setAttribute("aria-hidden","true");
+   for(let j=0;j<group.count;j++){const point=document.createElementNS("http://www.w3.org/2000/svg","circle"),angle=j*Math.PI*2/Math.max(1,group.count);point.setAttribute("cx",String(32+22*Math.cos(angle)));point.setAttribute("cy",String(32+22*Math.sin(angle)));point.setAttribute("r","2");point.setAttribute("fill","#edcf89");star.append(point)}
+   const core=document.createElementNS("http://www.w3.org/2000/svg","circle");core.setAttribute("cx","32");core.setAttribute("cy","32");core.setAttribute("r","5");core.setAttribute("fill","#fff2c6");star.append(core);
+   const name=document.createElement("small");name.textContent="Том "+group.volume+" · "+group.count;b.append(star,name);
+   b.onclick=()=>{universeDialog.close();selectedVolume=group.volume;void refreshGraph()};galaxies.append(b)
+  }
+  const actors=$("universe-actors");actors.replaceChildren();
+  for(const actor of data.actors_list){const b=document.createElement("button");b.type="button";b.textContent=actor.name+" · "+actor.count+" частей";b.onclick=()=>universeCommand("История персонажа "+actor.name);actors.append(b)}
+  $("universe-family").textContent=data.family.length?data.family.map((r:any)=>r.a+" ↔ "+r.b+" · гл. "+r.first).join("\n"):"Подтверждённые доступные родственные связи пока не найдены.";
   const list=$("universe-list");list.replaceChildren();
   for(const item of data.items){
    const row=document.createElement("button"),title=document.createElement("strong"),small=document.createElement("small");
@@ -130,6 +143,9 @@ $("universe-next").onclick=()=>{universePage++;void renderUniverse()};
 $("universe-dossier").onclick=()=>universeCommand("Реестр персонажей");
 $("universe-knowledge").onclick=()=>universeCommand("Матрица знаний");
 $("universe-search").onclick=()=>universeCommand("Поиск сцены ");
+$("universe-atlas").onclick=()=>universeCommand("Атлас вселенной");
+$("universe-timeline").onclick=()=>universeCommand("Хронология вселенной");
+$("universe-audit").onclick=()=>universeCommand("Проверить индекс сцен");
 const writerPreviewOpt=$("writer-preview-opt") as HTMLInputElement,writerPreviewText=$("writer-preview-text");
 writerPreviewOpt.onchange=()=>{writerPreviewText.hidden=!writerPreviewOpt.checked;writerPreviewText.textContent="";if(writerPreviewOpt.checked)void refreshActivity()};
 const writerStatus=$("writer-status"),writerSave=$("writer-save") as HTMLButtonElement;
