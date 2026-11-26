@@ -54,3 +54,18 @@ test("nested epoch and book geometry produces distinct stable cells",()=>{
  assert.ok(Math.abs(Math.hypot(a.x-b.x,a.y-b.y)-.026)<1e-8);
  assert.equal(detailLevel(1000,1),0);assert.equal(detailLevel(1000,1.5),1);assert.equal(detailLevel(1000,3),2);
 });
+
+test("Heart topics and growing moments have separate finite lattice positions",()=>{
+ const records=[{key:"heart:root",group:4,heart_topic:"root",heart_slot:-1,kind:"heart_root"},{key:"canon:5",group:4,sector:"meeting",book:1,chapter_slot:4}];
+ for(const topic of ["meeting","tenderness","trust","memory","letters","adventure"]){
+  records.push({key:"heart:topic:"+topic,group:4,heart_topic:topic,heart_slot:-1,kind:"heart_topic"});
+  for(let i=0;i<48;i++)records.push({key:"heart:"+topic+":"+i,group:4,heart_topic:topic,heart_slot:i,kind:"heart_moment"});
+ }
+ const g=layout({records,edges:[]});
+ assert.ok(g.nodes.every(n=>Number.isFinite(n.x)&&Number.isFinite(n.y)));
+ const cells=g.nodes.map(n=>n.x.toFixed(8)+":"+n.y.toFixed(8));
+ assert.equal(new Set(cells).size,cells.length);
+ const a=g.byKey.get("heart:trust:0"),b=g.byKey.get("heart:topic:trust");
+ assert.ok(Math.abs(Math.hypot(a.x-b.x,a.y-b.y)-.026)<1e-8);
+ assert.deepEqual(g.nodes,layout({records,edges:[]}).nodes);
+});
