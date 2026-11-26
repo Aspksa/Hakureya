@@ -58,7 +58,9 @@ def published(db):
 
 def audit(db):
     try:
-        completed=[tuple(p["step"]) for _,_,p in published(db) if p["step"] is not None]
+        rows=list(published(db))
+        state(rows)
+        completed=[tuple(p["step"]) for _,_,p in rows if p["step"] is not None]
         if completed!=list(ORDER[:len(completed)]):raise ValueError("sequence")
     except (ValueError,TypeError,KeyError):return ["Повреждены записи Immortal Chronicle"]
     return []
@@ -173,7 +175,7 @@ def save(db,did,story,raw,plan):
         if kind=="law" and key in laws and o.normalized(detail)!=o.normalized(laws[key]["detail"]):raise ValueError("magic law contradiction")
         out.append({"kind":kind,"key":key,"detail":detail,"evidence":quote,"cause":cause,"delay":delay})
     theme=(p["chosen"] or {}).get("theme") or plan.get("evolution",{}).get("chosen",{}).get("theme","fixed")
-    payload=o.dump({"version":VERSION,"step":step,"evidence":evidence,"theme":theme,"facts":out,"quality":quality(story)})
+    payload=o.dump({"version":VERSION,"required":p["step"] is not None,"step":step,"evidence":evidence,"theme":theme,"facts":out,"quality":quality(story)})
     source=db.execute("SELECT checksum FROM chronicle_drafts WHERE id=?",(did,)).fetchone()[0]
     db.execute("INSERT INTO immortal_records VALUES(?,?,?,?)",(did,payload,source,o.digest(o.dump([payload,source]))))
 
@@ -222,3 +224,39 @@ def graph(db):
                 r=db.execute("SELECT draft_id FROM omega_index WHERE number=?",(f["cause"],)).fetchone()
                 edges.append({"a":f"c:{r[0]}" if r and r[0] is not None else f"canon:{f['cause']}","b":key,"kind":"immortal_consequence"})
     return nodes,edges
+
+
+def volume_graph(db,volume):
+    """Fetch a bounded volume by indexed chapter range, never scan the full graph."""
+    import soul_chronicle as c
+    if not c.canon_ok(db):raise ValueError("Канон повреждён")
+    if type(volume) is not int or not 1<=volume<=1000000:raise ValueError("Недопустимый том")
+    low,high=(1,13) if volume==1 else (14+(volume-2)*12,25+(volume-2)*12)
+    rows=db.execute("SELECT number,title,draft_id FROM omega_index WHERE number BETWEEN ? AND ? ORDER BY number",(low,high)).fetchall()
+    if not rows:raise ValueError("Том не найден")
+    records=[{"key":f"book:{volume}","label":f"Том {volume}","group":4,"kind":"book","slot":0}]
+    edges=[];slot=1;previous=None
+    for n,title,did in rows:
+        if not c.canon_ok(db):raise ValueError("Канон повреждён")
+        key=f"canon:{n}" if did is None else f"c:{did}"
+        # Verify the authoritative published text before exposing a title or events.
+        import soul_saga
+        body=soul_saga.read(db,n)
+        if not body.startswith(("Художественный канон\n\n","Художественная глава ")):continue
+        visible=ev.readable(db,n)
+        records.append({"key":key,"label":title if visible else f"Глава {n}","group":4,"kind":"fictional_chapter","slot":slot})
+        slot+=1;edges.append({"a":f"book:{volume}","b":key,"kind":"book_chapter"})
+        if previous:edges.append({"a":previous,"b":key,"kind":"publication_order"})
+        previous=key
+        if did is None or not visible:continue
+        m=o.metadata(db,did)
+        for j,event in enumerate(m["data"]["events"] if m else []):
+            k=f"event:{did}:{j}"
+            records.append({"key":k,"label":event["summary"][:54],"group":4,"kind":"event","slot":slot})
+            slot+=1;edges.append({"a":key,"b":k,"kind":"story_event"})
+        p=read(db,did)
+        for j,f in enumerate(p["facts"] if p else []):
+            k=f"immortal:fact:{did}:{j}"
+            records.append({"key":k,"label":f["detail"][:54],"group":4,"kind":"immortal_fact","slot":slot})
+            slot+=1;edges.append({"a":key,"b":k,"kind":"immortal_"+f["kind"]})
+    return {"records":records,"edges":edges,"total":len(records),"limited":False,"volume":volume}
