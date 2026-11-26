@@ -334,7 +334,9 @@ def chronicle_command(content):
     aliases.update({"девять хранительниц":"летопись: хранительницы","хранительницы":"летопись: хранительницы","продолжи историю хранительниц":"летопись: создать хранительниц","план хранительниц":"летопись: план хранительниц"})
     aliases.update({"за пределами девяти небес":"летопись: судьба","план судьбы":"летопись: план судьбы","новые герои":"летопись: новые герои","продолжи судьбу":"летопись: создать судьбу","история силы":"летопись: судьба сила","путешествия":"летопись: судьба путешествия","развитие императрицы":"летопись: судьба развитие"})
     q=aliases.get(q,q)
-    if q=="продолжи династию":return generate_chronicle(dynasty=True)
+    if q=="продолжи династию":
+        with LOCK, closing(connect()) as db, db:soul_chronicle.control(db,"manual_request")
+        return generate_chronicle(dynasty=True)
     if q in ("династия вечности","план династии","история горничной","история сестры"):
         with LOCK, closing(connect()) as db, db:
             if not soul_chronicle.canon_ok(db) or soul_dynasty.audit(db):return "Литературные записи повреждены."
@@ -525,7 +527,7 @@ def chronicle_command(content):
         return generate_chronicle(arc=soul_saga.ALIASES.get(create_match[1]),alternative=create_match[1]=="варианты",shadow=create_match[1]=="сагу",guardians=create_match[1]=="хранительниц",destiny=create_match[1]=="судьбу")
     with LOCK, closing(connect()) as db, db:
         if q=="летопись: аудит":
-            issues=soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)+soul_evolution.audit(db)+soul_immortal.audit(db)+soul_novel.audit(db)+soul_infinite.audit(db)
+            issues=soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)+soul_evolution.audit(db)+soul_immortal.audit(db)+soul_novel.audit(db)+soul_infinite.audit(db)+soul_dynasty.audit(db)
             index_status=soul_intelligence.audit_text(db)
             if index_status!="целостность подтверждена":issues.append("Литературный индекс: "+index_status)
             return "Проверка целостности (не семантическая проверка): "+("\n"+"\n".join(issues) if issues else "нарушений не найдено.")
@@ -559,6 +561,7 @@ def chronicle_command(content):
             plan=soul_heart.choose(db,"love")
             return "Предварительный художественный замысел: "+plan["lens"]
         if romance_start:
+            if soul_dynasty.continuing(db):return "Сначала завершите текущую главу Династии."
             arc=soul_saga.ALIASES.get(romance_start[2],"love")
             ok=soul_romance.start_cycle(db,romance_start[1],arc)
             return "Цикл открыт. Цель: "+str(soul_romance.FORMATS[romance_start[1]])+" слов в утверждённых частях. Создавайте части командой «летопись: создать». Действует прежний дневной лимит." if ok else "Сначала обработайте текущий черновик, запрос или открытый цикл."
