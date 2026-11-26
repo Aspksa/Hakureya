@@ -87,7 +87,7 @@ def snapshot(db, limit=5000):
         if k.startswith("canon:"):return 0
         if k.startswith("brain:") or k=="lit:db":return 1
         if k.startswith(("character:","guardian:","era:","arc:")) or kind.endswith("_root"):return 2
-        if kind in ("book","book_segment","novel_epoch"):return 3
+        if kind in ("book","book_segment","novel_epoch","director_saga"):return 3
         return 4
     total_permanent=len(permanent)
     permanent=sorted(permanent,key=priority)[:max(0,limit-int(pending is not None))]
