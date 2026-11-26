@@ -11,6 +11,7 @@ import soul_saga
 import soul_omega
 import soul_genesis
 import soul_romance
+import soul_heart
 import graph_activity
 import time, re
 import base64, binascii
@@ -59,11 +60,12 @@ def generate_chronicle(background=False, arc=None, alternative=False):
             if cycle and arc and arc!=cycle["arc"]:
                 return "Сначала завершите открытый художественный цикл или продолжите его сюжетную линию."
             if cycle: arc=cycle["arc"]
-            reservation=soul_chronicle.reserve(db,allow_story=True) if not soul_genesis.audit(db) else None
+            reservation=soul_chronicle.reserve(db,allow_story=True) if not (soul_genesis.audit(db)+soul_heart.audit(db)) else None
             traits=soul_chronicle.profile(db)
             plan=soul_genesis.enrich(db,soul_omega.enrich_plan(db,soul_saga.plan(db,arc))) if reservation else None
             if plan:
                 soul_romance.enrich(db,plan)
+                soul_heart.enrich(db,plan)
                 plan["alternative"]=alternative
             previous=[]
             if plan:
@@ -72,7 +74,7 @@ def generate_chronicle(background=False, arc=None, alternative=False):
         if not reservation:
             return "Есть незавершённая попытка или ожидающий черновик, нарушена целостность канона либо исчерпан дневной лимит."
         key, model, epoch=CONFIG["key"],CONFIG["model"],CHRONICLE["epoch"]
-    with graph_activity.track("chronicle",(f"d:{reservation[1]}" if reservation[1]>0 else "arc:"+plan["arc"])) as activity:
+    with graph_activity.track("chronicle",(f"d:{reservation[1]}" if reservation[1]>0 else ("heart:root" if plan["arc"]=="love" else "arc:"+plan["arc"]))) as activity:
         return execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
 
 def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan):
@@ -120,8 +122,11 @@ def chronicle_command(content):
     romance_start=re.fullmatch(r"летопись: цикл (обычная|большая|романтическая)(?: (прошлое|встреча|любовь|будущее))?",q)
     romance_read=re.fullmatch(r"летопись: читать цикл ([1-9][0-9]{0,8})",q)
     romance_commands=("летопись: циклы","летопись: завершить цикл","летопись: оригинальность","летопись: замысел")
+    heart_topics={"знакомство":"meeting","нежность":"tenderness","доверие":"trust","воспоминания":"memory","письма":"letters","приключения":"adventure"}
+    heart_read=re.fullmatch(r"летопись: сердце(?: (знакомство|нежность|доверие|воспоминания|письма|приключения))?",q)
+    heart_commands=("летопись: линии любви","летопись: замысел любви")
     decision=re.fullmatch(r"летопись: (принять|отклонить) ([1-9][0-9]{0,8})",q)
-    if q not in soul_chronicle.COMMANDS and not decision and not read_match and not create_match and not omega_read and not omega_search and not genesis_read and not genesis_arc and not romance_start and not romance_read and q not in romance_commands and q not in genesis_commands and q not in omega_commands and q not in ("летопись: главы","летопись: содержание","летопись: последняя"):
+    if q not in soul_chronicle.COMMANDS and not decision and not read_match and not create_match and not omega_read and not omega_search and not genesis_read and not genesis_arc and not romance_start and not romance_read and not heart_read and q not in heart_commands and q not in romance_commands and q not in genesis_commands and q not in omega_commands and q not in ("летопись: главы","летопись: содержание","летопись: последняя"):
         return None
     if create_match:
         with LOCK, closing(connect()) as db, db:
@@ -129,10 +134,15 @@ def chronicle_command(content):
         return generate_chronicle(arc=soul_saga.ALIASES.get(create_match[1]),alternative=create_match[1]=="варианты")
     with LOCK, closing(connect()) as db, db:
         if q=="летопись: аудит":
-            issues=soul_genesis.audit(db)
+            issues=soul_genesis.audit(db)+soul_heart.audit(db)
             return "Проверка целостности (не семантическая проверка): "+("\n"+"\n".join(issues) if issues else "нарушений не найдено.")
-        if (romance_start or romance_read or q in romance_commands or genesis_read or genesis_arc or q in genesis_commands or omega_read or omega_search or q in omega_commands or read_match or q in ("летопись: содержание","летопись: последняя","летопись: главы")) and not soul_chronicle.canon_ok(db):
+        if (heart_read or q in heart_commands or romance_start or romance_read or q in romance_commands or genesis_read or genesis_arc or q in genesis_commands or omega_read or omega_search or q in omega_commands or read_match or q in ("летопись: содержание","летопись: последняя","летопись: главы")) and not soul_chronicle.canon_ok(db):
             return "Целостность исходной летописи нарушена; чтение заблокировано."
+        if heart_read: return soul_heart.timeline(db,heart_topics.get(heart_read[1]))
+        if q=="летопись: линии любви": return soul_heart.thread_text(db)
+        if q=="летопись: замысел любви":
+            plan=soul_heart.choose(db,"love")
+            return "Предварительный художественный замысел: "+plan["lens"]
         if romance_start:
             arc=soul_saga.ALIASES.get(romance_start[2],"love")
             ok=soul_romance.start_cycle(db,romance_start[1],arc)

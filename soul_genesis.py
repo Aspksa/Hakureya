@@ -277,9 +277,12 @@ def select_variant(db,option):
     arc=db.execute("SELECT arc FROM saga_arcs WHERE draft_id=?",(did,)).fetchone()[0]
     warnings+=continuity_warnings(db,base,{"arc":arc})
     import soul_romance
+    import soul_heart
+    heart=soul_heart.variant_payload(db,did,base,option)
     soul_romance.refresh_variant(db,did,base,lit['events'])
     payload=c.encode(base);h=c.checksum(payload);meta=o.dump(lit);world_raw=o.dump(w)
     db.execute("UPDATE chronicle_drafts SET payload=?,checksum=? WHERE id=? AND status='pending'",(payload,h,did))
+    if heart is not None:soul_heart.write(db,did,heart)
     db.execute("UPDATE omega_meta SET payload=?,checksum=?,score=?,warnings=? WHERE draft_id=?",(meta,o.digest(meta),score,o.dump(warnings),did))
     db.execute("INSERT OR REPLACE INTO genesis_world VALUES(?,?,?)",(did,world_raw,o.digest(world_raw)))
     db.execute("INSERT INTO genesis_edits(draft_id,before_hash,after_hash,chosen) VALUES(?,?,?,?)",(did,before,h,option))
