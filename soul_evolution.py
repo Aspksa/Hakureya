@@ -109,7 +109,7 @@ def state(db,rows=None):
     return result
 
 def candidates(db,rows):
-    used={p["scene"] for _,_,p in rows}
+    used={p["scene"] for _,_,p in rows if p.get("completed",False)}
     recent=Counter(p["theme"] for _,_,p in rows[-8:])
     prefs=dict(db.execute("SELECT theme,weight FROM evolution_preferences"))
     pool=[{"scene":n,"theme":t,"title":title,"guide":guide} for n,t,title,guide in SCENES if n not in used]
@@ -143,7 +143,8 @@ def instruction(plan):
       "Причина, цель, препятствие, выбор и последствие важнее красивого перечня. Учитывай обещания, конфликты, точку зрения, отдельные знания героев. "
       "Сохраняй русский литературный стиль, эмоциональный подтекст и разные голоса. Не раскрывай тайны раньше разрешённого этапа. "
       "Внутри одного ответа выполни саморедактуру, убери повторы, не выводи ход рассуждений. "
-      "Необязательный evolution:{facts:[{kind,subject,key,detail,evidence,cause,state,knows}]}, до двух фактов. "
+      "Необязательный evolution:{scene,evidence,facts:[{kind,subject,key,detail,evidence,cause,state,knows}]}, до двух фактов. "
+      "scene — номер выбранной сцены только при её завершении, иначе 0; evidence — точная цитата из story при завершённой сцене, иначе пустая строка. "
       "kind из "+", ".join(FIELDS)+"; subject — имя или название из цитаты, key — стабильный короткий идентификатор, detail — краткий вывод, "
       "evidence — дословная цитата 12–240 символов, cause — номер опубликованной главы или null, state — open/closed для promise/conflict/thread, иначе known. "
       "knows — до четырёх имён персонажей из цитаты только для secret/knowledge, иначе []. "
@@ -154,7 +155,14 @@ def save(db,did,story,raw,plan):
     if not p:
         if raw is not None:raise ValueError("unexpected evolution")
         return
-    facts=[] if raw is None else raw.get("facts") if isinstance(raw,dict) and set(raw)=={"facts"} else None
+    facts=[] if raw is None else raw.get("facts") if isinstance(raw,dict) and set(raw) in ({"facts"},{"scene","evidence","facts"}) else None
+    scene=raw.get("scene",0) if isinstance(raw,dict) else 0
+    evidence=raw.get("evidence","") if isinstance(raw,dict) else ""
+    if type(scene) is not int or (scene!=0 and (not p["unlocked"] or scene!=p["chosen"]["scene"])):raise ValueError("wrong evolution scene")
+    if scene:
+        evidence=o.clean(evidence,12,240)
+        if evidence not in story:raise ValueError("unverified scene")
+    elif evidence!="":raise ValueError("unexpected scene evidence")
     if not isinstance(facts,list) or len(facts)>2:raise ValueError("invalid evolution facts")
     existing=state(db);out=[]
     for f in facts:
@@ -174,7 +182,7 @@ def save(db,did,story,raw,plan):
         if any(o.normalized(x) not in o.normalized(quote) for x in knows):raise ValueError("unverified witness")
         if k in [(o.normalized(x["subject"]),x["kind"],o.normalized(x["key"])) for x in out]:raise ValueError("duplicate fact")
         out.append({"kind":kind,"subject":subject,"key":key,"detail":detail,"evidence":quote,"cause":cause,"state":status,"knows":knows})
-    chosen=p["chosen"];raw=o.dump({"version":VERSION,"scene":chosen["scene"],"theme":chosen["theme"],"facts":out})
+    chosen=p["chosen"];raw=o.dump({"version":VERSION,"scene":scene,"completed":bool(scene),"evidence":evidence,"theme":chosen["theme"],"facts":out})
     source=db.execute("SELECT checksum FROM chronicle_drafts WHERE id=?",(did,)).fetchone()[0]
     db.execute("INSERT INTO evolution_records VALUES(?,?,?,?)",(did,raw,source,o.digest(o.dump([raw,source]))))
 
@@ -254,3 +262,28 @@ def budget_text(db,month):
     if not row:return "Денежный лимит не задан. Суточный лимит генерации сохраняется."
     used=db.execute("SELECT COALESCE(SUM(COALESCE(actual_kopecks,estimate_kopecks)),0) FROM evolution_cost WHERE day LIKE ?",(month+"%",)).fetchone()[0]
     return f"Писатель: {row[0]}. Учтённая оценка: {used/100:.2f} из {row[3]/100:.2f} ₽ за месяц UTC. Не счёт Cloud.ru; только литературные запросы после настройки."
+
+def model_report(db):
+    """Compare available local generation records; no paid comparison calls."""
+    rows=db.execute("""SELECT u.model,COUNT(*),SUM(CASE WHEN d.status='approved' THEN 1 ELSE 0 END),
+        AVG(m.score),SUM(u.input_tokens),SUM(u.output_tokens)
+        FROM cloud_writer_usage u JOIN chronicle_attempts a ON a.day=u.day
+        LEFT JOIN chronicle_drafts d ON d.diary_id=a.diary_id
+        LEFT JOIN omega_meta m ON m.draft_id=d.id GROUP BY u.model ORDER BY u.model""").fetchall()
+    if not rows:return "Нет статистики моделей-писателей."
+    return "Сравнение имеющихся запросов (разные сцены, не контролируемый тест):\n"+"\n".join(
+        f"{m}: запросов {n}, утверждено {a}, средняя локальная оценка {round(score,1) if score is not None else '—'}, токены {i}/{out}"
+        for m,n,a,score,i,out in rows)
+
+def archive(db,offset=0):
+    """Bounded local access to older published evolution records."""
+    if audit(db):return "Записи повреждены."
+    rows=db.execute("""SELECT a.number,r.draft_id FROM evolution_records r
+      JOIN saga_arcs a ON a.draft_id=r.draft_id JOIN chronicle_drafts d ON d.id=r.draft_id
+      WHERE d.status='approved' ORDER BY a.number DESC LIMIT 20 OFFSET ?""",(offset,)).fetchall()
+    lines=[]
+    for n,did in rows:
+        if readable(db,n):
+            p=read(db,did)
+            lines.append(f"Глава {n}: "+("; ".join(f["subject"]+" — "+f["detail"] for f in p["facts"]) or "без дополнительных карточек"))
+    return "\n".join(lines) or "На этой странице нет доступных записей."
