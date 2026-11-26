@@ -134,6 +134,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                     db.execute("DELETE FROM chronicle_attempts WHERE day=? AND status='reserved'",(reservation[0],))
                     return "Литературный запрос остановлен: проверьте денежный лимит или тариф модели."
                 soul_evolution.reserve_cost(db,reservation[0],model,cost)
+                soul_intelligence.record_run(db,reservation[0],plan)
                 visual_sources=writer_activity.context_keys(db,plan,previous)
         if not reservation:
             return "Есть незавершённая попытка или ожидающий черновик, нарушена целостность канона либо исчерпан дневной лимит."
