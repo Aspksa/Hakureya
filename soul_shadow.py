@@ -83,27 +83,29 @@ def audit(db):
     return []
 
 def status(db,spoilers=False):
+    if audit(db):return "Сюжетные связи повреждены; проверьте летопись: аудит."
     done=completed(db); i=len(done)
     lines=["Тень девяти небес — художественная сага",f"Утверждённые этапы: {i}/{len(STEPS)}."]
     if done:lines.append("Последняя глава: "+str(done[-1][1])+". "+STEPS[done[-1][2]][1])
     if i<len(STEPS):lines.append("Следующая: "+STEPS[i][1]+".")
     if spoilers:lines.extend(f"{j+1}. {title} — {guide}" for j,(_,title,guide) in enumerate(STEPS))
+    if spoilers:lines.append("Предлагаемые должности: "+", ".join(ROLES)+". Они станут частью мира только после написания и утверждения главы.")
     return "\n".join(lines)
 
 def graph(db):
     nodes=[];edges=[]
-    def node(k,label,kind):
-        nodes.append({"key":k,"group":4,"kind":kind,"content":label,"created":"","order":len(nodes)})
-    node("shadow:root","Тень девяти небес (сюжетная ветка)","shadow_root")
+    def node(k,label,kind,topic,slot=-1):
+        nodes.append({"key":k,"group":4,"kind":kind,"content":label,"created":"","order":len(nodes),"shadow_topic":topic,"shadow_slot":slot})
+    node("shadow:root","Тень девяти небес (сюжетная ветка)","shadow_root","root")
     edges.append({"a":"canon:13","b":"shadow:root","kind":"shadow_branch"})
     for k,label in TOPICS.items():
-        node("shadow:topic:"+k,label,"shadow_topic")
+        node("shadow:topic:"+k,label,"shadow_topic",k)
         edges.append({"a":"shadow:root","b":"shadow:topic:"+k,"kind":"shadow_branch"})
     edges.append({"a":"heart:root","b":"shadow:topic:visits","kind":"shadow_bridge"})
     previous="canon:13"
-    for did,n,i,e in completed(db)[-60:]:
+    for did,n,i,e in ([] if audit(db) else completed(db)[-60:]):
         topic,title,_=STEPS[i]; key=f"shadow:event:{i}"
-        node(key,title+" · гл. "+str(n),"shadow_event")
+        node(key,title+" · гл. "+str(n),"shadow_event",topic,i)
         edges.extend([{"a":"shadow:topic:"+topic,"b":key,"kind":"shadow_event"},{"a":f"c:{did}","b":key,"kind":"shadow_source"},{"a":previous,"b":key,"kind":"shadow_sequence"}])
         previous=key
     return nodes,edges
