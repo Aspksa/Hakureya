@@ -421,7 +421,9 @@ def graph(db):
     edge("infinite:root","character:hero","infinite_hero")
     for n in (5,6,9,10,11,12,13):edge(f"canon:{n}","character:hero","infinite_hero")
     if audit(db):return nodes,edges
-    for n,did,p in public_rows(db)[-100:]:
+    visible_rows=public_rows(db)
+    _,visible_threads,_=ledger(visible_rows)
+    for n,did,p in visible_rows[-100:]:
         if p["step"]:
             k=f"infinite:stage:{p['step']}"
             node(k,stage(p["step"])["title"],"infinite_stage","infinite:root")
@@ -431,6 +433,7 @@ def graph(db):
             k=f"infinite:fact:{did}:{j}";subject=hub(f["subject"])
             kind="infinite_hero" if subject=="character:hero" else "infinite_love" if f["kind"] in ("letter","tradition","relationship") and subject=="character:empress" else "infinite_fact"
             node(k,f["value"],kind,"heart:root" if kind=="infinite_love" else subject)
+            if f["kind"]=="clue" and visible_threads.get(fact_key(f),{}).get("closed") is None:nodes[-1]["mystery_open"]=True
             edge(subject,k,kind);edge(f"c:{did}",k,"infinite_source")
             if kind=="infinite_hero":
                 edge(last_hero,k,"infinite_hero");last_hero=k
