@@ -122,3 +122,30 @@ test("Immortal Chronicle uses separated stable cells",()=>{
  assert.equal(new Set(g.nodes.map(n=>n.x.toFixed(8)+":"+n.y.toFixed(8))).size,g.nodes.length);
  assert.deepEqual(g.nodes,layout({records,edges:[]}).nodes);
 });
+
+import {packCircles,cameraFrame} from '../web/memory-layout.mjs';
+test("compact envelopes do not overlap or expand into a radial staircase",()=>{
+ const disks=[.24,.3,.16,.4,.55,.68,.16,.32,.14].map((r,i)=>({key:i,r}));
+ const p=[{key:"core",x:0,y:0,r:.1},...packCircles(disks,.1,.035).values()];
+ for(let i=0;i<p.length;i++)for(let j=0;j<i;j++)assert.ok(Math.hypot(p[i].x-p[j].x,p[i].y-p[j].y)>=p[i].r+p[j].r+.035-1e-7);
+ const packedRadius=Math.max(...p.map(x=>Math.hypot(x.x,x.y)+x.r));
+ const staircase=.1+disks.reduce((a,x)=>a+2*x.r+.1,0);
+ assert.ok(packedRadius<staircase*.65);
+ assert.deepEqual([...packCircles(disks,.1,.035)],[...packCircles(disks,.1,.035)]);
+});
+test("overview fits all star centers in desktop and narrow chat viewports",()=>{
+ const records=Array.from({length:1000},(_,i)=>({key:"m:"+i,group:i%5,slot:Math.floor(i/5)}));
+ records.push({key:"immortal:root",group:4,immortal_slot:-1},{key:"heart:root",group:4,heart_topic:"root",heart_slot:-1});
+ for(let i=0;i<120;i++)records.push({key:"immortal:"+i,group:4,immortal_slot:i});
+ const g=layout({records,edges:[]});
+ assert.equal(g.byKey.get("root").r,9);
+ for(const [w,h] of [[1920,1080],[1366,768],[1280,720],[760,768],[450,720],[390,844]]){
+  const c=cameraFrame(g.bounds,w,h);
+  assert.ok(c.scale>0);
+  for(const n of g.nodes){
+   const x=w/2+(n.x-c.cx)*c.scale,y=h/2+(n.y-c.cy)*c.scale;
+   assert.ok(x>=c.pad-1e-6&&x<=w-c.pad+1e-6);
+   assert.ok(y>=c.pad-1e-6&&y<=h-c.pad+1e-6);
+  }
+ }
+});
