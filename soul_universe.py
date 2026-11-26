@@ -119,7 +119,7 @@ def search(db,query,limit=6,visible=True,arc=None):
             scores[n,s]+=2*min(w,4)
     out=[]
     for (n,s),score in sorted(scores.items(),key=lambda x:(-x[1],-x[0][0],x[0][1])):
-        if visible and not ev.readable(db,n):continue
+        if visible and n>13 and not ev.readable(db,n):continue
         row=db.execute("SELECT i.arc,s.title,s.body,s.start,s.end,i.story FROM universe_scenes s JOIN omega_index i ON i.number=s.chapter WHERE s.chapter=? AND s.seq=?",(n,s)).fetchone()
         if not row or (arc and row[0]!=arc):continue
         if not 0<=row[3]<row[4]<=len(row[5]) or row[5][row[3]:row[4]]!=row[2]:raise ValueError("scene source mismatch")
@@ -187,7 +187,7 @@ def overview(db,page=1):
     li.refresh(db)
     rows=db.execute("SELECT number,arc,title,LENGTH(story) FROM omega_index ORDER BY number").fetchall()
     # Do not expose unread titles, character details or planned revelations.
-    visible=[{"number":n,"volume":o.volume(n),"arc":arc,"title":title if ev.readable(db,n) else "Непрочитанная часть","chars":length} for n,arc,title,length in rows]
+    visible=[{"number":n,"volume":o.volume(n),"arc":arc,"title":title if n<=13 or ev.readable(db,n) else "Непрочитанная часть","chars":length} for n,arc,title,length in rows]
     actors,relations=li.registry(list(li.rows(db,visible=True)))
     volumes=Counter(o.volume(r[0]) for r in rows)
     return {"volume_groups":[{"volume":v,"count":count} for v,count in sorted(volumes.items()) if any(item["volume"]==v for item in visible[(page-1)*50:page*50])],"chapters":len(rows),"chars":sum(r[3] for r in rows),"scenes":db.execute("SELECT COUNT(*) FROM universe_scenes").fetchone()[0],
@@ -211,6 +211,7 @@ def report(db,mode,query=""):
         facts=[f for f in ev.state(db).values() if f["kind"] in ("knowledge","secret") and ev.readable(db,f["chapter"])]
         return "\n".join(f"{f['chapter']}: {f['subject']} — {f['detail']} | свидетели: {', '.join(f['knows']) or 'не подтверждены'}" for f in facts[-40:]) or "Нет доступных подтверждённых записей о знаниях."
     if mode=="actor":
+        li.refresh(db)
         name=li.norm(query)
         records=[(n,f) for n,f in li.rows(db,visible=True) if li.norm(f["subject"])==name or (f.get("object") and li.norm(f["object"])==name)]
         return "\n\n".join(f"Глава {n}: {f['kind']} — {f['value']}\n«{f['quote']}»" for n,f in records[-30:]) or "Нет доступных свидетельств о персонаже."
