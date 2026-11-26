@@ -140,6 +140,7 @@ def reserve(db, now=None, allow_story=False):
         seed=db.execute("SELECT MIN(diary_id) FROM chronicle_attempts").fetchone()[0]
         row=(min(0,seed or 0)-1,encode({"fictional_seed":True}))
     cur=db.execute("INSERT OR IGNORE INTO chronicle_attempts(day,diary_id,status) VALUES(?,?,'reserved')",(day,row[0]))
+    if cur.rowcount:writer_volume.register_job_attempt(db,day)
     return (day,row[0],json.loads(row[1])) if cur.rowcount else None
 
 def finish(db, reservation, value, saga_plan=None):
@@ -196,9 +197,11 @@ def finish(db, reservation, value, saga_plan=None):
 
 def fail(db,reservation):
     db.execute("UPDATE chronicle_attempts SET status='failed' WHERE day=? AND status='reserved'",(reservation[0],))
+    writer_volume.reconcile_job(db)
 
 def recover(db):
     db.execute("UPDATE chronicle_attempts SET status='interrupted' WHERE status='reserved'")
+    writer_volume.reconcile_job(db)
 
 def decide(db, draft_id, approve):
     # The caller may handle a validation error and still commit its outer transaction.
@@ -206,6 +209,7 @@ def decide(db, draft_id, approve):
     db.execute("SAVEPOINT chronicle_decision")
     try:
         result=_decide(db,draft_id,approve)
+        writer_volume.reconcile_job(db)
         db.execute("RELEASE chronicle_decision")
         return result
     except BaseException:
