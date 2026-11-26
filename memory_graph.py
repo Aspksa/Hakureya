@@ -3,7 +3,7 @@ import re
 import soul_chronicle
 from contextlib import closing
 
-KINDS = ("Запросы", "Знания", "Ответы", "Опыт")
+KINDS = ("Запросы", "Знания", "Ответы", "Опыт", "Биография")
 WORD = re.compile(r"[\w]{4,}", re.UNICODE)
 STOP = {"который","которые","чтобы","этого","этот","этого","также","можно","your","with","this","that","have","from","about","сообщение","сохранено","локально","подключите"}
 
@@ -20,8 +20,11 @@ def snapshot(db, limit=5000):
     records += [{"key":f"n:{i}","group":g,"content":c,"created":t,"order":i} for i,g,c,t in reversed(notes)]
     extra, chronicle_edges = soul_chronicle.graph(db,limit) if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='chronicle_diary'").fetchone() else ([],[])
     records += extra
+    permanent,biography_edges,pending=soul_chronicle.constellation(db,limit) if db.execute("SELECT 1 FROM sqlite_master WHERE name=\'chronicle_diary\'").fetchone() else ([],[],None)
     records.sort(key=lambda n:(n["created"] or "",n["key"][0],n["order"]))
-    records=records[-limit:]
+    # Preserve the original canon and a real pending draft even under memory pressure.
+    budget=max(0,limit-len(permanent)-int(pending is not None))
+    records=permanent+(records[-budget:] if budget else [])+([pending] if pending else [])
     edges=[]
     index={}
     last=None
@@ -31,6 +34,9 @@ def snapshot(db, limit=5000):
             if last is not None:
                 edges.append({"a":last,"b":key,"kind":"chronology"})
             last=key
+        # Do not create lexical bridges between fictional and real memory.
+        if n["group"]==4:
+            continue
         words=tokens(n["content"][:4000])
         counts={}
         for word in words:
@@ -45,7 +51,11 @@ def snapshot(db, limit=5000):
             if len(recent)>8:
                 del recent[0]
     visible={n["key"] for n in records}
-    edges.extend(e for e in chronicle_edges if e["a"] in visible and e["b"] in visible)
+    edges.extend(e for e in chronicle_edges+biography_edges if e["a"] in visible and e["b"] in visible)
+    dedup={}
+    for e in edges:
+        dedup[(e["a"],e["b"],e["kind"])]=e
+    edges=list(dedup.values())
     for n in records:
         n["label"]=" ".join(n["content"].split())[:54]
         del n["content"]
@@ -53,6 +63,7 @@ def snapshot(db, limit=5000):
     total=db.execute("SELECT COUNT(*) FROM messages WHERE role='user' OR (role='assistant' AND content != ?)",("Сообщение сохранено локально. Для ответа подключите Cloud.ru через меню аватара.",)).fetchone()[0]+db.execute("SELECT COUNT(*) FROM memory_notes").fetchone()[0]
     if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='chronicle_diary'").fetchone():
         total+=db.execute("SELECT COUNT(*) FROM chronicle_diary").fetchone()[0]+db.execute("SELECT COUNT(*) FROM chronicle_drafts WHERE status='approved'").fetchone()[0]
+    total+=len(permanent)+int(pending is not None)
     return {"records":records,"edges":edges,"total":total,"limited":total>len(records)}
 
 def add_note(db,kind,content):
