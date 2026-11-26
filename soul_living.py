@@ -85,13 +85,21 @@ def queue(db):
         _,_,key,title,guide=ranked[i%len(ranked)]
         result.append({"number":latest+i+1,"volume":o.volume(latest+i+1),"theme":key,"title":title,"guide":guide})
     # Existing fixed saga takes precedence; this is a forecast, not 100 authored chapters.
-    fixed=gu.plan(db) or sh.plan(db) or de.plan(db)
+    fixed=None if (gu.audit(db) or sh.audit(db) or de.audit(db)) else gu.plan(db) or sh.plan(db) or de.plan(db)
     if fixed:result[0].update(title=fixed["title"],guide=fixed["guide"],theme="fixed")
     payload={"version":VERSION,"based_on":latest,"items":result,
              "forgotten":data["forgotten"][:4],"open":data["open"][:4],
              "romance_threads":[]}
     import soul_heart
     payload["romance_threads"]=[{"key":k,**v} for k,v in soul_heart.threads(db).items() if v["closed"] is None][:4]
+    if not fixed:
+        head=result[0]
+        if head["theme"]=="character" and payload["forgotten"]:
+            actor=payload["forgotten"][0];head["title"]="Возвращение: "+actor["name"];head["guide"]+=" Верни персонажа "+actor["name"]+" из главы "+str(actor["last"])+", сохрани мотивы."
+        if head["theme"]=="mystery" and payload["open"]:
+            mystery=payload["open"][0];head["title"]="Новая улика: "+mystery["question"][:70];head["guide"]+=" Исследуй вопрос: "+mystery["question"]
+        if head["theme"]=="love" and payload["romance_threads"]:
+            head["guide"]+=" Развивай открытую линию: "+payload["romance_threads"][0]["title"]
     raw=o.dump(payload)
     db.execute("INSERT INTO living_queue VALUES(1,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,checksum=excluded.checksum WHERE checksum!=excluded.checksum",(raw,o.digest(raw)))
     return payload
@@ -156,18 +164,30 @@ def publish_if_allowed(db,did):
     if not eligible(db,did):
         log(db,"manual_review","Черновик оставлен на ручную проверку")
         return False
-    if c.decide(db,did,True):
-        log(db,"auto_publish",str(did))
-        queue(db)
-        return True
-    return False
+    db.execute("SAVEPOINT living_publish")
+    try:
+        ok=c.decide(db,did,True)
+        if ok:
+            log(db,"auto_publish",str(did))
+            queue(db)
+        db.execute("RELEASE living_publish")
+        return ok
+    except (ValueError,TypeError,KeyError,sqlite3.Error):
+        db.execute("ROLLBACK TO living_publish")
+        db.execute("RELEASE living_publish")
+        log(db,"manual_review","Проверка публикации не пройдена")
+        return False
 
 def backup(db_path,folder):
     """Atomic daily SQLite backup, retains seven snapshots. No credentials in DB."""
     day=datetime.now(timezone.utc).date().isoformat()
     folder=Path(folder);folder.mkdir(parents=True,exist_ok=True)
     target=folder/("hakureya-"+day+".sqlite3")
-    if target.exists():return target.name
+    if target.exists():
+        from contextlib import closing
+        with closing(sqlite3.connect(target)) as check:
+            if check.execute("PRAGMA quick_check").fetchone()[0]!="ok":raise ValueError("damaged backup")
+        return target.name
     tmp=target.with_suffix(".tmp")
     from contextlib import closing
     try:
