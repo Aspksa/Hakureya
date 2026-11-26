@@ -4,7 +4,7 @@ import json
 MAX_WIRE=1_000_000
 MAX_TEXT=24_000
 
-def read_response(response,on_progress):
+def read_response(response,on_progress,on_preview=None):
     content_type=getattr(response,"headers",{}).get("Content-Type","")
     if not isinstance(content_type,str) or "text/event-stream" not in content_type.lower():
         raw=response.read(MAX_WIRE+1)
@@ -41,6 +41,7 @@ def read_response(response,on_progress):
             if size>MAX_TEXT:raise ValueError("writer response too large")
             parts.append(chunk)
             on_progress(size,len(parts))
+            if on_preview:on_preview("".join(parts))
         if choice.get("finish_reason") is not None:reason=choice["finish_reason"]
     while not finished:
         raw=response.readline(MAX_WIRE-wire+1)
