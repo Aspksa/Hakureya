@@ -91,6 +91,44 @@ class ServerTest(unittest.TestCase):
         self.assertEqual(data["chapter_pages"],20)
         self.assertEqual(self.request("writer")["chapter_pages"],20)
 
+    def test_one_shot_without_budget_after_legacy_attempt(self):
+        self.request("config",{"key":"test-key","model":"test-model","consent":True})
+        with closing(server.connect()) as db, db:
+            reservation=server.soul_chronicle.reserve(db,allow_story=True)
+            server.soul_chronicle.fail(db,reservation)
+        data={"mode":"once","interval":20,"target_pages":5,"consent":True}
+        with patch.object(server,"urlopen") as remote:
+            with self.assertRaises(HTTPError):self.request("writer",{**data,"consent":False})
+            state=self.request("writer",data)
+            self.assertEqual(state["mode"],"auto")
+            self.assertEqual(state["job"]["state"],"active")
+            self.assertEqual(state["job"]["pages"],5)
+            self.assertEqual(state["job"]["attempts"],0)
+            self.assertEqual(state["daily_limit"],20)
+            self.assertEqual(state["max_tokens"],4096)
+            self.assertEqual(state["wait_seconds"],0)
+            self.assertIsNone(state["budget_settings"])
+            self.assertEqual(self.request("writer")["job"]["state"],"active")
+            remote.assert_not_called()
+        from urllib.error import URLError
+        with patch.object(server,"urlopen",side_effect=URLError("test")) as remote:
+            server.generate_chronicle(background=True)
+            self.assertEqual(remote.call_count,1)
+            sent=json.loads(remote.call_args.args[0].data)
+            self.assertEqual(sent["max_tokens"],4096)
+            self.assertIn("Разовое задание",sent["messages"][0]["content"])
+            state=self.request("writer")
+            self.assertEqual(state["mode"],"off")
+            self.assertEqual(state["job"]["state"],"error")
+            self.assertEqual(state["job"]["attempts"],1)
+            self.assertIn("соединения",state["reason"])
+            server.generate_chronicle(background=True)
+            self.assertEqual(remote.call_count,1)
+        self.request("writer",data)
+        state=self.request("writer",{"mode":"off","interval":20,"target_pages":0})
+        self.assertEqual(state["job"]["state"],"stopped")
+        self.assertEqual(state["mode"],"off")
+
     def test_writer_panel_persistence_and_consent(self):
         st=self.request("writer")
         self.assertEqual(st["mode"],"off")
