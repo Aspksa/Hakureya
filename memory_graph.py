@@ -34,8 +34,41 @@ def assign_slots(db,records):
 def tokens(s):
     return set(WORD.findall(s.lower())) - STOP
 
+def reconcile_actors(records,edges):
+    """Resolve duplicate visual representations of exact known names, not fuzzy identities."""
+    import soul_intelligence as li
+    import soul_destiny as de
+    known={li.norm(name):"destiny:actor:"+key for key,name,_ in de.CAST}
+    present={n["key"] for n in records}
+    alias={}
+    for n in records:
+        k=n["key"]
+        if not k.startswith(("actor:","lit:actor:","infinite:character:")):continue
+        name=li.norm(n["content"])
+        target=li.actor_key(name)
+        if target.startswith("lit:actor:"):
+            named=known.get(name)
+            target=named if named in present else target
+        # The canonical key stays the same even if the earlier Omega layer leaves the viewport.
+        alias[k]=target
+    result={}
+    for n in records:
+        k=n["key"];target=alias.get(k,k)
+        if target!=k:
+            n={**n,"key":target}
+            if target.startswith("lit:actor:"):
+                n["kind"]="lit_character";n["infinite_group"]=target
+        group=n.get("infinite_group")
+        if group in alias:n={**n,"infinite_group":alias[group]}
+        if target not in result or k==target:result[target]=n
+    links=[]
+    for e in edges:
+        a,b=alias.get(e["a"],e["a"]),alias.get(e["b"],e["b"])
+        if a!=b:links.append({**e,"a":a,"b":b})
+    return list(result.values()),links
+
 def snapshot(db, limit=5000):
-    limit=max(13,min(5000,int(limit)))
+    limit=max(14,min(5000,int(limit)))
     rows = db.execute("SELECT id,role,content,created FROM messages ORDER BY id DESC LIMIT ?",(limit,)).fetchall()
     notes = db.execute("SELECT id,kind,content,created FROM memory_notes ORDER BY id DESC LIMIT ?",(limit,)).fetchall()
     records = [{"key":f"m:{i}","group":0 if r=="user" else 2,"content":c,"created":t,"order":i} for i,r,c,t in reversed(rows) if r in ("user","assistant") and not (r=="assistant" and c=="Сообщение сохранено локально. Для ответа подключите Cloud.ru через меню аватара.")]
@@ -46,6 +79,7 @@ def snapshot(db, limit=5000):
     records.sort(key=lambda n:(n["created"] or "",n["key"][0],n["order"]))
     # Preserve the original canon and a real pending draft even under memory pressure.
     # Deduplicate before allocating slots. Service/canon hubs take priority over decorative detail.
+    permanent,biography_edges=reconcile_actors(permanent,biography_edges)
     unique={n["key"]:n for n in permanent}
     permanent=list(unique.values())
     def priority(n):
