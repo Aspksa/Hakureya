@@ -59,3 +59,50 @@ class WriterVolumeTest(unittest.TestCase):
             self.assertIsNotNone(key)
             self.db.execute("INSERT INTO chronicle_attempts(day,diary_id,status) VALUES(?,?,'failed')",(key,-i-1))
         self.assertIsNone(v.next_id(self.db,self.day))
+
+
+    def test_one_shot_ignores_old_failed_attempt_and_stops_after_target(self):
+        import soul_living
+        from test_chronicle import draft
+        old=c.reserve(self.db,allow_story=True)
+        c.fail(self.db,old)
+        self.assertTrue(v.auto_block(self.db,v.today()))
+        v.start_job(self.db,5,"test-model")
+        soul_living.set_mode(self.db,"auto")
+        self.assertEqual(v.job(self.db)["chars"],0)
+        self.assertEqual(v.limit(self.db),20)
+        for i in range(2):
+            a=c.reserve(self.db,allow_story=True)
+            self.assertIsNotNone(a)
+            self.assertNotEqual(a[0],old[0])
+            p=draft()
+            p["title"]="Новая сцена "+str(i)
+            p["story"]=(("Хакурэя смотрела на новый сад. " if i==0 else "Императрица изучала древний архив. ")*200)[:4500]
+            c.finish(self.db,a,p)
+            self.assertEqual(v.job(self.db)["chars"],i*4500)
+            did=c.latest_pending(self.db)["id"]
+            self.assertTrue(c.decide(self.db,did,True))
+            self.assertEqual(v.job(self.db)["chars"],(i+1)*4500)
+        self.assertEqual(v.job(self.db)["state"],"done")
+        self.assertEqual(soul_living.mode(self.db),"off")
+        self.assertEqual(v.job(self.db)["attempts"],2)
+        self.assertEqual(v.limit(self.db),1)
+        self.assertIsNone(c.reserve(self.db,allow_story=True))
+
+    def test_one_shot_failure_and_recovery_stop(self):
+        import soul_living
+        v.start_job(self.db,5,"test-model")
+        soul_living.set_mode(self.db,"auto")
+        a=c.reserve(self.db,allow_story=True)
+        c.recover(self.db)
+        self.assertEqual(v.job(self.db)["state"],"error")
+        self.assertEqual(soul_living.mode(self.db),"off")
+        self.assertEqual(v.job(self.db)["attempts"],1)
+        v.start_job(self.db,5,"test-model")
+        soul_living.set_mode(self.db,"auto")
+        self.assertEqual(v.job(self.db)["attempts"],0)
+        b=c.reserve(self.db,allow_story=True)
+        self.assertNotEqual(a[0],b[0])
+        c.fail(self.db,b)
+        self.assertEqual(v.job(self.db)["state"],"error")
+        self.assertEqual(soul_living.mode(self.db),"off")
