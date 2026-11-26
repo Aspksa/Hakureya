@@ -144,7 +144,7 @@ def instruction(plan):
         " Сначала продумай и отредактируй текст внутри одного ответа. Не выдавай ход рассуждений. "
         " При возможности добавь необязательный объект world с полями places:[{name,realm,description,evidence}], letter, perspective. "
         " realm — число 1–9 или null для человеческого мира; evidence — точная цитата из story; letter — художественное письмо до 500 символов, perspective — альтернативный взгляд до 500 символов. До двух мест. "
-        " Никаких сведений о реальных людях; это художественный материал. ")
+        " Никаких сведений о реальных людях; это художественный материал. "+ (" По запросу альтернативы: добавь необязательное поле alternative — второй самостоятельный вариант с title, story (100–1500 символов), tags, emotions, traits; не копируй основную сцену. Оба варианта краткие, в пределах общего лимита ответа." if plan.get("alternative") else ""))
 
 def validate_world(db,story,raw):
     if raw is None:return {"places":[],"letter":"","perspective":""}
@@ -213,3 +213,46 @@ def graph(db):
         if row and row[0] is not None:edges.append({"a":f"c:{row[0]}","b":key,"kind":"world_place"})
         if p["realm"] is not None:edges.append({"a":f"realm:{p['realm']}","b":key,"kind":"world_place"})
     return nodes,edges
+
+
+def save_variants(db,did,base,lit,world_data,alt,plan):
+    """Keep alternative draft as a separate, validated proposal in the same paid call."""
+    if alt is None:return
+    import soul_chronicle as c
+    try:
+        other=c.validate(alt)
+        if len(other["story"])>1500 or o.normalized(other["story"])==o.normalized(base["story"]):return
+        score,_=o.review(db,other,{"events":[]})
+    except (ValueError,TypeError):return
+    m=o.metadata(db,did)
+    for i,item,l,w,sc in ((1,base,lit,world_data,m["score"] if m else 0),(2,other,None,None,score)):
+        raw=o.dump({"base":item,"literary":l,"world":w,"strategy":plan.get("strategy","causality")})
+        db.execute("INSERT INTO genesis_variants VALUES(?,?,?,?,?)",(did,i,raw,o.digest(raw),sc))
+
+def variants(db):
+    pending=db.execute("SELECT id FROM chronicle_drafts WHERE status='pending'").fetchone()
+    if not pending:return "Нет ожидающего черновика."
+    lines=[]
+    for option,raw,h,score in db.execute("SELECT option,payload,checksum,score FROM genesis_variants WHERE draft_id=? ORDER BY option",(pending[0],)):
+        if o.digest(raw)!=h:continue
+        p=json.loads(raw)["base"]
+        lines.append(f"Вариант {option} — {score}/100 (эвристика)\n{p['title']}\n\n{p['story']}")
+    return "\n\n".join(lines)+"\n\nВыбор: летопись: вариант 1 или 2. Затем утвердите черновик." if lines else "Альтернативный вариант не сохранён. Для следующей попытки: летопись: создать варианты."
+
+def select_variant(db,option):
+    import soul_chronicle as c
+    row=db.execute("SELECT id,checksum FROM chronicle_drafts WHERE status='pending'").fetchone()
+    if not row or not c.canon_ok(db):return False
+    did,before=row
+    selected=db.execute("SELECT payload,checksum FROM genesis_variants WHERE draft_id=? AND option=?",(did,option)).fetchone()
+    if not selected or o.digest(selected[0])!=selected[1]:return False
+    p=json.loads(selected[0]);base=c.validate(p["base"])
+    lit=o.validate_literary(db,base["story"],p["literary"])
+    w=validate_world(db,base["story"],p["world"])
+    score,warnings=o.review(db,base,lit)
+    payload=c.encode(base);h=c.checksum(payload);meta=o.dump(lit);world_raw=o.dump(w)
+    db.execute("UPDATE chronicle_drafts SET payload=?,checksum=? WHERE id=? AND status='pending'",(payload,h,did))
+    db.execute("UPDATE omega_meta SET payload=?,checksum=?,score=?,warnings=? WHERE draft_id=?",(meta,o.digest(meta),score,o.dump(warnings),did))
+    db.execute("INSERT OR REPLACE INTO genesis_world VALUES(?,?,?)",(did,world_raw,o.digest(world_raw)))
+    db.execute("INSERT INTO genesis_edits(draft_id,before_hash,after_hash,chosen) VALUES(?,?,?,?)",(did,before,h,option))
+    return True
