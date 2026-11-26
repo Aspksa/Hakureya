@@ -20,6 +20,7 @@ import soul_guardians
 import soul_destiny
 import soul_living
 import cloud_writer
+import cloud_vault
 import writer_stream
 import soul_evolution
 import soul_immortal
@@ -54,6 +55,37 @@ def normalize_cloud_key(value):
         return None
     return key
 
+
+def writer_status(db):
+    mode=soul_living.mode(db)
+    pending=db.execute("SELECT COUNT(*) FROM chronicle_drafts WHERE status='pending'").fetchone()[0]
+    day=datetime.now(timezone.utc).date().isoformat()
+    attempt=db.execute("SELECT status FROM chronicle_attempts WHERE day=?",(day,)).fetchone()
+    reserved=db.execute("SELECT 1 FROM chronicle_attempts WHERE status='reserved'").fetchone()
+    idle=soul_immortal.preferences(db)[1]
+    wait=max(0,int(idle-(time.monotonic()-CHRONICLE["last_activity"])))
+    if not CONFIG["key"]:reason="Cloud.ru не подключён"
+    elif mode=="off" and not CHRONICLE["enabled"]:reason="Автоматическое написание выключено"
+    elif not soul_chronicle.canon_ok(db):reason="Нарушена целостность канона"
+    elif reserved:reason="Запрос уже выполняется или ожидает восстановления"
+    elif pending:reason="Черновик ожидает решения"
+    elif attempt:reason="Суточная попытка использована: "+attempt[0]
+    elif wait and not reading_window(db):reason="Ожидание бездействия"
+    else:reason="Готов к следующей проверке планировщика"
+    return {"mode":mode,"connected":bool(CONFIG["key"]),"model":cloud_writer.selected(db) or CONFIG["model"],
+            "saved_connection":(DB.parent/"cloud.dpapi").is_file(),"can_remember":cloud_vault.supported(),
+            "interval":idle//60,"wait_seconds":wait,"pending":pending,
+            "published":soul_reader.latest(db),"attempt":attempt[0] if attempt else None,
+            "daily_limit":1,"max_tokens":cloud_writer.LIMIT,"reason":reason,
+            "budget":soul_evolution.budget_text(db,day[:7])}
+
+def writer_status_text(db):
+    st=writer_status(db)
+    return (soul_living.status(db)+"\\nПричина: "+st["reason"]+
+        "\\nПоследняя опубликованная глава: "+str(st["published"])+
+        "\\nМодель: "+(st["model"] or "не выбрана")+
+        "\\nПодключение: "+("сохранено для этой учётной записи Windows" if st["saved_connection"] else "только текущий сеанс")+
+        "\\n"+st["budget"])
 
 def connect():
     DB.parent.mkdir(parents=True, exist_ok=True)
@@ -380,8 +412,8 @@ def chronicle_command(content):
                 soul_living.set_mode(db,action)
                 CHRONICLE.update(enabled=False,epoch=CHRONICLE["epoch"]+1)
                 if action=="off":return "Развитие остановлено. Уже начатый запрос может быть платным, его результат не сохранится."
-                return soul_living.status(db)+(" Публикация только после вашего утверждения." if action=="draft" else " Автопубликация только новых фоновых глав, прошедших локальные эвристики; сомнительные остаются черновиками. Это не смысловая гарантия.")
-            if action=="status":return soul_living.status(db)
+                return writer_status_text(db)+(" Публикация только после вашего утверждения." if action=="draft" else " Автопубликация только новых фоновых глав, прошедших локальные эвристики; сомнительные остаются черновиками. Это не смысловая гарантия.")
+            if action=="status":return writer_status_text(db)
             if not soul_chronicle.canon_ok(db):return "Канон повреждён."
             if action=="news":return soul_living.news(db)
             if soul_living.audit(db) or soul_shadow.audit(db) or soul_guardians.audit(db) or soul_destiny.audit(db) or soul_evolution.audit(db) or soul_immortal.audit(db) or soul_novel.audit(db) or soul_infinite.audit(db):return "Сюжетные данные повреждены."
@@ -634,6 +666,9 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if not self.local():
             return self.respond({"error":"Доступ только локально"},403)
+        if self.path == "/api/writer":
+            with LOCK, closing(connect()) as db:
+                return self.respond(writer_status(db))
         if self.path == "/api/activity":
             return self.respond(graph_activity.snapshot())
         if self.path == "/api/chronicle":
@@ -687,6 +722,29 @@ class Handler(SimpleHTTPRequestHandler):
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict):
                 raise ValueError("Некорректный JSON")
+            if self.path == "/api/writer":
+                mode=data.get("mode")
+                interval=data.get("interval")
+                if mode not in ("off","draft","auto") or type(interval) is not int or interval not in (20,30,60,120):
+                    return self.respond({"error":"Недопустимый режим или интервал."},400)
+                if mode!="off" and data.get("consent") is not True:
+                    return self.respond({"error":"Подтвердите согласие на фоновые платные запросы."},400)
+                with LOCK, closing(connect()) as db, db:
+                    if mode!="off" and not soul_chronicle.canon_ok(db):
+                        return self.respond({"error":"Канон повреждён."},400)
+                    soul_living.set_mode(db,mode)
+                    db.execute("UPDATE immortal_preferences SET idle=? WHERE id=1",(interval*60,))
+                    CHRONICLE.update(enabled=False,epoch=CHRONICLE["epoch"]+1)
+                    if mode!="off" and data.get("start_now") is True:
+                        CHRONICLE["last_activity"]=time.monotonic()-interval*60
+                    return self.respond(writer_status(db))
+            if self.path == "/api/config/forget":
+                with LOCK, closing(connect()) as db, db:
+                    cloud_vault.forget(DB.parent/"cloud.dpapi")
+                    soul_living.set_mode(db,"off")
+                    CONFIG.update(key="",model="")
+                    CHRONICLE.update(enabled=False,epoch=CHRONICLE["epoch"]+1,config_epoch=CHRONICLE.get("config_epoch",0)+1)
+                return self.respond({"connected":False})
             if self.path == "/api/reader":
                 action=data.get("action")
                 if not isinstance(action,str) or action not in ("resume","next","back","pause","start","advance","retreat","position","presence"):raise ValueError("Недопустимое действие чтения")
@@ -747,6 +805,13 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.respond({"error":"Подтвердите согласие на отправку сообщений и платные запросы."},400)
                 model=model.strip()
                 with LOCK:
+                    try:
+                        if data.get("remember") is True:
+                            cloud_vault.save(DB.parent/"cloud.dpapi",key,model)
+                        else:
+                            cloud_vault.forget(DB.parent/"cloud.dpapi")
+                    except (OSError,ValueError):
+                        return self.respond({"error":"Не удалось изменить защищённое хранилище Cloud.ru."},400)
                     with closing(connect()) as db, db:
                         soul_core.record_model(db,model)
                     CONFIG.update(key=key, model=model)
@@ -824,10 +889,24 @@ def main():
     except RuntimeError as error:
         raise SystemExit(str(error))
 
+def restore_connection():
+    try:
+        saved=cloud_vault.load(DB.parent/"cloud.dpapi")
+        if saved:
+            key=normalize_cloud_key(saved["key"])
+            model=saved["model"].strip()
+            if key and 0<len(model)<=200:
+                CONFIG.update(key=key,model=model)
+                return True
+    except (OSError,ValueError,TypeError):
+        LOG.warning("saved Cloud.ru connection unavailable")
+    return False
+
 def serve(args):
     with closing(connect()) as db, db:
         soul_chronicle.recover(db)
         soul_chronicle.collect(db)
+    restore_connection()
     stop=threading.Event()
     worker=threading.Thread(target=chronicle_worker,args=(stop,),daemon=True)
     worker.start()
