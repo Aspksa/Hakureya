@@ -85,3 +85,18 @@ test("Shadow and Heart areas remain separate with all epoch sectors",()=>{
  assert.ok(g.nodes.every(n=>Number.isFinite(n.x)&&Number.isFinite(n.y)));
  assert.equal(new Set(g.nodes.map(n=>n.x.toFixed(8)+":"+n.y.toFixed(8))).size,g.nodes.length);
 });
+
+test("nine guardians and their memories have unique stable positions",()=>{
+ const actors=["reika","seirana","mikage","tokihana","akatsuki","shiori","yumeka","meirin","amatsuka"];
+ const records=[{key:"guardians:root",group:4,guardian_actor:"root",guardian_slot:-1},{key:"heart:root",group:4,heart_topic:"root",heart_slot:-1},{key:"shadow:root",group:4,shadow_topic:"root",shadow_slot:-1}];
+ for(const a of actors){
+  records.push({key:"guardian:"+a,group:4,guardian_actor:a,guardian_slot:-1});
+  for(let i=0;i<90;i++)records.push({key:"memory:"+a+":"+i,group:4,guardian_actor:a,guardian_slot:i});
+ }
+ const g=layout({records,edges:[]});
+ assert.ok(g.nodes.every(n=>Number.isFinite(n.x)&&Number.isFinite(n.y)));
+ assert.equal(new Set(g.nodes.map(n=>n.x.toFixed(8)+":"+n.y.toFixed(8))).size,g.nodes.length);
+ const a=g.byKey.get("guardian:reika"),b=g.byKey.get("memory:reika:0");
+ assert.ok(Math.abs(Math.hypot(a.x-b.x,a.y-b.y)-.026)<1e-8);
+ assert.deepEqual(g.nodes,layout({records,edges:[]}).nodes);
+});

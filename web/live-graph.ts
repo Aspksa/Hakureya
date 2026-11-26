@@ -42,7 +42,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement){
   if(level===next||replayAt)return;
   level=next;
   const visible=new Set<string>();
-  for(const n of graph.nodes){const major=n.key==="root"||n.key.startsWith("hub:")||n.key.startsWith("canon:")||n.kind==="epoch"||n.kind==="book"||n.kind==="book_segment"||n.kind==="draft"||n.kind==="heart_root"||n.kind==="heart_topic"||n.kind==="shadow_root"||n.kind==="shadow_topic"||n.key===active||recentChapterKeys.has(n.key);
+  for(const n of graph.nodes){const major=n.key==="root"||n.key.startsWith("hub:")||n.key.startsWith("canon:")||n.kind==="epoch"||n.kind==="book"||n.kind==="book_segment"||n.kind==="draft"||n.kind==="heart_root"||n.kind==="heart_topic"||n.kind==="shadow_root"||n.kind==="shadow_topic"||n.kind==="guardian_root"||n.kind==="guardian_character"||n.key===active||recentChapterKeys.has(n.key);
    const show=next===2||n.group!==4||major||(next===1&&n.kind==="fictional_chapter");
    if(show)visible.add(n.key);items.get(n.key)?.setAttribute("visibility",show?"visible":"hidden");}
   drawnEdges.forEach((e,i)=>edgeEls[i]?.setAttribute("visibility",visible.has(e.a)&&visible.has(e.b)&&(next===2||e.kind!=="keywords")?"visible":"hidden"));
@@ -56,20 +56,20 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement){
   snapshot=next;graph=layout(next);level=-1;
   recentChapterKeys=new Set<string>(next.records.filter(n=>/^c:[1-9]\d*$/.test(n.key)).sort((a,b)=>Number(b.key.slice(2))-Number(a.key.slice(2))).slice(0,20).map(n=>n.key));items.clear();links.replaceChildren();dots.replaceChildren();overlay.replaceChildren();
   // Always preserve root, categories and canon links; thin dense secondary edges only.
-  const essential=graph.edges.filter(e=>e.kind==="category"||e.kind==="chronology"||e.a.startsWith("canon:")||e.kind==="draft"||e.kind.startsWith("heart_")||e.kind.startsWith("shadow_"));
+  const essential=graph.edges.filter(e=>e.kind==="category"||e.kind==="chronology"||e.a.startsWith("canon:")||e.kind==="draft"||e.kind.startsWith("heart_")||e.kind.startsWith("shadow_")||e.kind.startsWith("guardian_"));
   const essentialSet=new Set(essential);const secondary=graph.edges.filter(e=>!essentialSet.has(e));
   drawnEdges=essential.concat(secondary.slice(0,Math.max(0,10000-essential.length)));
-  edgeEls=drawnEdges.map(e=>{const b=graph.byKey.get(e.b);return el("line",{stroke:e.kind.startsWith("shadow_")?"#d9c799":e.kind.startsWith("heart_")?"#efa3c4":e.kind==="category"&&e.a==="root"?"#bbb2ab":colors[(b?.group??-1)+1],"stroke-opacity":e.kind==="category"?.22:e.kind==="keywords"?.12:Math.min(.65,.23+.07*(e.shared||0)),"stroke-width":e.a==="root"?.55:Math.min(1.25,.36+.12*(e.shared||0)),...(e.kind==="draft"?{"stroke-dasharray":"2 3"}:{})},links)});
+  edgeEls=drawnEdges.map(e=>{const b=graph.byKey.get(e.b);return el("line",{stroke:e.kind.startsWith("guardian_")?"#e4d8ac":e.kind.startsWith("shadow_")?"#d9c799":e.kind.startsWith("heart_")?"#efa3c4":e.kind==="category"&&e.a==="root"?"#bbb2ab":colors[(b?.group??-1)+1],"stroke-opacity":e.kind==="category"?.22:e.kind==="keywords"?.12:Math.min(.65,.23+.07*(e.shared||0)),"stroke-width":e.a==="root"?.55:Math.min(1.25,.36+.12*(e.shared||0)),...(e.kind==="draft"?{"stroke-dasharray":"2 3"}:{})},links)});
   const dense=graph.nodes.length>800;
   for(const n of graph.nodes){
-   const g=el("g",{class:"node","data-key":n.key},dots),col=n.kind.startsWith("shadow_")?"#d9c799":n.kind.startsWith("heart_")?"#f2a9c9":colors[n.group+1];items.set(n.key,g);
-   const major=n.key==="root"||n.key.startsWith("hub:")||n.kind==="fictional_chapter"||n.kind==="book"||n.kind==="epoch"||n.kind==="book_segment"||n.kind==="heart_root"||n.kind==="heart_topic"||n.kind==="shadow_root"||n.kind==="shadow_topic";
+   const g=el("g",{class:"node","data-key":n.key},dots),col=n.kind.startsWith("guardian_")?(["#dcf0ff","#a1e7bd","#b5a9e9","#dcc7ff","#ed9772","#f0d496","#eea8cb","#a9d8e4","#fff0d0"][["reika","seirana","mikage","tokihana","akatsuki","shiori","yumeka","meirin","amatsuka"].indexOf(n.guardian_actor)]||"#e4d8ac"):n.kind.startsWith("shadow_")?"#d9c799":n.kind.startsWith("heart_")?"#f2a9c9":colors[n.group+1];items.set(n.key,g);
+   const major=n.key==="root"||n.key.startsWith("hub:")||n.kind==="fictional_chapter"||n.kind==="book"||n.kind==="epoch"||n.kind==="book_segment"||n.kind==="heart_root"||n.kind==="heart_topic"||n.kind==="shadow_root"||n.kind==="shadow_topic"||n.kind==="guardian_root"||n.kind==="guardian_character";
    if(births.has(n.key))g.setAttribute("opacity",".08");
    if(!dense||major)el("circle",{r:n.r*6.2,fill:"url(#glow"+(n.group+1)+")"},g);
    if(n.kind==="draft"){el("circle",{r:n.r*2,fill:"none",stroke:col,"stroke-dasharray":"2 2","stroke-width":.8},g)}
    else{el("circle",{r:n.r*.9,fill:col,opacity:.74},g);if(!dense||major)el("circle",{r:n.r*.36,fill:"#fff9eb"},g)}
    if(!dense||major)el("circle",{r:Math.max(4,n.r*2.5),fill:"transparent"},g);
-   if(n.key==="root"||n.key.startsWith("hub:")||n.kind==="epoch"||n.kind==="heart_root"||n.kind==="heart_topic"||n.kind==="shadow_root"||n.kind==="shadow_topic"){
+   if(n.key==="root"||n.key.startsWith("hub:")||n.kind==="epoch"||n.kind==="heart_root"||n.kind==="heart_topic"||n.kind==="shadow_root"||n.kind==="shadow_topic"||n.kind==="guardian_root"||n.kind==="guardian_character"){
     el("path",{d:"M-11 0H11M0 -11V11M-5 -5L5 5M-5 5L5 -5",stroke:col,"stroke-width":.55,opacity:.75},g);
     const t=el("text",{x:0,y:14,"text-anchor":"middle",fill:col,class:"label"},g);t.textContent=n.label;
    }
