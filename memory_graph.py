@@ -10,6 +10,26 @@ STOP = {"который","которые","чтобы","этого","этот","
 def init(db):
     db.execute("CREATE TABLE IF NOT EXISTS memory_notes (id INTEGER PRIMARY KEY AUTOINCREMENT, kind INTEGER NOT NULL CHECK(kind IN (1,3)), content TEXT NOT NULL, created TEXT DEFAULT CURRENT_TIMESTAMP)")
 
+    db.execute("CREATE TABLE IF NOT EXISTS graph_slots (key TEXT PRIMARY KEY, group_id INTEGER NOT NULL, slot INTEGER NOT NULL, UNIQUE(group_id,slot))")
+
+def assign_slots(db,records):
+    # Existing stars keep their local lattice cell, even when old records leave the view.
+    existing={}
+    for start in range(0,len(records),400):
+        keys=[n["key"] for n in records[start:start+400]]
+        if keys:
+            rows=db.execute("SELECT key,group_id,slot FROM graph_slots WHERE key IN ("+",".join("?" for _ in keys)+")",keys)
+            existing.update({key:(g,slot) for key,g,slot in rows})
+    missing=[n for n in records if n["key"] not in existing]
+    if missing:
+        # Serialize allocation across HTTP readers via SQLite's write transaction.
+        db.execute("INSERT OR IGNORE INTO graph_slots(key,group_id,slot) SELECT ?,?,COALESCE(MAX(slot),-1)+1 FROM graph_slots WHERE group_id=?",(missing[0]["key"],missing[0]["group"],missing[0]["group"]))
+        for n in missing:
+            db.execute("INSERT OR IGNORE INTO graph_slots(key,group_id,slot) SELECT ?,?,COALESCE(MAX(slot),-1)+1 FROM graph_slots WHERE group_id=?",(n["key"],n["group"],n["group"]))
+            existing[n["key"]]=db.execute("SELECT group_id,slot FROM graph_slots WHERE key=?",(n["key"],)).fetchone()
+    for n in records:
+        n["slot"]=existing[n["key"]][1]
+
 def tokens(s):
     return set(WORD.findall(s.lower())) - STOP
 
@@ -50,6 +70,7 @@ def snapshot(db, limit=5000):
             recent.append(key)
             if len(recent)>8:
                 del recent[0]
+    assign_slots(db,records)
     visible={n["key"] for n in records}
     edges.extend(e for e in chronicle_edges+biography_edges if e["a"] in visible and e["b"] in visible)
     dedup={}
