@@ -17,7 +17,7 @@ export function cell(slot){
 // Local lattice positions never change; only constellation centers can move.
 export function packCircles(disks,core=.09,gap=.045){
  const placed=[{key:"core",x:0,y:0,r:core}],result=new Map();
- for(const disk of disks){
+ for(const disk of [...disks].sort((a,b)=>b.r-a.r)){
   const r=disk.r;
   let best=null,bestScore=Infinity;
   for(const anchor of placed){
