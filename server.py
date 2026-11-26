@@ -100,7 +100,7 @@ def chronicle_command(content):
     q=aliases.get(q,q)
     read_match=re.fullmatch(r"(?:летопись: читать|прочитай главу|читать главу) ([1-9][0-9]{0,8})",q)
     create_match=re.fullmatch(r"летопись: создать(?: (прошлое|встреча|любовь|будущее))?",q)
-    omega_read=re.fullmatch(r"летопись: (том|дневник героини) ([1-9][0-9]{0,8})",q)
+    omega_read=re.fullmatch(r"летопись: (том|читать том|дневник героини) ([1-9][0-9]{0,8})",q)
     omega_search=re.fullmatch(r"летопись: (поиск|персонаж) (.{2,200})",q)
     omega_commands=("летопись: книги","летопись: продолжить чтение","летопись: план","летопись: загадки","летопись: качество","летопись: дневник героини","летопись: хронология")
     decision=re.fullmatch(r"летопись: (принять|отклонить) ([1-9][0-9]{0,8})",q)
@@ -111,6 +111,8 @@ def chronicle_command(content):
             soul_chronicle.control(db,"manual_request")
         return generate_chronicle(arc=soul_saga.ALIASES.get(create_match[1]))
     with LOCK, closing(connect()) as db, db:
+        if (omega_read or omega_search or q in omega_commands or read_match or q in ("летопись: содержание","летопись: последняя","летопись: главы")) and not soul_chronicle.canon_ok(db):
+            return "Целостность исходной летописи нарушена; чтение заблокировано."
         if read_match or q=="летопись: продолжить чтение":
             n=int(read_match[1]) if read_match else soul_omega.bookmark(db)
             result=soul_saga.read(db,n)
@@ -118,6 +120,7 @@ def chronicle_command(content):
             return result
         if omega_read:
             n=int(omega_read[2])
+            if omega_read[1]=="читать том": return soul_omega.read_volume(db,n)
             return soul_omega.book(db,n) if omega_read[1]=="том" else soul_omega.diary(db,n)
         if omega_search:
             term=omega_search[2]
