@@ -44,6 +44,7 @@ def log(db,event,detail=""):
 
 def set_mode(db,value):
     if value not in ("off","draft","auto"):raise ValueError("invalid mode")
+    if value!="auto":writer_volume.cancel_job(db)
     db.execute("UPDATE living_settings SET mode=? WHERE id=1",(value,))
     log(db,"mode",value)
 
@@ -253,6 +254,9 @@ def status(db):
     day=writer_volume.today()
     attempts=writer_volume.attempts(db,day)
     pages=writer_volume.target(db)
+    task=writer_volume.job(db)
+    if task and task["state"]=="active":
+        return f"Разовое задание: {task['chars']}/{task['pages']*writer_volume.PAGE_CHARS} символов утверждённой прозы. Черновиков: {pending}. Запросов задания: {task['attempts']}/{task['limit']}. До {writer_volume.JOB_OUTPUT_LIMIT} выходных токенов на запрос."
     return ("Развитие: "+{"off":"выключено","draft":"черновики","auto":"автопубликация с проверками"}[mode(db)]+
         f". Черновиков: {pending}. Запросов UTC сегодня: {len(attempts)}/{writer_volume.limit(db)}."+
         (f" Цель: {pages} условных страниц А4 (по {writer_volume.PAGE_CHARS} символов)." if pages else " Обычный режим: одна попытка в сутки.")+
