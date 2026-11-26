@@ -164,8 +164,12 @@ def context(db,plan):
     prior=[]
     # Send bounded evidence from relevant previous stages, even if older than recent chapters.
     target_group=selected["group"] if selected else (stage(already["step"])["group"] if already else "")
-    related=[(n,p) for n,_,p in previous if p["step"] and stage(p["step"])["group"]==target_group]
-    for n,p in related[-3:]:prior.append({"number":n,"step":p["step"],"quote":p["evidence"][:160]})
+    cross={32:(13,15),39:(15,32),16:(15,32,35),42:(6,8,9),53:(11,12,19),54:(2,10),56:(51,52),59:(55,56),60:(6,16,51,53)}
+    wanted=cross.get(selected["id"] if selected else already["step"],())
+    related=[(n,p) for n,_,p in previous if p["step"] and (stage(p["step"])["group"]==target_group or p["step"] in wanted)]
+    important=[(n,p) for n,p in related if p["step"] in wanted]
+    chosen=(important+[(n,p) for n,p in reversed(related) if p["step"] not in wanted])[:4]
+    for n,p in sorted(chosen):prior.append({"number":n,"step":p["step"],"quote":p["evidence"][:160]})
     current=selected or (stage(already["step"]) if already else None)
     if not current:raise ValueError("no dynasty group")
     p={"selected":selected,"current":current,"group_start":start,"done":done,"prior":prior,"continuation":group["part"]>1}
@@ -193,20 +197,23 @@ def instruction(plan):
     current=p["current"];done=set(p["done"]);selected=p["selected"]
     guard=""
     if current["group"] in ("maid","home","mysteries","romance","lives") and 11 in done|{current["id"]}:
-        guard+=" Маюри — взрослая спасённая кицунэ. До первых встреч не знает людей, их быта и связи Хакурэи с героем. Не знает того, чего ей ещё не показали. До постепенного развития доверия не превращай страх и благодарность в любовь. "
+        guard+=" Маюри — взрослая небесная кицунэ. Не считай её спасённой раньше этапа спасения. До первых встреч не знает людей, их быта и связи Хакурэи с героем. Не знает того, чего ей ещё не показали. До постепенного развития доверия не превращай страх и благодарность в любовь. "
         if 16 not in done and current["id"]!=16:guard+=" Не признавай её влюблённой до соответствующего этапа. "
     if current["group"] in ("sister","romance","home","mysteries","lives") and 1 in done|{current["id"]} and 6 not in done and current["id"]!=6:
         guard+=" Цукиноха не признаётся в любви до постепенного развития её чувств. "
     anchors=MARKERS.get(current["id"],())
     marker=(" При реальном завершении выбранного эпизода верни dynasty:{step:"+str(selected["id"])+",evidence: точная цитата из story 12–240 символов, подтверждающая событие}. Если эпизод ещё не завершён, не добавляй dynasty. " if selected else " Не отмечай новый этап в этой части. ")
     if selected and anchors:marker+=" Для отметки выбери точную цитату, содержащую подходящие слова или основы: "+", ".join(anchors)+". "
-    return " Eternal Dynasty — текущая отдельная линия, а не уже произошедшие факты: "+o.dump(current)+". Подтверждённые этапы (номера): "+o.dump(p["done"])+". Выдержки предыдущих сцен этой линии: "+o.dump(p["prior"])+". "+guard+" Продолжай предыдущую часть без повтора, не перескакивай к будущим этапам. Не раскрывай секрет личности героя всему двору и не меняй прежние обязательные этапы. "+marker+" Все романтические герои взрослые; служение добровольное, чувства не являются платой за спасение."
+    return " Eternal Dynasty — текущая отдельная линия, а не уже произошедшие факты: "+o.dump(current)+". Подтверждённые этапы (номера): "+o.dump(p["done"])+". Выдержки предыдущих сцен этой линии: "+o.dump(p["prior"])+". "+guard+" Выбранный эпизод Династии имеет приоритет над общими перспективными замыслами. Продолжай предыдущую часть без повтора, не перескакивай к будущим этапам. Не раскрывай секрет личности героя всему двору и не меняй прежние обязательные этапы. "+marker+" Все романтические герои взрослые; служение добровольное, чувства не являются платой за спасение."
 
 def check(story,step,evidence):
     if type(step) is not int or step not in ORDER:raise ValueError("dynasty step")
     quote=o.clean(evidence,12,240)
     if quote not in story:raise ValueError("dynasty evidence absent")
     if any(x not in o.normalized(quote) for x in MARKERS.get(step,())):raise ValueError("dynasty evidence does not contain required anchors")
+    if step in (13,15):
+        text=o.normalized(story)
+        if not any(x in text for x in ("страх","боя","боится","испуг","дрож","поблед","страш")) or not any(x in text for x in ("не поним","не зна","почему","незнаком")):raise ValueError("first encounter fear or uncertainty not evident")
     return quote
 
 def save(db,did,story,raw,plan):
@@ -246,9 +253,10 @@ def plan_text(db):
     return "Будущие замыслы (спойлеры, не канон):\n"+"\n".join(("✓ " if i in done else "· ")+str(i)+". "+stage(i)["title"] for i in ORDER)
 
 def character_text(db,role):
-    rows=[(n,p) for n,_,p in published(db) if p["step"] and stage(p["step"])["group"]==role and (n<=13 or ev.readable(db,n))]
+    stem="маюри" if role=="maid" else "цукинох"
+    rows=[(n,p) for n,_,p in published(db) if p["step"] and (stage(p["step"])["group"]==role or stem in o.normalized(p["evidence"])) and (n<=13 or ev.readable(db,n))]
     if not rows:return "Нет доступных опубликованных сцен этой героини. Замыслы ещё не стали каноном."
-    return "\n\n".join(f"Глава {n}. {stage(p['step'])['title']}\n«{p['evidence']}»" for n,p in rows).replace("\'","'")
+    return "\n\n".join(f"Глава {n}. {stage(p['step'])['title']}\n«{p['evidence']}»" for n,p in rows)
 
 def graph(db):
     try:rows=[(n,did,p) for n,did,p in published(db) if p["step"] and (n<=13 or ev.readable(db,n))]
