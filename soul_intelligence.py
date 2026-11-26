@@ -8,6 +8,7 @@ import soul_genesis as ge
 import soul_evolution as ev
 import soul_infinite as inf
 import soul_guardians as gu
+import soul_destiny as de
 import soul_romance as romance
 import soul_heart as heart
 import soul_immortal as im
@@ -98,7 +99,7 @@ def collect_chapter(db,n,story,did):
         if key in seen:return
         seen.add(key);records.append(dict(kind=kind,subject=subject,object=obj,value=value,quote=quote,cause=cause))
     def mention(name,quote):
-        if isinstance(name,str) and o.normalized(name) in o.normalized(quote):add("character",name,name,quote)
+        if isinstance(name,str) and name.strip() and o.normalized(name) in o.normalized(quote):add("character",name,name,quote)
     if did is None:
         # Canonical roles are represented separately in the graph. Only actual exact-name mentions are indexed.
         for name in ("Хакурэя",):
@@ -126,6 +127,28 @@ def collect_chapter(db,n,story,did):
         for f in data["facts"]:
             q=f.get("quote",f.get("evidence",""));name=f["subject"];mention(name,q)
             add(f["kind"],name,f.get("value",f.get("detail","")),q,cause=f.get("cause"))
+    gp=gu.read(db,did)
+    if gp:
+        relmap={"доверие":"trust","дружба":"friend","соперничество":"rival","спор":"conflict","сотрудничество":"ally","забота":"friend"}
+        names={x[0]:x[1] for x in gu.CAST};names.update(empress="Хакурэя",hero="Герой")
+        for f in gp["memories"]:
+            q=f["evidence"];name=names[f["actor"]];other=names.get(f["other"],"")
+            mention(name,q);mention(other,q)
+            if other and f["relation"] in relmap and o.normalized(name) in o.normalized(q) and o.normalized(other) in o.normalized(q):add(relmap[f["relation"]],name,f["summary"],q,other)
+    dp=de.read(db,did)
+    if dp:
+        for f in dp["facts"]:
+            q=f["evidence"];name=de.ACTORS[f["subject"]][0] if f["subject"] else "событие";other=de.ACTORS[f["other"]][0] if f.get("other") else ""
+            mention(name,q);mention(other,q)
+            if f["kind"]=="alliance" and other and o.normalized(name) in o.normalized(q) and o.normalized(other) in o.normalized(q):add("ally",name,f["detail"],q,other,f["cause"])
+            else:add(f["kind"],name,f["detail"],q,cause=f["cause"])
+    lp=living.record(db,did)
+    if lp:
+        for f in lp["facts"]:
+            mention(f["name"],f["evidence"]);add(f["kind"],f["name"],f["detail"],f["evidence"],cause=f["cause"])
+    ip=im.read(db,did)
+    if ip:
+        for f in ip["facts"]:add(f["kind"],f["key"],f["detail"],f["evidence"],cause=f["cause"])
     for f in extra(db,did):
         if f["kind"] not in {"world","place","artifact","law","prophecy","interpretation","event","clue","secret","consequence"}:
             mention(f["subject"],f["quote"])
@@ -158,7 +181,9 @@ def refresh(db,force=False,limit=None):
         db.execute("DELETE FROM lit_index")
     db.execute("DELETE FROM lit_entries WHERE number NOT IN (SELECT number FROM omega_index)")
     db.execute("DELETE FROM lit_index WHERE number NOT IN (SELECT number FROM omega_index)")
-    rows=db.execute("SELECT number,arc,title,story,checksum,draft_id FROM omega_index ORDER BY number").fetchall()
+    sql="SELECT number,arc,title,story,checksum,draft_id FROM omega_index"
+    if not force:sql+=" WHERE number NOT IN (SELECT number FROM lit_index) OR number >= (SELECT COALESCE(MAX(number),13)-4 FROM omega_index)"
+    rows=db.execute(sql+" ORDER BY number").fetchall()
     count=0
     for row in rows:
         if limit is not None and count>=limit:break
@@ -276,7 +301,7 @@ def search(db,query):
     selected=[x for x in matches if x["number"]<=13 or ev.readable(db,x["number"])][:5]
     return "Локальный поиск по словам и тематическим синонимам:\n"+"\n\n".join(f"Глава {x['number']} — {x['title']}\n{x['story']}" for x in selected) if selected else "Доступных совпадений не найдено."
 
-def graph(db):
+def graph(db,existing=()):
     nodes=[];edges=[];seen=set()
     def node(key,label,kind,**extra):
         if key not in seen:
@@ -289,10 +314,15 @@ def graph(db):
         k="brain:"+key;node(k,label,"lit_brain",infinite_group="lit:db");edge("lit:db",k,"lit_module")
     for key,_ in BRAINS:
         if key!="coordinator":edge("brain:"+key,"brain:coordinator","lit_module")
-    try:data=list(rows(db,True))
+    try:
+        refresh(db)
+        data=list(rows(db,True))
     except ValueError:return nodes,edges
     actors,relations=registry(data)
+    known={norm(n["content"]):n["key"] for n in existing if n.get("kind") in ("character","infinite_character","evolution_subject","destiny_character")}
     latest=sorted(actors.values(),key=lambda x:x["last"],reverse=True)[:100]
+    for a in latest:
+        if a["id"].startswith("lit:actor:") and norm(a["name"]) in known:a["id"]=known[norm(a["name"])]
     # Reuse exact canonical/guardian/known Omega or Evolution actor keys when present.
     for a in latest:
         k=a["id"]
