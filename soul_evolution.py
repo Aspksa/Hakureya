@@ -119,7 +119,7 @@ def candidates(db,rows):
     return sorted(pool,key=lambda p:(-prefs.get(p["theme"],0)+recent[p["theme"]]*3,p["scene"],p["theme"]))
 
 def enrich(db,plan):
-    rows=list(published(db));fixed=any(k in plan for k in ("shadow","guardians","destiny")) or plan["arc"]!="future" or "cycle_id" in plan.get("romance",{})
+    rows=list(published(db));fixed=bool(plan.get("dynasty_lane")) or any(k in plan for k in ("shadow","guardians","destiny")) or plan["arc"]!="future" or "cycle_id" in plan.get("romance",{})
     unlocked=not fixed and ready(db)
     proposals=candidates(db,rows)[:3] if unlocked else []
     chosen=proposals[0] if proposals else {"scene":0,"theme":"fixed" if fixed else "growth","title":"Текущий эпизод","guide":"Не изменяй выбранную сагу."}
