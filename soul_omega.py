@@ -133,6 +133,9 @@ def mysteries(db):
 
 def enrich_plan(db,plan):
     beat=roadmap(db,plan["arc"],1)[0]
+    if plan["arc"]=="past":
+        count=db.execute("SELECT COUNT(*) FROM omega_index WHERE number>13 AND arc='past'").fetchone()[0]
+        beat["beat"]+="; небесное царство "+str((count//2)%9+1)+" из девяти (новые подробности только как художественный замысел)"
     method=strategy(db)
     state=mysteries(db)
     open_questions=[{"key":k,**v} for k,v in state.items() if v["closed"] is None][:8]
@@ -237,6 +240,12 @@ def book(db,v):
     rows=[(n,t) for n,t in db.execute("SELECT number,title FROM omega_index ORDER BY number") if volume(n)==v]
     return "Том "+str(v)+"\n"+"\n".join(f"{n}. {t}" for n,t in rows)+"\nЧитать: летопись: читать НОМЕР" if rows else "Том ещё не написан."
 
+def read_volume(db,v):
+    import soul_saga
+    nums=[n for n, in db.execute("SELECT number FROM omega_index ORDER BY number") if volume(n)==v]
+    if not nums: return "Том ещё не написан."
+    return "Художественный том "+str(v)+"\n\n"+"\n\n".join(soul_saga.read(db,n) for n in nums)
+
 def mark(db,n):
     db.execute("INSERT OR REPLACE INTO omega_reader VALUES(1,?)",(n,))
 
@@ -253,7 +262,13 @@ def diary(db,n=None):
 
 def character(db,name):
     result=search(db,name,12)
-    return "Художественные сведения о персонаже: "+name+"\n"+"\n".join(f"Глава {p['number']}: {p['title']}" for p in result) if result else "Персонаж не найден в опубликованных главах."
+    lines=[]
+    for p in result:
+        row=db.execute("SELECT story FROM omega_index WHERE number=?",(p["number"],)).fetchone()
+        sentences=re.split(r"(?<=[.!?])\s+|\n+",row[0]) if row else []
+        hit=next((x.strip()[:380] for x in sentences if normalized(name) in normalized(x)),"")
+        lines.append(f"Глава {p['number']}: {p['title']}"+("\n"+hit if hit else ""))
+    return "Художественные сведения о персонаже: "+name+"\n\n"+"\n\n".join(lines) if lines else "Персонаж не найден в опубликованных главах."
 
 def graph(db,chapter_limit=5000):
     """Aggregate older volumes; bounded event/character/mystery overlays for recent chapters."""
