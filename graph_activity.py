@@ -11,7 +11,8 @@ RECENT={}
 SESSION=uuid4().hex
 REV=0
 TERMINAL=("done","error","discarded","published","saved")
-STAGES=("request","context","waiting","received","validating","saving",*TERMINAL)
+BRAIN_STAGES=tuple("brain:"+x for x in ("plot","characters","relations","magic","time","memory","editor","analytics","twist","coordinator"))
+STAGES=("request","context","waiting","received","validating","saving",*BRAIN_STAGES,*TERMINAL)
 KEY=re.compile(r"[a-zA-Z0-9:_-]{1,100}")
 
 def safe_key(value):
@@ -27,7 +28,7 @@ def update(key,stage,target=None):
         if target is not None:item["target"]=safe_key(target)
         REV+=1
         item["events"].append({"seq":REV,"stage":stage,"target":item["target"]})
-        item["events"]=item["events"][-10:]
+        item["events"]=item["events"][-24:]
 
 @contextmanager
 def track(kind,source="root",sources=()):
