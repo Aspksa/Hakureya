@@ -1,0 +1,13 @@
+{
+  "name": "hakureya",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "test": "node --test tests/graph.test.mjs"
+  },
+  "devDependencies": {
+    "vite": "6.4.1"
+  }
+}
