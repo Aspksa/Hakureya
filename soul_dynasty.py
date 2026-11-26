@@ -3,6 +3,7 @@ One selected beat per literary group; exact story excerpts are required to mark 
 Existing Cloud.ru request, quota, review, and publication transaction remain authoritative.
 """
 import json
+import re
 import soul_omega as o
 import soul_evolution as ev
 import soul_novel as novel
@@ -228,7 +229,10 @@ def save(db,did,story,raw,plan):
     if raw is not None:
         try:
             if not isinstance(raw,dict) or set(raw)!={"step","evidence"} or not selected or raw["step"]!=selected["id"]:raise ValueError("unexpected dynasty milestone")
-            quote=check(story,raw["step"],raw["evidence"]);step=raw["step"]
+            quote=check(story,raw["step"],raw["evidence"])
+            if re.search(r"\bне\s+(?:была\s+|был\s+)?(?:приговорен\w*|спас[а-яё]*|влюб[а-яё]*|полюб[а-яё]*)\b",o.normalized(quote)):
+                raise ValueError("negated milestone requires review")
+            step=raw["step"]
         except (ValueError,TypeError,KeyError):
             warning="Отметка этапа не подтверждена цитатой; сюжетный этап не продвинут."
     payload=o.dump({"version":VERSION,"step":step,"evidence":quote,"group_start":p["group_start"],"target":selected["id"] if selected else 0,"current":p["current"]["id"],"warning":warning})
