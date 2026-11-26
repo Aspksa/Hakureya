@@ -88,6 +88,7 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
    assert.ok(metrics.diameter>=17.5&&metrics.diameter<=18.5,JSON.stringify(metrics));
    assert.ok(metrics.font>=13&&metrics.font<=16,JSON.stringify(metrics));
    assert.ok(metrics.labels>=1);
+   assert.equal(await evaluate("document.querySelector('#graph [data-key=\\\"cloud:api\\\"] title').textContent"),"Cloud.ru");
    await evaluate("document.querySelector('#avatar').click()");
    await waitFor(()=>evaluate("!document.querySelector('#chat').hidden"));
    await delay(200);

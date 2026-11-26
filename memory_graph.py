@@ -100,7 +100,15 @@ def snapshot(db, limit=5000):
     if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='chronicle_diary'").fetchone():
         total+=db.execute("SELECT COUNT(*) FROM chronicle_diary").fetchone()[0]+db.execute("SELECT COUNT(*) FROM chronicle_drafts WHERE status='approved'").fetchone()[0]
     total+=len(permanent)+int(pending is not None)
-    return {"records":records,"edges":edges,"total":total,"limited":total>len(records)}
+    publication=None
+    if db.execute("SELECT 1 FROM sqlite_master WHERE name='omega_index'").fetchone():
+        last=db.execute("SELECT number,arc,draft_id FROM omega_index WHERE draft_id IS NOT NULL ORDER BY number DESC LIMIT 1").fetchone()
+        if last:
+            n,arc,did=last;v=soul_omega.volume(n)
+            import soul_evolution
+            publication={"number":n,"key":f"c:{did}","volume":v,"segment":f"segment:{arc}:{v}","details":soul_evolution.readable(db,n),
+                "first":(n-14)%12==0,"complete":(n-14)%12==11,"epoch":1+(v-1)//8}
+    return {"records":records,"edges":edges,"total":total,"limited":total>len(records),"publication":publication}
 
 def add_note(db,kind,content):
     if type(kind) is not int or kind not in (1,3) or not isinstance(content,str) or not content.strip() or len(content)>12000:

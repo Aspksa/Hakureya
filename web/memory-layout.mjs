@@ -184,8 +184,11 @@ export function layout(snapshot){
  }
  const packed=packCircles(areas,radius[4],.035);
  for(const a of areas){const p=packed.get(a.key);for(const n of a.members){n.x+=p.x;n.y+=p.y}radius[4]=Math.max(radius[4],Math.hypot(p.x,p.y)+a.r)}
- const groupPositions=packCircles(count.map((c,i)=>({key:i,r:radius[i],count:c})).filter(d=>d.count),.10,.045);
+ const disks=count.map((c,i)=>({key:i,r:radius[i],count:c})).filter(d=>d.count);
+ if(snapshot.transport)disks.push({key:"cloud",r:.085,count:1});
+ const groupPositions=packCircles(disks,.10,.045);
  for(const n of nodes)if(n.group>=0){const p=groupPositions.get(n.group);n.x+=p.x;n.y+=p.y}
+ if(snapshot.transport){const p=groupPositions.get("cloud"),n={key:"cloud:api",kind:"cloud_api",group:-1,x:p.x,y:p.y,r:7,label:"Cloud.ru"};nodes.push(n);byKey.set(n.key,n)}
  const spread=1;
  const seen=new Set(edges.map(e=>e.a+"|"+e.b+"|"+e.kind));
  for(const e of snapshot.edges||[]){const k=e.a+"|"+e.b+"|"+e.kind;if(typeof e.kind==="string"&&byKey.has(e.a)&&byKey.has(e.b)&&e.a!==e.b&&!seen.has(k)){edges.push(e);seen.add(k)}}
