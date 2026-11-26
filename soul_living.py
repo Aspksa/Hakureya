@@ -126,7 +126,7 @@ def queue(db,limit=100):
 
 def enrich(db,plan,background=False):
     q=queue(db)
-    fixed=any(k in plan for k in ("shadow","guardians","destiny")) or "cycle_id" in plan.get("romance",{}) or plan["arc"]!="future"
+    fixed=bool(plan.get("dynasty_lane")) or any(k in plan for k in ("shadow","guardians","destiny")) or "cycle_id" in plan.get("romance",{}) or plan["arc"]!="future"
     head=q["items"][0]
     if fixed:head={**head,"theme":"fixed","guide":"Следуй главному замыслу текущей ветки."}
     elif head["theme"]=="fixed":head={**head,"theme":"growth","guide":"Продолжай явно выбранную ветку без раскрытия чужих тайн."}
@@ -187,6 +187,9 @@ def eligible(db,did):
     import soul_infinite
     inf=soul_infinite.read(db,did)
     if inf and (inf["quality"]["warnings"] or (inf["required"] and not inf["step"])):return False
+    import soul_dynasty
+    dynasty=soul_dynasty.read(db,did)
+    if dynasty and (soul_dynasty.audit(db) or (dynasty["target"] and not dynasty["step"])):return False
     if db.execute("SELECT 1 FROM lit_rejections WHERE draft_id=?",(did,)).fetchone():return False
     m=o.metadata(db,did);review=r.report(db,did)
     return bool(m and review and m["score"]>=85 and not m["warnings"] and review["originality_heuristic"]>=80 and not review["warnings"] and review["words"]>=350)
