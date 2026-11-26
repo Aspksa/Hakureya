@@ -105,7 +105,8 @@ def snapshot(db, limit=5000):
         last=db.execute("SELECT number,arc,draft_id FROM omega_index WHERE draft_id IS NOT NULL ORDER BY number DESC LIMIT 1").fetchone()
         if last:
             n,arc,did=last;v=soul_omega.volume(n)
-            publication={"number":n,"key":f"c:{did}","volume":v,"segment":f"segment:{arc}:{v}",
+            import soul_evolution
+            publication={"number":n,"key":f"c:{did}","volume":v,"segment":f"segment:{arc}:{v}","details":soul_evolution.readable(db,n),
                 "first":(n-14)%12==0,"complete":(n-14)%12==11,"epoch":1+(v-1)//8}
     return {"records":records,"edges":edges,"total":total,"limited":total>len(records),"publication":publication}
 
