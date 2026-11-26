@@ -359,3 +359,14 @@ class ServerTest(unittest.TestCase):
                 server.CHRONICLE["reader_seen"]=time.monotonic()-120
                 self.assertFalse(server.reading_window(db))
             remote.assert_not_called()
+
+
+    def test_infinite_reference_commands_are_offline(self):
+        with patch.object(server,"urlopen") as remote:
+            self.assertIn("0/60",self.request("chat",{"content":"Бесконечная судьба"})["reply"])
+            self.assertIn("Империя разбитых созвездий",self.request("chat",{"content":"Новые великие саги"})["reply"])
+            self.assertIn("страница 20/20",self.request("chat",{"content":"План романа 1000 20"})["reply"])
+            self.assertIn("Глава 1",self.request("chat",{"content":"Хронология романа"})["reply"])
+            self.assertIn("не установлен",self.request("chat",{"content":"Досье персонажа Герой"})["reply"])
+            self.assertIn("Хакурэя",self.request("chat",{"content":"Энциклопедия романа"})["reply"])
+            remote.assert_not_called()
