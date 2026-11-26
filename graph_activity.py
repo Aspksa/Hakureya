@@ -18,7 +18,7 @@ KEY=re.compile(r"[a-zA-Z0-9:_-]{1,100}")
 def safe_key(value):
     return value if isinstance(value,str) and KEY.fullmatch(value) else "root"
 
-def update(key,stage,target=None,duration_ms=None):
+def update(key,stage,target=None,duration_ms=None,inputs=None,output_bytes=None,included=None):
     global REV
     if stage not in STAGES:raise ValueError("unknown stage")
     with LOCK:
@@ -30,6 +30,10 @@ def update(key,stage,target=None,duration_ms=None):
         REV+=1
         event={"seq":REV,"stage":stage,"target":item["target"]}
         if type(duration_ms) in (int,float) and 0<=duration_ms<1e9:event["duration_ms"]=duration_ms
+        if stage in BRAIN_STAGES and isinstance(inputs,list):
+            event["inputs"]=[s for s in inputs if "brain:"+str(s) in BRAIN_STAGES][:9]
+        if type(output_bytes) is int and 0<=output_bytes<=16000:event["output_bytes"]=output_bytes
+        if type(included) is bool:event["included"]=included
         item["events"].append(event)
         item["events"]=item["events"][-24:]
 
@@ -89,7 +93,7 @@ def snapshot():
             if now-when>12:del RECENT[key]
         def copy(a):
             value={k:v for k,v in a.items() if not k.startswith("_")}
-            value.update(age_seconds=round(max(0,now-a["_started"])),idle_seconds=round(max(0,now-a["_heartbeat"])),sources=list(a["sources"]),events=[dict(e) for e in a["events"]])
+            value.update(age_seconds=round(max(0,now-a["_started"])),idle_seconds=round(max(0,now-a["_heartbeat"])),sources=list(a["sources"]),events=[{**e,**({"inputs":list(e["inputs"])} if "inputs" in e else {})} for e in a["events"]])
             value["stalled"]=a["kind"]=="chronicle" and a["stage"] not in TERMINAL and (value["age_seconds"]>=300 or value["idle_seconds"]>=180)
             return value
         return {"session":SESSION,"revision":REV,"active":[copy(a) for a in ACTIVE.values()],
