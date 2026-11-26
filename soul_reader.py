@@ -13,9 +13,35 @@ def init(db):
     db.execute("""CREATE TABLE IF NOT EXISTS book_reader_position(
        id INTEGER PRIMARY KEY CHECK(id=1), chapter INTEGER NOT NULL, offset INTEGER NOT NULL, source_hash TEXT NOT NULL)""")
 
+    db.execute("CREATE TABLE IF NOT EXISTS reader_anchor(id INTEGER PRIMARY KEY CHECK(id=1), chapter INTEGER NOT NULL, source_hash TEXT NOT NULL, offset INTEGER NOT NULL,text TEXT NOT NULL)")
+    db.execute("CREATE TABLE IF NOT EXISTS reader_migrations(id INTEGER PRIMARY KEY,chapter INTEGER NOT NULL,page INTEGER NOT NULL,source_hash TEXT NOT NULL)")
     db.execute("""CREATE TABLE IF NOT EXISTS reader_coverage(
        chapter INTEGER NOT NULL, source_hash TEXT NOT NULL, start INTEGER NOT NULL, end INTEGER NOT NULL,
        PRIMARY KEY(chapter,source_hash,start))""")
+
+def anchor(db,part,offset):
+    text=part["body"][offset:offset+100]
+    db.execute("INSERT OR REPLACE INTO reader_anchor VALUES(1,?,?,?,?)",(part["number"],part["hash"],offset,text))
+
+def recover_bookmark(db,row,loaded):
+    # Old editions have no textual anchor: restart the same chapter, never skip unseen text.
+    n,p,check,_=row
+    part=source(db,n)
+    saved=db.execute("SELECT text FROM reader_anchor WHERE chapter=?",(n,)).fetchone()
+    offset=0
+    if saved and saved[0] and part["body"].count(saved[0])==1:
+        offset=part["body"].index(saved[0])
+    db.execute("INSERT INTO reader_migrations(chapter,page,source_hash) VALUES(?,?,?)",(n,p,check))
+    pages,new_check=loaded
+    raw_offset=offset+part["prefix"]
+    page=0;boundary=0
+    for i,chunk in enumerate(pages):
+        page=i;boundary+=len(chunk)
+        if raw_offset<boundary:break
+    db.execute("INSERT OR REPLACE INTO book_reader VALUES(1,?,?,?,1)",(n,page,new_check))
+    db.execute("INSERT OR REPLACE INTO book_reader_position VALUES(1,?,?,?)",(n,offset,part["hash"]))
+    anchor(db,part,offset)
+    return f"Глава {n} · Страница {page+1}/{len(pages)}\n\n"+pages[page].strip()+"\n\nИздание обновилось. Позиция восстановлена по тексту либо с начала главы."
 
 def cover(db,n,check,start,end,length):
     # Only continuous displayed ranges qualify; opening the last page is not sufficient.
@@ -75,6 +101,7 @@ def display(db,n,p,loaded=None):
     part=source(db,n)
     start=sum(map(len,pages[:p]))-part["prefix"]
     end=start+len(pages[p])
+    anchor(db,part,max(0,start))
     cover(db,n,part["hash"],max(0,start),min(len(part["body"]),end),len(part["body"]))
     end="\n\nВсе опубликованные главы прочитаны. Новые появятся после утверждения." if n==latest(db) and p==len(pages)-1 else ""
     return f"Глава {n} · Страница {p+1}/{len(pages)}\n\n"+pages[p].strip()+end
@@ -101,6 +128,7 @@ def move(db,action,n=None):
     if loaded is None:return "Сохранённая глава недоступна. Закладка сохранена."
     pages,new_check=loaded
     if check!=new_check or p>=len(pages):
+        if action=="resume" and 1<=chapter<=13:return recover_bookmark(db,row,loaded)
         return "Текст сохранённой главы изменился. Откройте её заново; закладка сохранена."
     if action=="resume":
         # Preserve the exact adaptive bookmark when reopening through the old chat command.
@@ -215,6 +243,7 @@ def position(db,hash_value,start,end):
     db.execute("INSERT OR REPLACE INTO book_reader VALUES(1,?,?,?,1)",(n,p,check))
     db.execute("INSERT OR REPLACE INTO book_reader_position VALUES(1,?,?,?)",(n,offset,part["hash"]))
     soul_omega.mark(db,n)
+    anchor(db,part,offset)
     for seg in doc["segments"]:
         a=max(start,seg["start"]);b=min(end,seg["end"])
         if a<b:cover(db,seg["number"],seg["hash"],a-seg["start"],b-seg["start"],seg["end"]-seg["start"])
