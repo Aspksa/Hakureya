@@ -108,8 +108,8 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
             shadow_saved=soul_shadow.read(db,pending["id"])
             variants=db.execute("SELECT COUNT(*) FROM genesis_variants WHERE draft_id=?",(pending["id"],)).fetchone()[0]
         graph_activity.update(activity,"done",f"draft:{pending['id']}" if pending else "hub:4")
-        if shadow_plan:=plan.get("shadow"):
-            return pending["title"]+"\n\n"+pending["story"]+"\n\n"+("Этап сюжета подтверждён цитатой." if shadow_saved else "Этап ещё не завершён; следующий пока не откроется.")+"\nПринять главу / Отклонить главу. Оценки: летопись: качество."
+        if plan.get("shadow"):
+            return "Черновик создан.\n\n"+pending["title"]+"\n\n"+pending["story"]+"\n\n"+("Этап сюжета подтверждён цитатой." if shadow_saved else "Этап ещё не завершён; следующий пока не откроется.")+"\nПринять главу / Отклонить главу. Оценки: летопись: качество."
         return "Черновик создан. "+soul_saga.ARC_LABELS[plan["arc"]]+".\n\n"+pending["title"]+"\n\n"+pending["story"]+"\n\nОценка редактора (эвристика): "+str(editorial["score"])+"/100. "+", ".join(editorial["warnings"])+( "\nОригинальность (эвристика): "+str(scene_report["originality_heuristic"])+"/100, слов: "+str(scene_report["words"])+". "+", ".join(scene_report["warnings"]) if scene_report else "")+( "\nЕсть варианты: летопись: варианты" if variants else "")+"\n\nлетопись: принять "+str(pending["id"])+" / летопись: отклонить "+str(pending["id"])
     except (URLError,TimeoutError,ValueError,KeyError,IndexError,TypeError,OSError,sqlite3.Error):
         with LOCK, closing(connect()) as db, db:
@@ -262,7 +262,7 @@ def chronicle_command(content):
                 return "Черновик повреждён; публикация заблокирована."
             if not p:
                 return "Нет ожидающего черновика."
-            return f"Художественный черновик №{p['id']}: {p['title']}\n\n{p['story']}\n\nМодельные эмоции: {p['emotions']}\nПредлагаемые изменения характера: {p['traits']}\n\nлетопись: принять {p['id']} / летопись: отклонить {p['id']}"
+            return f"Художественный черновик: {p['title']}\n\n{p['story']}\n\nПринять главу / Отклонить главу. Оценки: летопись: качество."
         if q=="летопись: главы":
             rows=soul_saga.reading_rows(db)[-5:]
             return "\n\n".join(f"Вымышленная глава №{p['number']}: {p['title']}\n{p['story']}" for p in rows) or "Новых утверждённых глав пока нет."
