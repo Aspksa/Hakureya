@@ -8,13 +8,21 @@ export function sourceColor(key){
  if(key.startsWith("shadow:")||key.startsWith("infinite:")||key.startsWith("mystery:"))return "#c0a9e8";
  return "#e8c6ed";
 }
+export const brainColors={plot:"#c6a7e8",characters:"#a9d8f0",relations:"#efa1bd",magic:"#e5c36c",time:"#a6d8ba",memory:"#bec4eb",editor:"#e5aa8e",analytics:"#bcd9d7",twist:"#cfa1ed",coordinator:"#f6dba0"};
+export const brainLabels={plot:"Сюжет",characters:"Персонажи",relations:"Отношения",magic:"Магия",time:"Хронология",memory:"Память",editor:"Редактор",analytics:"Аналитика",twist:"Повороты",coordinator:"Координатор"};
 export const stageLabels={request:"Подготовка запроса",context:"Сбор литературного контекста",waiting:"Cloud.ru · ожидание ответа",received:"Ответ получен",validating:"Проверка текста",saving:"Сохранение SQLite",saved:"Черновик сохранён",published:"Глава опубликована",done:"Ответ сохранён",error:"Ошибка запроса",discarded:"Результат отброшен"};
+for(const [key,label] of Object.entries(brainLabels))stageLabels["brain:"+key]="Локальный анализ · "+label;
 export function flowPaths(item,graph){
  const root=graph.byKey.get("root");
  const source=graph.byKey.get(item.source)||graph.byKey.get(item.kind==="chronicle"?"hub:3":"hub:0")||root;
  const target=graph.byKey.get(item.target)||graph.byKey.get(item.kind==="chronicle"?"hub:4":"hub:2")||root;
  const cloud=graph.byKey.get("cloud:api")||{x:-Math.max(.34,graph.extent*.72),y:item.kind==="chronicle"?.10:-.10};
  const route=(points,color)=>({points,color});
+ if(item.stage.startsWith("brain:")){
+  const key=item.stage.slice(6),node=graph.byKey.get(item.stage),db=graph.byKey.get("lit:db"),coordinator=graph.byKey.get("brain:coordinator");
+  if(!node||!db||!coordinator)return [];
+  return key==="coordinator"?[route([coordinator,root],brainColors[key])]:[route([db,node,coordinator],brainColors[key]||"#e8c6ed")];
+ }
  if(item.stage==="request"||item.stage==="context"){
   const keys=[...new Set([item.source,...(item.sources||[])])].slice(0,8);
   const paths=keys.filter(k=>graph.byKey.has(k)).map(k=>route([graph.byKey.get(k),root],sourceColor(k)));
@@ -31,7 +39,7 @@ export function flowPaths(item,graph){
 // Consume real server stages in order, including stages that complete between polling ticks.
 export function activityEvents(item,after=0){
  const events=Array.isArray(item.events)?item.events.filter(e=>Number.isSafeInteger(e.seq)&&e.seq>after&&stageLabels[e.stage]):[];
- return events.slice(-10).map(e=>({...item,stage:e.stage,target:e.target,seq:e.seq}));
+ return events.slice(-24).map(e=>({...item,stage:e.stage,target:e.target,seq:e.seq}));
 }
 export function pointOn(points,t){
  if(t<=0)return {x:points[0].x,y:points[0].y};
@@ -57,7 +65,7 @@ export function publicationLinks(publication,graph){
  if(publication.details===false)return result;
  const linked=new Set([k]);
  for(const e of graph.edges)if(e.a===k||e.b===k){
-  if(/(?:source|event|character|cause|relationship|story_continuation|cross_volume)/.test(e.kind)){
+  if(/(?:source|event|character|cause|relationship|story_continuation|cross_volume|lit_appearance|lit_fact)/.test(e.kind)){
    const other=e.a===k?e.b:e.a;linked.add(other);
    add(k,other,e.kind.includes("cause")||e.kind.includes("cross_volume")?"#9ec8f0":sourceColor(other));
   }
