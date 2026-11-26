@@ -45,14 +45,14 @@ BEATS=(
 (29,"heroines","character","Изгнанная женщина-рыцарь","Взрослая рыцарь, изгнание, цель, честь и возможность новой судьбы."),
 (30,"heroines","power","Создательница артефактов","Взрослая мастерица, ремесло, собственные правила, цена создания и ошибки."),
 (31,"home","love","Обычаи людей","Хакурэя и Цукиноха учатся человеческим обычаям; покажи разные реакции без повторения прошлых сцен."),
-(32,"home","character","Первое утро Маюри","Маюри не знает кухни, электричества, техники и бытовых правил. Герой спокойно объясняет; страх ослабевает постепенно, не исчезает сразу."),
+(32,"home","character","Первое утро Маюри","Маюри не знает кухни, электричества, техники и бытовых правил. Герой спокойно объясняет; страх ослабевает постепенно, не исчезает сразу. Она ещё не знает всей связи героя с Хакурэей."),
 (33,"home","guardians","Тайные визиты","Девять хранительниц посещают дом согласно уже раскрытым им сведениям; не раскрывай тайну раньше их этапов."),
 (34,"home","growth","Магия и бытовые ошибки","Юмор через различие привычек, не унижение героинь; конкретное последствие магии."),
 (35,"home","world","Совместный отдых","Путешествие и отдых в человеческом мире, новая деталь культуры, самостоятельные желания."),
 (36,"home","love","Подарок с историей","Неожиданный подарок герою с личным смыслом, не покупка привязанности."),
 (37,"home","world","Дворец в отдельном измерении","Добровольное совместное строительство, правила пространства и безопасность; не новый десятый небесный мир."),
 (38,"home","character","Библиотека героя","Создание личной библиотеки; каждый участник предлагает собственный вклад и источники знаний."),
-(39,"home","love","Семейный праздник","Ужин или праздник, разные голоса, новые традиции, уважение границ."),
+(39,"home","love","Семейный праздник","Ужин или праздник, разные голоса, новые традиции, уважение границ. Если Маюри ещё не знает о любви Хакурэи к герою, та объясняет это лично, не раскрывая личность тайного защитника."),
 (40,"home","mystery","Секрет среди людей","Последствия сохранения тайны сверхъестественного происхождения; не заставляй людей знать то, чего не видели."),
 (41,"romance","love","Своя история любви","Для взрослых героинь показывай разные добровольные траектории чувств; не объявляй всех влюблёнными без событий."),
 (42,"romance","love","Ревность Хакурэи","Хакурэя замечает собственную ревность к Цукинохе, обсуждает чувства, сохраняя достоинство."),
@@ -135,6 +135,10 @@ def next_step(db):
     done=completed(db)
     return stage(ORDER[len(done)]) if len(done)<len(ORDER) else None
 
+def continuing(db):
+    row=db.execute("SELECT arc,draft_id FROM omega_index ORDER BY number DESC LIMIT 1").fetchone()
+    return bool(row and row[0]=="future" and row[1] is not None and read(db,row[1]) and novel.next_group(db,"future",None)["part"]>1)
+
 def choose_lane(db,explicit=False):
     """Only switch at a new literary group; keep ongoing Dynasty groups intact."""
     if romance.current_cycle(db) or audit(db):return False
@@ -172,9 +176,20 @@ def context(db,plan):
     if not p["continuation"]:plan["novel"]["next_line"]=direction
     return plan
 
+def guard(db,plan):
+    done=set(completed(db))
+    if not done:return ""
+    if plan["arc"]!="future":return " Не переноси будущие события Династии в раннее прошлое."
+    if plan.get("dynasty_lane"):return ""
+    hints=["Не продвигай этапы Династии вне выделенной линии; не выдумывай её прошлое."]
+    if 11 in done:
+        hints.append("Маюри — взрослая небесная кицунэ; учитывай только уже опубликованные события её спасения и знакомства. "+("Её чувства нельзя считать долгом." if 16 in done else "Не объявляй её влюблённой раньше её этапа."))
+    if 1 in done:hints.append("Цукиноха — взрослая младшая сестра; "+("её чувства уже развивались." if 6 in done else "не раскрывай любовь раньше её этапа."))
+    return " "+" ".join(hints)
+
 def instruction(plan):
     p=plan.get("dynasty")
-    if not p:return ""
+    if not p:return plan.get("dynasty_guard","")
     current=p["current"];done=set(p["done"]);selected=p["selected"]
     guard=""
     if current["group"] in ("maid","home","mysteries","romance","lives") and 11 in done|{current["id"]}:
@@ -182,7 +197,9 @@ def instruction(plan):
         if 16 not in done and current["id"]!=16:guard+=" Не признавай её влюблённой до соответствующего этапа. "
     if current["group"] in ("sister","romance","home","mysteries","lives") and 1 in done|{current["id"]} and 6 not in done and current["id"]!=6:
         guard+=" Цукиноха не признаётся в любви до постепенного развития её чувств. "
+    anchors=MARKERS.get(current["id"],())
     marker=(" При реальном завершении выбранного эпизода верни dynasty:{step:"+str(selected["id"])+",evidence: точная цитата из story 12–240 символов, подтверждающая событие}. Если эпизод ещё не завершён, не добавляй dynasty. " if selected else " Не отмечай новый этап в этой части. ")
+    if selected and anchors:marker+=" Для отметки выбери точную цитату, содержащую подходящие слова или основы: "+", ".join(anchors)+". "
     return " Eternal Dynasty — текущая отдельная линия, а не уже произошедшие факты: "+o.dump(current)+". Подтверждённые этапы (номера): "+o.dump(p["done"])+". Выдержки предыдущих сцен этой линии: "+o.dump(p["prior"])+". "+guard+" Продолжай предыдущую часть без повтора, не перескакивай к будущим этапам. Не раскрывай секрет личности героя всему двору и не меняй прежние обязательные этапы. "+marker+" Все романтические герои взрослые; служение добровольное, чувства не являются платой за спасение."
 
 def check(story,step,evidence):
@@ -198,10 +215,14 @@ def save(db,did,story,raw,plan):
         if raw is not None:raise ValueError("unexpected dynasty")
         return
     selected=p["selected"];step=0;quote=""
+    warning=""
     if raw is not None:
-        if not isinstance(raw,dict) or set(raw)!={"step","evidence"} or not selected or raw["step"]!=selected["id"]:raise ValueError("unexpected dynasty milestone")
-        step=raw["step"];quote=check(story,step,raw["evidence"])
-    payload=o.dump({"version":VERSION,"step":step,"evidence":quote,"group_start":p["group_start"],"target":selected["id"] if selected else 0,"current":p["current"]["id"]})
+        try:
+            if not isinstance(raw,dict) or set(raw)!={"step","evidence"} or not selected or raw["step"]!=selected["id"]:raise ValueError("unexpected dynasty milestone")
+            quote=check(story,raw["step"],raw["evidence"]);step=raw["step"]
+        except (ValueError,TypeError,KeyError):
+            warning="Отметка этапа не подтверждена цитатой; сюжетный этап не продвинут."
+    payload=o.dump({"version":VERSION,"step":step,"evidence":quote,"group_start":p["group_start"],"target":selected["id"] if selected else 0,"current":p["current"]["id"],"warning":warning})
     source=db.execute("SELECT checksum FROM chronicle_drafts WHERE id=?",(did,)).fetchone()[0]
     db.execute("INSERT INTO dynasty_records VALUES(?,?,?,?)",(did,payload,source,o.digest(o.dump([payload,source]))))
 
@@ -224,6 +245,11 @@ def plan_text(db):
     done=set(completed(db))
     return "Будущие замыслы (спойлеры, не канон):\n"+"\n".join(("✓ " if i in done else "· ")+str(i)+". "+stage(i)["title"] for i in ORDER)
 
+def character_text(db,role):
+    rows=[(n,p) for n,_,p in published(db) if p["step"] and stage(p["step"])["group"]==role and (n<=13 or ev.readable(db,n))]
+    if not rows:return "Нет доступных опубликованных сцен этой героини. Замыслы ещё не стали каноном."
+    return "\n\n".join(f"Глава {n}. {stage(p['step'])['title']}\n«{p['evidence']}»" for n,p in rows).replace("\'","'")
+
 def graph(db):
     try:rows=[(n,did,p) for n,did,p in published(db) if p["step"] and (n<=13 or ev.readable(db,n))]
     except (ValueError,TypeError,KeyError):return [],[]
@@ -234,12 +260,12 @@ def graph(db):
             seen.add(k);nodes.append(dict(key=k,content=label,group=4,kind=kind,created="",order=len(nodes),infinite_group=area or k,**extra))
     def edge(a,b,k):
         if a!=b:edges.append(dict(a=a,b=b,kind=k))
-    root="dynasty:root";node(root,"Династия вечности","dynasty_root")
+    root="dynasty:root";node(root,"Династия вечности","dynasty_root",cycle_complete=len(done)==len(ORDER))
     sister=li.actor_key(SISTER);maid=li.actor_key(MAID)
     if 1 in done:
-        node(sister,SISTER,"lit_character");edge(root,sister,"dynasty_character");edge(sister,"character:empress","dynasty_family")
+        node(sister,SISTER,"lit_character",dynasty_role="Сестра императрицы",dynasty_count=sum("цукинох" in o.normalized(p["evidence"]) for _,_,p in rows));edge(root,sister,"dynasty_character");edge(sister,"character:empress","dynasty_family")
     if 11 in done:
-        node(maid,MAID,"lit_character");edge(root,maid,"dynasty_character")
+        node(maid,MAID,"lit_character",dynasty_role="Спасённая горничная",dynasty_count=sum("маюри" in o.normalized(p["evidence"]) for _,_,p in rows));edge(root,maid,"dynasty_character")
     if 6 in done and 1 in done:edge(sister,"character:hero","dynasty_love")
     if 16 in done and 11 in done:edge(maid,"character:hero","dynasty_love")
     if 8 in done and 1 in done:edge(sister,"character:empress","dynasty_rival")
@@ -247,14 +273,15 @@ def graph(db):
     previous=None
     for n,did,p in rows:
         s=stage(p["step"]);g="dynasty:group:"+s["group"];groups.add(s["group"])
-        node(g,GROUPS[s["group"]],"dynasty_saga");edge(root,g,"dynasty_branch")
+        group_ids={i for i in ORDER if stage(i)["group"]==s["group"]};count=len(group_ids&done)
+        node(g,GROUPS[s["group"]]+f" · {count}/{len(group_ids)}","dynasty_saga",cycle_complete=count==len(group_ids));edge(root,g,"dynasty_branch")
         k="dynasty:stage:"+str(s["id"]);source="c:"+str(did)
         # Keep spoiler-protected titles neutral even when reading out of order.
         label=("Этап "+str(s["id"]) if ev.settings(db)[1] else s["title"])
         node(k,label,"dynasty_mystery" if s["theme"]=="mystery" else "dynasty_event",g)
         edge(g,k,"dynasty_stage");edge(source,k,"dynasty_source")
-        if s["group"]=="sister" and 1 in done:edge(sister,k,"dynasty_history")
-        if s["group"]=="maid" and 11 in done:edge(maid,k,"dynasty_history")
+        if 1 in done and "цукинох" in o.normalized(p["evidence"]):edge(sister,k,"dynasty_history");edge(source,sister,"dynasty_appearance")
+        if 11 in done and "маюри" in o.normalized(p["evidence"]):edge(maid,k,"dynasty_history");edge(source,maid,"dynasty_appearance")
         if previous:edge(previous,k,"dynasty_time")
         previous=k
         if s["id"]==60 and 1 in done and 11 in done:
