@@ -132,7 +132,12 @@ def enrich(db,plan):
         if previous:
             choice["continuation"]={"chapter":previous[-1][0],"ending":previous[-1][2][-1500:]}
     plan["romance"]=choice
-    plan["romance_memory"]={"recent":recent,"canon":anchors}
+    event_notes=[]
+    for n,did in db.execute("SELECT number,draft_id FROM omega_index WHERE draft_id IS NOT NULL ORDER BY number DESC LIMIT 12"):
+        m=o.metadata(db,did)
+        if m:
+            event_notes.extend({"chapter":n,"event":e["summary"],"cause":e["cause"]} for e in m["data"]["events"])
+    plan["romance_memory"]={"recent":recent,"canon":anchors,"events":event_notes[:12]}
     return plan
 
 def instruction(plan):
@@ -149,7 +154,7 @@ def instruction(plan):
         " Если это часть большого цикла, продолжай последнюю сцену без пересказа; создай завершённый эпизод, а не обрыв предложения. "
         " Перед ответом самостоятельно проверь повторения и ясность, не выводи анализ. Соблюдай общий лимит JSON и оставляй достаточно места для самого литературного текста.")
 
-def review(db,title,story):
+def review(db,title,story,events=()):
     new=profile(title,story)
     repeats=[]; warnings=[]; max_motif=0
     for n,old in memory(db):
@@ -168,14 +173,28 @@ def review(db,title,story):
     if max_motif>=.8:warnings.append("похожие мотивы; проверьте, что событие действительно новое")
     if new["words"]<350:warnings.append("короткая сцена; не считать большой главой")
     if "—" not in story:warnings.append("нет явных диалогов (может быть авторским выбором)")
-    if story.count("белоснеж")>3:warnings.append("часто повторяется описание внешности")
+    if o.normalized(story).count("белоснеж")>3:warnings.append("часто повторяется описание внешности")
+    # Compare proposed plot events, not just prose. Stem-prefix overlap is approximate.
+    def stemset(text):return {w[:max(4,len(w)-2)] for w in o.tokens(text)}
+    targets=[stemset(e["summary"]) for e in events]
+    similar=[]
+    if targets:
+        for n,did in db.execute("SELECT number,draft_id FROM omega_index WHERE draft_id IS NOT NULL ORDER BY number"):
+            m=o.metadata(db,did)
+            if not m:continue
+            for e in m["data"]["events"]:
+                other=stemset(e["summary"])
+                if any(len(a&other)>=3 and len(a&other)/max(1,len(a|other))>=.65 for a in targets):
+                    similar.append(n);break
+    if similar:warnings.append("похожие сюжетные события: главы "+", ".join(map(str,similar[:8])))
     score=max(0,100-12*len(warnings)-round(max_motif*12))
     return {"originality_heuristic":score,"warnings":warnings,"words":new["words"],"motifs":new["motifs"],"version":VERSION}
 
 def save(db,did,base,plan):
     p=plan.get("romance")
     if not p:return
-    report=review(db,base["title"],base["story"])
+    metadata=o.metadata(db,did)
+    report=review(db,base["title"],base["story"],metadata["data"]["events"] if metadata else ())
     raw=o.dump(p);r=o.dump(report)
     db.execute("INSERT INTO romance_drafts VALUES(?,?,?,?,?,?)",(did,raw,r,o.digest(raw+"\n"+r),p.get("cycle_id"),VERSION))
 
@@ -185,11 +204,11 @@ def report(db,did):
     if o.digest(row[0]+"\n"+row[1])!=row[2]:raise ValueError("damaged scene report")
     return json.loads(row[1])
 
-def refresh_variant(db,did,base):
+def refresh_variant(db,did,base,events=()):
     row=db.execute("SELECT plan FROM romance_drafts WHERE draft_id=?",(did,)).fetchone()
     if row:
         report(db,did)
-        r=o.dump(review(db,base["title"],base["story"]))
+        r=o.dump(review(db,base["title"],base["story"],events))
         db.execute("UPDATE romance_drafts SET report=?,checksum=? WHERE draft_id=?",(r,o.digest(row[0]+"\n"+r),did))
 
 def on_approve(db,did):
