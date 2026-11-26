@@ -207,3 +207,13 @@ class ServerTest(unittest.TestCase):
             self.request("config",{"key":"test-key","model":"test-model","consent":True})
             self.assertIn("Ожидает завершения",self.request("chat",{"content":"Продолжи судьбу"})["reply"])
             remote.assert_not_called()
+
+
+    def test_living_controls_are_local(self):
+        with patch.object(server,"urlopen") as remote:
+            self.assertIn("выключено",self.request("chat",{"content":"Статус развития"})["reply"])
+            self.assertIn("черновики",self.request("chat",{"content":"Развивай историю сама"})["reply"])
+            self.assertIn("автопубликация",self.request("chat",{"content":"Включи автопубликацию глав"})["reply"])
+            self.assertIn("остановлено",self.request("chat",{"content":"Останови развитие"})["reply"])
+            self.assertIn("выключено",self.request("chat",{"content":"Статус развития"})["reply"])
+            remote.assert_not_called()
