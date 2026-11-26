@@ -132,7 +132,7 @@ def context(db,plan):
     knowledge=[{"chapter":f["chapter"],"subject":f["subject"],"detail":f["detail"][:120],"knows":f["knows"],"quote":f["evidence"][:160]} for f in ev.state(db).values() if f["kind"] in ("secret","knowledge")]
     knowledge.sort(key=lambda x:(not bool(focus and o.normalized(focus) in [o.normalized(v) for v in x["knows"]+[x["subject"]]]),-x["chapter"]))
     # Three volumes of provisional pacing, no future canonical facts.
-    forecast=[{"volume":o.volume(n+i*12),"start":n+i*12,"direction":("последствия текущей линии" if i==0 else "пересечение и развитие" if i==1 else "выбор и новая линия")} for i in range(3)]
+    forecast=[{"volume":o.volume(n)+i,"start":n if i==0 else 14+(o.volume(n)+i-2)*12,"direction":("последствия текущей линии" if i==0 else "пересечение и развитие" if i==1 else "выбор и новая линия")} for i in range(3)]
     p={"version":VERSION,"number":n,"theme":chosen["theme"],"title":chosen["title"][:90],"guide":chosen.get("guide","")[:220],"reason":reason,
        "fixed":fixed,"continuation":continuation,"cycle":cycle,"pace":pacing,"prior_tension":mean,
        "alternatives":[{k:x[k] for k in ("theme","title","reason","score")} for x in candidates if x["theme"]!=chosen["theme"]][:3],
@@ -186,13 +186,14 @@ def report(db,mode):
     if not rows:return "Нет доступных опубликованных частей с Eternal Story. Планировщик начнёт работу при следующем написании; скрытые главы не раскрываются."
     n,_,p=rows[-1]
     if mode=="forecast":
-        return "Перспективный план, не канон (на момент написания главы "+str(n)+"):\n"+"\n".join(f"Том {x[\x27volume\x27]}, от главы {x[\x27start\x27]}: {x[\x27direction\x27]}" for x in p["forecast"])
+        return "Перспективный план, не канон (на момент написания главы "+str(n)+"):\n"+"\n".join(f"Том {x['volume']}, от главы {x['start']}: {x['direction']}" for x in p["forecast"])
     if mode=="cycles":
         cycles={}
         for num,_,r in rows:
             c=r.get("cycle")
             if c:cycles[c["id"]]=c
         return "Редакционные циклы (не доказательство завершения сюжета):\n"+"\n".join(f"{c['id']}. "+("Редакционный цикл" if ev.settings(db)[1] else c["title"])+f" — {c['part']}/{c['target']}, {c['phase']}" for c in cycles.values()) if cycles else "Действуют прежние обязательные этапы."
+    if mode=="annotation":return ev.annotation(db,o.volume(n))
     if mode=="quality":
         return "Локальные показатели, не смысловая гарантия:\n"+"\n".join(f"Глава {num}: напряжение {r['tension']}/100, оригинальность {r['originality']}, замечания: "+("; ".join(r["warnings"]) or "нет") for num,_,r in rows[-8:])
     # Reasons may reference prior unread chapters; conservatively hide detailed plans in that case.
@@ -201,7 +202,8 @@ def report(db,mode):
     return f"Глава {n}: {p['title']}\nПричина выбора: {p['reason']}\nТемп: {p['pace']}\nОткрытых записей линий: {p['open_count']}\nВарианты (на момент написания, не канон):\n"+"\n".join(x["title"]+" — "+x["reason"] for x in p["alternatives"])
 
 def graph(db):
-    rows=[(n,did,p) for n,did,p in published(db) if source_visible(db,n)]
+    try:rows=[(n,did,p) for n,did,p in published(db) if source_visible(db,n)]
+    except (ValueError,TypeError,KeyError):return [],[]
     if not rows:return [],[]
     nodes=[];edges=[];cycles={};chapter_cycle={}
     def node(key,label,kind,**extra):nodes.append(dict(key=key,content=label,group=4,kind=kind,created="",order=len(nodes),**extra))
