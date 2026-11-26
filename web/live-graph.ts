@@ -12,6 +12,34 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
  colors.forEach((c,i)=>{const g=el("radialGradient",{id:"glow"+i},defs);for(const [offset,opacity] of [[0,.92],[.11,.65],[.25,.26],[.5,.08],[1,0]])el("stop",{offset,"stop-color":c,"stop-opacity":opacity},g)});
  const cloudGlow=el("radialGradient",{id:"cloud-glow"},defs);for(const [offset,opacity] of [[0,.8],[.2,.35],[1,0]])el("stop",{offset,"stop-color":"#91cbff","stop-opacity":opacity},cloudGlow);
  const stars=el("g",{"pointer-events":"none"}),world=el("g"),links=el("g",{"pointer-events":"none"},world),orbits=el("g",{"pointer-events":"none"},world),dots=el("g",{},world),flows=el("g",{"pointer-events":"none"},world),overlay=el("g",{"pointer-events":"none"},world);
+ // Decorative Genesis layers are never persisted as literary records.
+ const fog=el("g",{"pointer-events":"none","aria-hidden":"true"});
+ svg.insertBefore(fog,stars);
+ const mist=el("radialGradient",{id:"genesis-mist"},defs);
+ for(const [offset,opacity] of [[0,.23],[.43,.085],[1,0]])el("stop",{offset,"stop-color":"#d0a66a","stop-opacity":opacity},mist);
+ const clouds=Array.from({length:3},()=>el("ellipse",{fill:"url(#genesis-mist)"},fog));
+ const genesis=el("g",{"pointer-events":"none","aria-hidden":"true"});
+ const halo=el("g",{},genesis),rings=Array.from({length:4},()=>el("ellipse",{fill:"none",stroke:"#d8b477","stroke-width":.8,"stroke-dasharray":"5 9"},halo));
+ const spiral=Array.from({length:2},()=>el("path",{fill:"none",stroke:"#f2cf8c","stroke-width":.9},halo));
+ const seed=el("g",{},genesis),seedGlow=el("circle",{fill:"url(#glow0)"},seed),seedCore=el("circle",{fill:"#fff1c9"},seed);
+ const seedOrbit=el("ellipse",{fill:"none",stroke:"#e7c46d","stroke-width":.8,"stroke-dasharray":"3 5"},seed);
+ const seedLabel=el("text",{"text-anchor":"middle",fill:"#f3d7a5","font-size":10,y:29},seed);
+ const dust=Array.from({length:24},()=>el("circle",{fill:"#f6d99d",r:1.1},genesis));
+ genesis.setAttribute("display","none");
+ const defaults={mist:65,glow:80,particles:75,speed:50};
+ type EffectKey=keyof typeof defaults;
+ const settings={...defaults};
+ try{const saved=JSON.parse(localStorage.getItem("hakureya.genesis.v1")||"{}");for(const k of Object.keys(defaults) as EffectKey[])if(typeof saved[k]==="number"&&Number.isFinite(saved[k]))settings[k]=clamp(saved[k],0,100)}catch{}
+ const panel=document.createElement("details");panel.className="genesis-settings";
+ const summary=document.createElement("summary");summary.textContent="Эффекты";panel.append(summary);
+ for(const [key,label] of Object.entries({mist:"Туман",glow:"Свечение",particles:"Частицы",speed:"Скорость"})){
+  const k=key as EffectKey,row=document.createElement("label"),input=document.createElement("input");
+  input.type="range";input.min="0";input.max="100";input.value=String(settings[k]);input.setAttribute("aria-label",label);
+  row.append(document.createTextNode(label),input);panel.append(row);
+  input.addEventListener("input",()=>{settings[k]=Number(input.value);try{localStorage.setItem("hakureya.genesis.v1",JSON.stringify(settings))}catch{}invalidate()});
+ }
+ svg.parentElement?.append(panel);
+ let mouseX=0,mouseY=0,quality=1,frameMean=16.7,lastEffects=0;
  const random=rng(920),starData=Array.from({length:2200},()=>({x:random(),y:random(),r:.12+random()**7*.72,o:.035+random()**2*.34}));
  const starBuckets=new Map<string,{path:SVGPathElement,points:typeof starData}>();
  for(const [i,p] of starData.entries()){const tone=i%13===0?"#d8b9a1":"#e1dcd8",opacity=Math.max(.05,Math.round(p.o*10)/10),key=tone+":"+opacity;let bucket=starBuckets.get(key);if(!bucket){bucket={path:el("path",{fill:tone,opacity},stars),points:[]};starBuckets.set(key,bucket)}bucket.points.push(p)}
@@ -62,7 +90,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   focusMotion={start:performance.now(),fromZoom:zoom,toZoom:target,fromX:panX,fromY:panY,toX:key==="root"?0:-(n.x-camera.cx)*s*k,toY:key==="root"?0:-(n.y-camera.cy)*s*k};
   invalidate();
  }
- function status(){const count=[...works.values()].filter(a=>!a.terminal).length;info.textContent=(snapshot.volume?"Том "+snapshot.volume+" · ":"")+snapshot.total+" записей · "+graph.edges.length+" связей"+(snapshot.limited?" · ограничено 5000":"")+(snapshot.volume?" · ↻ общая карта":"")+(count?" · "+([...stages.values()].find(a=>!a.terminal)?.current&&stageNames[[...stages.values()].find(a=>!a.terminal)!.current.stage]||"Cloud.ru: "+count):[...stages.values()].some(a=>a.terminal)?" · "+(stageNames[[...stages.values()].at(-1)?.current.stage||""]||""):"")}
+ function status(){const writer=[...works.values()].find(a=>!a.terminal&&a.item.kind==="chronicle");const count=[...works.values()].filter(a=>!a.terminal).length;info.textContent=(snapshot.volume?"Том "+snapshot.volume+" · ":"")+snapshot.total+" записей · "+graph.edges.length+" связей"+(snapshot.limited?" · ограничено 5000":"")+(snapshot.volume?" · ↻ общая карта":"")+(writer?" · Глава: "+(stageNames[writer.item.stage]||writer.item.stage):count?" · "+([...stages.values()].find(a=>!a.terminal)?.current&&stageNames[[...stages.values()].find(a=>!a.terminal)!.current.stage]||"Cloud.ru: "+count):[...stages.values()].some(a=>a.terminal)?" · "+(stageNames[[...stages.values()].at(-1)?.current.stage||""]||""):"")}
  function redrawSelection(){
   overlay.replaceChildren();selectionGlyph=null;const n=graph.byKey.get(active);if(!n)return;
   const outer=el("g",{transform:"translate("+n.x*s+" "+n.y*s+")"},overlay),color=colors[n.group+1];
@@ -143,7 +171,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   if(isNewPublication&&!paused&&!motion.matches){for(const n of next.records){if((n.key.startsWith("draft:")||n.kind==="lit_character"||n.kind==="lit_world"||n.kind==="lit_power"||n.kind==="lit_place"||n.kind==="lit_family")&&!oldKeys.has(n.key)){births.set(n.key,now);pulse(n.key,"#e8c6ed",now)}}}
   status();invalidate();
  }
- function clearActivity(){works.clear();stages.clear();birthTrails.clear();for(const p of particles.values())p.group.remove();particles.clear();for(const ring of highlighted.values())ring.remove();highlighted.clear();status();invalidate()}
+ function clearActivity(){genesis.setAttribute("display","none");works.clear();stages.clear();birthTrails.clear();for(const p of particles.values())p.group.remove();particles.clear();for(const ring of highlighted.values())ring.remove();highlighted.clear();status();invalidate()}
  function setActivity(next:Activity){
   if(next.session!==session){clearActivity();seen.clear();session=next.session}
   if(paused||document.hidden)return;
@@ -167,7 +195,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
  }
  function drawActivity(now:number){
   const used=new Set<string>(),hot=new Map<string,string>(),inverse=1/Math.max(.00001,zoom*fit);
-  let routeBudget=graph.nodes.length>800?6:16;
+  let routeBudget=Math.max(1,Math.floor((graph.nodes.length>800?6:16)*quality));
   for(const [id,a] of stages){
    let elapsed=now-a.started;
    const duration=a.current.stage.startsWith("brain:")?420:a.current.stage==="waiting"?1100:a.current.stage==="received"?900:680;
@@ -181,7 +209,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
     if(!p){const group=el("g",{},flows),line=el("polyline",{fill:"none","stroke-width":1.1},group),dots=Array.from({length:6},()=>el("circle",{r:1.5},group));p={group,line,dots};particles.set(key,p)}
     p.line.setAttribute("points",route.points.map(q=>(q.x*s)+","+(q.y*s)).join(" "));
     p.line.setAttribute("vector-effect","non-scaling-stroke");p.line.setAttribute("stroke",route.color);p.line.setAttribute("opacity",String(.35*fade));
-    p.dots.forEach((d,j)=>{const count=graph.nodes.length>800?3:6,t=motion.matches?.5:a.current.stage==="waiting"?Math.min(1,Math.max(0,elapsed/1100-j*.07)):Math.min(1,Math.max(0,elapsed/duration-j*.055)),q=pointOn(route.points,t);d.setAttribute("r",String((j===0?2.8:Math.max(.65,2.1-j*.27))*inverse));d.setAttribute("cx",String(q.x*s));d.setAttribute("cy",String(q.y*s));d.setAttribute("fill",route.color);d.setAttribute("opacity",String((j>=count||motion.matches&&j>0?0:1-j*.14)*fade*(a.current.stage==="waiting"&&!motion.matches?Math.max(0,Math.min(1,(1800-elapsed)/500)):1)))});
+    p.dots.forEach((d,j)=>{const count=Math.floor((graph.nodes.length>800?3:6)*settings.particles/100*quality),t=motion.matches?.5:a.current.stage==="waiting"?Math.min(1,Math.max(0,elapsed/1100-j*.07)):Math.min(1,Math.max(0,elapsed/duration-j*.055)),q=pointOn(route.points,t);d.setAttribute("r",String((j===0?2.8:Math.max(.65,2.1-j*.27))*inverse));d.setAttribute("cx",String(q.x*s));d.setAttribute("cy",String(q.y*s));d.setAttribute("fill",route.color);d.setAttribute("opacity",String((j>=count||motion.matches&&j>0?0:1-j*.14)*fade*(a.current.stage==="waiting"&&!motion.matches?Math.max(0,Math.min(1,(1800-elapsed)/500)):1)))});
    });
    if(!a.terminal||fade>.15){
     hot.set("root","#e9cf9c");
@@ -213,8 +241,45 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
    wave.rings.forEach((ring,i)=>{const phase=Math.max(0,t-i*.18);ring.setAttribute("cx",String(n.x*s));ring.setAttribute("cy",String(n.y*s));ring.setAttribute("r",String((n.r+6+phase*45)*inverse));ring.setAttribute("opacity",String((1-phase)*.75))});
   }
  }
+ function drawGenesis(now:number){
+  const calm=motion.matches||settings.speed===0,clock=calm?0:now*(.25+settings.speed*.015);
+  const px=calm?0:mouseX*10,py=calm?0:mouseY*10;
+  fog.setAttribute("opacity",String(settings.mist/100));
+  clouds.forEach((cloud,i)=>{const x=w*(.22+i*.28)+px*(i+1),y=h*(i===1?.35:.58)+py*(i+1);
+   cloud.setAttribute("cx",String(x));cloud.setAttribute("cy",String(y));cloud.setAttribute("rx",String(w*(.42-i*.05)));cloud.setAttribute("ry",String(h*(.22+i*.045)));cloud.setAttribute("opacity",String(.58+i*.07))});
+  // Read the authoritative latest stage, not the cinematic replay queue.
+  const work=[...works.values()].find(a=>!a.terminal&&a.item.kind==="chronicle");
+  const stage=work?.item.stage;
+  const root=graph.byKey.get("root");
+  if(!work||!root||paused||document.hidden||items.get("root")?.getAttribute("visibility")==="hidden"){genesis.setAttribute("display","none");return}
+  const o=origin(),x=o.x+root.x*s*o.k,y=o.y+root.y*s*o.k;
+  if(x<0||y<0||x>w||y>h){genesis.setAttribute("display","none");return}
+  genesis.removeAttribute("display");
+  const intensity=settings.glow/100,received=stage==="received"||stage==="validating"||stage==="saving";
+  const radius=Math.max(22,root.r*2.3),phase=clock/750;
+  halo.setAttribute("transform","translate("+x+" "+y+")");
+  halo.setAttribute("opacity",String(intensity));
+  rings.forEach((ring,i)=>{const r=radius+8+i*8+(calm?0:2*Math.sin(phase+i));
+   ring.setAttribute("rx",String(r));ring.setAttribute("ry",String(r*(.45+i*.12)));ring.setAttribute("transform","rotate("+(i*41+phase*(i%2?8:-8))+")");ring.setAttribute("stroke-opacity",String(.55-i*.09))});
+  spiral.forEach((p,i)=>{let d="";for(let j=0;j<=36;j++){const t=j/36,a=t*5.8+phase*(i?1:-1)+i*Math.PI,r=radius*.5+t*radius*1.7;d+=(j?"L":"M")+(Math.cos(a)*r).toFixed(2)+" "+(Math.sin(a)*r*.68).toFixed(2)}p.setAttribute("d",d);p.setAttribute("opacity",String(.42*intensity))});
+  // A prospective star is an overlay, explicitly not a draft or a published chapter.
+  const angle=-.68,offset=Math.min(88,Math.max(40,Math.min(w,h)*.18)),sx=Math.max(35,Math.min(w-35,x+Math.cos(angle)*offset)),sy=Math.max(35,Math.min(h-35,y+Math.sin(angle)*offset));
+  const size=received?8:4.5;
+  seed.setAttribute("transform","translate("+sx+" "+sy+")");seed.setAttribute("opacity",String(.45+.55*intensity));
+  seedGlow.setAttribute("r",String(size*5));seedCore.setAttribute("r",String(size));
+  seedOrbit.setAttribute("rx",String(size*2.4));seedOrbit.setAttribute("ry",String(size*1.4));seedOrbit.setAttribute("transform","rotate("+phase*12+")");
+  seedLabel.textContent=stage==="saving"?"Сохранение":stage==="validating"?"Проверка":received?"Ответ получен":stage==="waiting"?"Ожидание Cloud.ru":"Подготовка главы";
+  const sources=[...new Set([work.item.source,...(work.item.sources||[])])].map(key=>graph.byKey.get(key)).filter(n=>n&&items.get(n.key)?.getAttribute("visibility")!=="hidden");
+  const count=Math.floor(dust.length*settings.particles/100*quality);
+  dust.forEach((p,i)=>{if(i>=count||calm||!sources.length){p.setAttribute("display","none");return}
+   p.removeAttribute("display");const n=sources[i%sources.length],ax=o.x+n.x*s*o.k,ay=o.y+n.y*s*o.k;
+   if(ax<0||ay<0||ax>w||ay>h){p.setAttribute("display","none");return}
+   const t=(clock/1600+i/count)%1,curve=t*(1-t)*Math.sin(i*2.4)*35;
+   p.setAttribute("cx",String(ax+(x-ax)*t+curve));p.setAttribute("cy",String(ay+(y-ay)*t-curve));p.setAttribute("opacity",String(Math.sin(t*Math.PI)*.85*intensity))});
+ }
  function frame(now:number){
   raf=0;const dt=Math.max(0,Math.min(60,now-last));last=now;
+  if(dt>0&&dt<60){frameMean=frameMean*.92+dt*.08;if(frameMean>25)quality=.35;else if(frameMean<19)quality=1;}
   if(replayAt){const n=motion.matches?graph.nodes.length:Math.min(graph.nodes.length,1+Math.floor((now-replayAt)/Math.max(22,Math.min(245,30000/Math.max(1,graph.nodes.length-1)))));if(n!==shown)reveal(n);if(n===graph.nodes.length){replayAt=0;level=-1;status()}}
   const k=motion.matches?1:1-Math.exp(-dt/200);fit+=(desired-fit)*k;if(Math.abs(desired-fit)<.001)fit=desired;
   if(focusMotion){const f=focusMotion,t=motion.matches?1:Math.min(1,(now-f.start)/360),e=1-Math.pow(1-t,3);zoom=f.fromZoom+(f.toZoom-f.fromZoom)*e;panX=f.fromX+(f.toX-f.fromX)*e;panY=f.fromY+(f.toY-f.fromY)*e;if(t===1)focusMotion=null}
@@ -222,6 +287,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   const cameraOrigin=origin();world.setAttribute("transform","translate("+cameraOrigin.x+" "+cameraOrigin.y+") scale("+cameraOrigin.k+")");
   applyDetail();const signature=[cameraOrigin.x,cameraOrigin.y,cameraOrigin.k].join(":");if(signature!==lastCameraSignature||now-lastLabelFrame>80){updateGlyphs();lastCameraSignature=signature;lastLabelFrame=now}
   drawActivity(now);
+  if(!lastEffects||now-lastEffects>=(quality<1?33:15)){drawGenesis(now);lastEffects=now}
   for(const [key,start] of births){const t=Math.min(1,(now-start)/1000);const g=items.get(key);if(g)g.setAttribute("opacity",String(.08+.92*t));if(t===1||!g||motion.matches){g?.removeAttribute("opacity");births.delete(key)}}
   if(births.size||waves.size||birthTrails.size||autoReturnAt||replayAt||focusMotion||fit!==desired||[...stages.values()].some(a=>a.terminal||a.queue.length||!motion.matches))invalidate();
  }
@@ -232,9 +298,9 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
  document.addEventListener("visibilitychange",visibility);
  svg.addEventListener("wheel",e=>{e.preventDefault();manualUntil=performance.now()+60000;autoReturnAt=0;focusMotion=null;const rect=svg.getBoundingClientRect(),x=e.clientX-rect.left,y=e.clientY-rect.top,old=origin(),next=clamp(zoom*Math.exp(-e.deltaY*.001),.35,12),ratio=next/zoom;zoom=next;panX=x-(x-old.x)*ratio-w/2+camera.cx*s*zoom*fit;panY=y-(y-old.y)*ratio-h/2+camera.cy*s*zoom*fit;invalidate()},{passive:false});
  svg.addEventListener("pointerdown",e=>{if(e.button===0){manualUntil=performance.now()+60000;autoReturnAt=0;focusMotion=null;drag={x:e.clientX,y:e.clientY,moved:false}}});
- svg.addEventListener("pointermove",e=>{if(!drag)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.abs(dx)+Math.abs(dy)>2){drag.moved=true;if(!svg.hasPointerCapture(e.pointerId))svg.setPointerCapture(e.pointerId)}if(drag.moved){panX+=dx;panY+=dy;invalidate()}drag.x=e.clientX;drag.y=e.clientY});
+ svg.addEventListener("pointermove",e=>{const rect=svg.getBoundingClientRect();mouseX=(e.clientX-rect.left)/Math.max(1,rect.width)-.5;mouseY=(e.clientY-rect.top)/Math.max(1,rect.height)-.5;if(!drag){invalidate();return}const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.abs(dx)+Math.abs(dy)>2){drag.moved=true;if(!svg.hasPointerCapture(e.pointerId))svg.setPointerCapture(e.pointerId)}if(drag.moved){panX+=dx;panY+=dy;invalidate()}drag.x=e.clientX;drag.y=e.clientY});
  svg.addEventListener("pointerup",e=>{if(!drag?.moved){const key=(e.target as Element).closest("[data-key]")?.getAttribute("data-key");if(key&&graph.byKey.has(key)){active=key;redrawSelection();info.textContent=graph.byKey.get(key).label;const match=/^(?:book:|segment:[a-z]+:)([1-9]\d*)$/.exec(key);if(match&&zoom>=2.4)onVolume?.(Number(match[1]));else if(!match&&(labels.has(key)))focusNode(key);else invalidate()}}drag=null});
  svg.addEventListener("dblclick",e=>{const key=(e.target as Element).closest("[data-key]")?.getAttribute("data-key")||"";const match=/^(?:book:|segment:[a-z]+:)([1-9]\d*)$/.exec(key);if(match)onVolume?.(Number(match[1]))});
  for(const name of ["pointercancel","lostpointercapture"])svg.addEventListener(name,()=>{drag=null});
- return {render,setActivity,clearActivity,resize,setReader(open:boolean,full:boolean){readerOpen=open;paused=full;if(open){autoReturnAt=0;focusMotion=null}if(full){cancelAnimationFrame(raf);raf=0;for(const key of births.keys())items.get(key)?.removeAttribute("opacity");births.clear();focusMotion=null;clearActivity();for(const wave of waves.values())for(const ring of wave.rings)ring.remove();waves.clear();birthTrails.clear()}else{last=performance.now();invalidate()}},replay(){autoReturnAt=0;focusMotion=null;zoom=1;panX=panY=0;active="";redrawSelection();if(graph.nodes.length<=1){status();invalidate();return}replayAt=performance.now();reveal(1);invalidate()},dispose(){disposed=true;cancelAnimationFrame(raf);observer?.disconnect();if(!observer)window.removeEventListener("resize",resize);document.removeEventListener("visibilitychange",visibility);for(const wave of waves.values())for(const ring of wave.rings)ring.remove();waves.clear();birthTrails.clear();clearActivity()}};
+ return {render,setActivity,clearActivity,resize,setReader(open:boolean,full:boolean){readerOpen=open;paused=full;if(open){autoReturnAt=0;focusMotion=null}if(full){cancelAnimationFrame(raf);raf=0;for(const key of births.keys())items.get(key)?.removeAttribute("opacity");births.clear();focusMotion=null;clearActivity();for(const wave of waves.values())for(const ring of wave.rings)ring.remove();waves.clear();birthTrails.clear()}else{last=performance.now();invalidate()}},replay(){autoReturnAt=0;focusMotion=null;zoom=1;panX=panY=0;active="";redrawSelection();if(graph.nodes.length<=1){status();invalidate();return}replayAt=performance.now();reveal(1);invalidate()},dispose(){disposed=true;panel.remove();genesis.remove();fog.remove();cancelAnimationFrame(raf);observer?.disconnect();if(!observer)window.removeEventListener("resize",resize);document.removeEventListener("visibilitychange",visibility);for(const wave of waves.values())for(const ring of wave.rings)ring.remove();waves.clear();birthTrails.clear();clearActivity()}};
 }
