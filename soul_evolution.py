@@ -190,8 +190,13 @@ def profile(db,name):
     return "\n\n".join(f"Глава {f['chapter']}: {f['kind']} — {f['detail']} «{f['evidence']}»" for f in facts[-20:]) or "Нет доступных прочитанных записей об этом персонаже."
 
 def annotation(db,volume):
-    rows=[(n,t) for n,t in db.execute("SELECT number,title FROM omega_index ORDER BY number") if o.volume(n)==volume and readable(db,n)]
-    return f"Том {volume}. Прочитанные главы: "+", ".join(str(n)+". "+t for n,t in rows) if rows else "Нет прочитанных глав этого тома."
+    rows=[(n,t,s) for n,t,s in db.execute("SELECT number,title,story FROM omega_index ORDER BY number") if o.volume(n)==volume and readable(db,n)]
+    if not rows:return "Нет доступных прочитанных глав этого тома."
+    lines=[f"Том {volume} — аннотация из прочитанных отрывков (не пересказ модели)."]
+    for n,t,s in rows:
+        excerpt=re.split(r"(?<=[.!?…])\s+",s.strip(),maxsplit=1)[0][:220]
+        lines.append(f"{n}. {t}: {excerpt}")
+    return "\n\n".join(lines)
 
 def graph(db):
     nodes=[];edges=[];seen=set()
@@ -203,6 +208,7 @@ def graph(db):
     if audit(db):return nodes,edges
     for n,did,p in list(published(db))[-60:]:
         for j,f in enumerate(p["facts"]):
+            if not readable(db,n):continue
             hub="evolution:subject:"+o.digest(o.normalized(f["subject"]))[:20];key=f"evolution:fact:{did}:{j}"
             node(hub,f["subject"],"evolution_subject");node(key,f["detail"] if readable(db,n) else "Непрочитанное событие","evolution_fact")
             edges.extend([{"a":"evolution:root","b":hub,"kind":"evolution_subject"},{"a":hub,"b":key,"kind":"evolution_"+f["kind"]},{"a":f"c:{did}","b":key,"kind":"evolution_source"}])
