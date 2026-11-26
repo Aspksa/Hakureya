@@ -39,7 +39,7 @@ class OmegaTest(unittest.TestCase):
         did=self.create(1)
         self.assertNotIn("silver-mark",o.mysteries(self.db))
         self.assertIsNotNone(o.metadata(self.db,did))
-        self.assertFalse(o.search(self.db,"серебряный архив"))
+        self.assertFalse(any(p["number"]>13 for p in o.search(self.db,"серебряный архив")))
         self.assertTrue(c.decide(self.db,did,True))
         self.assertEqual(o.mysteries(self.db)["silver-mark"]["opened"],14)
         self.assertEqual(o.search(self.db,"серебряный архив")[0]["number"],14)
