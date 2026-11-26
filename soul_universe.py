@@ -256,7 +256,7 @@ def report(db,mode,query=""):
         if db.execute("PRAGMA quick_check").fetchone()[0]!="ok":return "SQLite повреждена; нужен проверенный снимок."
         return f"Перестроен индекс сцен: {refresh(db,True)} глав. Текст не изменён."
     if mode=="knowledge":
-        facts=[f for f in ev.state(db).values() if f["kind"] in ("knowledge","secret") and ev.readable(db,f["chapter"])]
+        facts=[dict(chapter=n,**f) for n,_,p in ev.published(db) for f in p["facts"] if f["kind"] in ("knowledge","secret") and ev.readable(db,n)]
         return "\n".join(f"{f['chapter']}: {f['subject']} — {f['detail']} | свидетели: {', '.join(f['knows']) or 'не подтверждены'}" for f in facts[-40:]) or "Нет доступных подтверждённых записей о знаниях."
     if mode=="actor":
         li.refresh(db)
