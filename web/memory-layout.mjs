@@ -1,19 +1,44 @@
-import {rng} from "./geometry.mjs";
-// Relative cluster centers measured from the supplied late reference frame.
-// The original source and exact font are unavailable.
-export const palette=["#e8ce72","#f5a064","#ed657d","#df6e9e"];
-export const categories=["Запросы","Знания","Ответы","Опыт"];
-const centers=[[-.026,-.28],[.082,-.042],[-.078,.182],[.069,.408]];
+// Stable hex-lattice slots and separated constellation envelopes, all SVG.
+export const palette=["#e8ce72","#f5a064","#ed657d","#df6e9e","#e8c6ed"];
+export const categories=["Запросы","Знания","Ответы","Опыт","Биография"];
+const centers=[[-.026,-.28],[.082,-.042],[-.078,.182],[.069,.408],[.36,-.13]];
+const STEP=.026;
+// Slot zero is the first cell of ring 1; the hub owns the origin.
+export function cell(slot){
+ const n=Math.max(0,Math.floor(slot))+1;
+ const ring=Math.ceil((Math.sqrt(12*n+9)-3)/6);
+ const base=1+3*(ring-1)*ring;
+ const offset=n-base, side=Math.floor(offset/ring), k=offset%ring;
+ const corners=[[ring,0],[0,ring],[-ring,ring],[-ring,0],[0,-ring],[ring,-ring],[ring,0]];
+ const a=corners[side],b=corners[side+1],q=a[0]+(b[0]-a[0])*k/ring,r=a[1]+(b[1]-a[1])*k/ring;
+ return {x:STEP*(q+r*.5),y:STEP*Math.sqrt(3)*r*.5};
+}
 export function layout(snapshot){
- const nodes=[{key:"root",group:-1,x:0,y:0,r:3.6,label:"hakureya"}],edges=[],byKey=new Map([["root",nodes[0]]]);
- const count=[0,0,0,0];const list=Array.isArray(snapshot.records)?snapshot.records:[];
- const valid=list.filter(n=>Number.isInteger(n.group)&&n.group>=0&&n.group<4&&typeof n.key==="string");
- for(const n of valid){if(!count[n.group]){const g=n.group,key="hub:"+g,hub={key,group:g,x:centers[g][0],y:centers[g][1],r:3.5,label:categories[g]};nodes.push(hub);byKey.set(key,hub);edges.push({a:"root",b:key,kind:"category"})}const i=count[n.group]++,g=n.group;let seed=0;for(const c of n.key)seed=(Math.imul(seed,31)+c.charCodeAt(0))|0;const random=rng(seed),angle=i*2.399963+random()*.16,d=.019+Math.sqrt(i)*.011;const item={...n,x:centers[g][0]+Math.cos(angle)*d,y:centers[g][1]+Math.sin(angle)*d*.83,r:1.2+random()*1.9};nodes.push(item);byKey.set(item.key,item);edges.push({a:"hub:"+g,b:item.key,kind:"category"})}
- for(const e of snapshot.edges||[]){if(byKey.has(e.a)&&byKey.has(e.b)&&e.a!==e.b)edges.push(e)}
- // Expand crowded groups as a whole. Positions within a group are stable.
- const radius=count.map(c=>.019+Math.sqrt(Math.max(0,c-1))*.011);
- const offset=1+Math.max(0,...radius.map(r=>r-.08))*7;
- for(const n of nodes){if(n.group>=0){n.x+=centers[n.group][0]*(offset-1);n.y+=centers[n.group][1]*(offset-1)}}
+ const nodes=[{key:"root",group:-1,x:0,y:0,r:3.6,label:"hakureya"}],edges=[],byKey=new Map([[ "root",nodes[0] ]]);
+ const count=categories.map(()=>0),radius=categories.map(()=>.035),valid=(Array.isArray(snapshot.records)?snapshot.records:[]).filter(n=>Number.isInteger(n.group)&&n.group>=0&&n.group<categories.length&&typeof n.key==="string");
+ const occupied=categories.map(()=>new Set());
+ for(const n of valid){
+  if(byKey.has(n.key))continue;
+  const g=n.group;
+  if(!count[g]){const key="hub:"+g,hub={key,group:g,x:0,y:0,r:3.5,label:categories[g]};nodes.push(hub);byKey.set(key,hub);edges.push({a:"root",b:key,kind:"category"})}
+  let slot=Number.isSafeInteger(n.slot)&&n.slot>=0?n.slot:count[g];
+  while(occupied[g].has(slot))slot++;
+  occupied[g].add(slot);count[g]++;
+  const p=cell(slot);
+  radius[g]=Math.max(radius[g],Math.hypot(p.x,p.y)+.035);
+  const r=n.kind==="fictional_chapter"?2.7:n.kind==="draft"?2.1:n.kind==="theme"?1.7:1.5;
+  const item={...n,slot,x:p.x,y:p.y,r};nodes.push(item);byKey.set(item.key,item);
+  edges.push({a:"hub:"+g,b:item.key,kind:"category"});
+ }
+ let spread=1;
+ for(let i=0;i<centers.length;i++){
+  if(!count[i])continue;
+  spread=Math.max(spread,(radius[i]+.05)/Math.hypot(...centers[i]));
+  for(let j=0;j<i;j++)if(count[j])spread=Math.max(spread,(radius[i]+radius[j]+.035)/Math.hypot(centers[i][0]-centers[j][0],centers[i][1]-centers[j][1]));
+ }
+ for(const n of nodes)if(n.group>=0){n.x+=centers[n.group][0]*spread;n.y+=centers[n.group][1]*spread}
+ const seen=new Set(edges.map(e=>e.a+"|"+e.b+"|"+e.kind));
+ for(const e of snapshot.edges||[]){const k=e.a+"|"+e.b+"|"+e.kind;if(byKey.has(e.a)&&byKey.has(e.b)&&e.a!==e.b&&!seen.has(k)){edges.push(e);seen.add(k)}}
  const extent=Math.max(.45,...nodes.map(n=>Math.max(Math.abs(n.x)*1.35,Math.abs(n.y))));
- return {nodes,edges,byKey,extent};
+ return {nodes,edges,byKey,extent,spread,radius};
 }
