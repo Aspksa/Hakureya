@@ -139,6 +139,8 @@ def decide(db, draft_id, approve):
         if not canon_ok(db) or row[0]!=soul_lore.metadata()["sha256"]:
             return False
         unpack(row[1],row[2])
+        if db.execute("SELECT 1 FROM omega_meta WHERE draft_id=?",(draft_id,)).fetchone() and soul_omega.metadata(db,draft_id) is None:
+            raise ValueError("damaged literary metadata")
     cur=db.execute("UPDATE chronicle_drafts SET status=?,decided=CURRENT_TIMESTAMP WHERE id=? AND status='pending'",
                    ("approved" if approve else "rejected",draft_id))
     if cur.rowcount:
