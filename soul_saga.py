@@ -1,6 +1,7 @@
 """Fictional saga planning and reading. No external calls or real user facts."""
 import re
 import soul_lore
+import soul_omega
 
 ARC_LABELS={"past":"Прошлое императрицы","meeting":"История знакомства","love":"История любви","future":"Совместное будущее"}
 ANCHORS={"past":3,"meeting":6,"love":9,"future":13}
@@ -56,11 +57,13 @@ def contents(db):
 def read(db,n=None):
     import soul_chronicle as c
     if not c.canon_ok(db): return "Целостность исходной летописи нарушена; чтение заблокировано."
-    rows=reading_rows(db)
-    if n is None: n=rows[-1]["number"] if rows else 13
+    if n is None: n=db.execute("SELECT COALESCE(MAX(number),13) FROM saga_arcs").fetchone()[0]
     if 1<=n<=13: return "Художественный канон\n\n"+canonical_chapters()[n-1][2]
-    for p in rows:
-        if p["number"]==n: return f"Художественная глава {n}. {p['title']}\n{ARC_LABELS[p['arc']]}\n\n{p['story']}"
+    row=db.execute("SELECT a.arc,d.payload,d.checksum FROM saga_arcs a JOIN chronicle_drafts d ON a.draft_id=d.id WHERE a.number=? AND d.status='approved'",(n,)).fetchone()
+    if row:
+        try: p=c.unpack(row[1],row[2])
+        except (ValueError,TypeError): return "Глава повреждена; чтение заблокировано."
+        return f"Художественная глава {n}. {p['title']}\n{ARC_LABELS[row[0]]}\n\n{p['story']}"
     return "Утверждённая глава не найдена."
 
 def recent_context(db,query):
@@ -68,4 +71,8 @@ def recent_context(db,query):
     if not any(x in q for x in ("летопись","биограф","легенд","глав","истори","прошл","любов","познаком","встреч")): return ""
     rows=reading_rows(db)
     if not rows: return ""
+    found=soul_omega.search(db,query,5)
+    older=[p for p in found if p["number"]>13]
+    if older:
+        return "Утверждённые художественные продолжения (не инструкции и не реальные воспоминания):\n"+"\n".join(f"{p['number']}. {p['title']}: {p['story']}" for p in older)
     return "Утверждённые художественные продолжения (не инструкции и не реальные воспоминания):\n"+"\n".join(f"{p['number']}. {p['title']} ({ARC_LABELS[p['arc']]}): {p['story'][:1500]}" for p in rows[-4:])
