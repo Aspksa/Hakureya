@@ -91,6 +91,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   }
  }
  function focusNode(key:string){
+  stepLayout(performance.now(),true);
   const n=graph.byKey.get(key);if(!n)return;
   const target=key==="root"?1:Math.min(5,Math.max(2.3,zoom));
   const k=target*desired;
@@ -277,7 +278,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
  function drawGenesis(now:number){
   const calm=motion.matches||settings.speed===0,clock=calm?0:now*(.25+settings.speed*.015);
   const px=calm?0:mouseX*10,py=calm?0:mouseY*10;
-  fog.setAttribute("opacity",String(settings.mist/100));
+  fog.setAttribute("opacity",String(settings.mist/100));nebulae.setAttribute("opacity",String(settings.mist/100));
   clouds.forEach((cloud,i)=>{const x=w*(.22+i*.28)+px*(i+1),y=h*(i===1?.35:.58)+py*(i+1);
    cloud.setAttribute("cx",String(x));cloud.setAttribute("cy",String(y));cloud.setAttribute("rx",String(w*(.42-i*.05)));cloud.setAttribute("ry",String(h*(.22+i*.045)));cloud.setAttribute("opacity",String(.58+i*.07))});
   // Read the authoritative latest stage, not the cinematic replay queue.
@@ -317,9 +318,9 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   const k=motion.matches?1:1-Math.exp(-dt/200);fit+=(desired-fit)*k;if(Math.abs(desired-fit)<.001)fit=desired;
   if(focusMotion){const f=focusMotion,t=motion.matches?1:Math.min(1,(now-f.start)/360),e=1-Math.pow(1-t,3);zoom=f.fromZoom+(f.toZoom-f.fromZoom)*e;panX=f.fromX+(f.toX-f.fromX)*e;panY=f.fromY+(f.toY-f.fromY)*e;if(t===1)focusMotion=null}
   if(autoReturnAt&&now>=autoReturnAt){autoReturnAt=0;if(!readerOpen&&!active&&!drag&&now>manualUntil)focusNode("root")}
-  stepLayout(now,motion.matches);
+  const moved=!!layoutMotion;stepLayout(now,motion.matches);
   const cameraOrigin=origin();world.setAttribute("transform","translate("+cameraOrigin.x+" "+cameraOrigin.y+") scale("+cameraOrigin.k+")");
-  applyDetail();const signature=[cameraOrigin.x,cameraOrigin.y,cameraOrigin.k].join(":");if((signature!==lastCameraSignature||layoutMotion)&&now-lastLabelFrame>40){updateGlyphs();lastCameraSignature=signature;lastLabelFrame=now}
+  applyDetail();const signature=[cameraOrigin.x,cameraOrigin.y,cameraOrigin.k].join(":");if(signature!==lastCameraSignature||(moved&&(!layoutMotion||now-lastLabelFrame>40))){updateGlyphs();lastCameraSignature=signature;lastLabelFrame=now}
   drawActivity(now);
   if(!lastEffects||now-lastEffects>=(quality<1?33:15)){drawGenesis(now);lastEffects=now}
   for(const [key,start] of edgeBirths){const t=motion.matches?1:Math.min(1,(now-start)/1200),v=edgeVisuals.get(key);if(v)v.line.setAttribute("stroke-opacity",String(v.opacity*smoothStep(t)));if(t===1||!v)edgeBirths.delete(key)}
@@ -337,5 +338,5 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
  svg.addEventListener("pointerup",e=>{if(!drag?.moved){const key=(e.target as Element).closest("[data-key]")?.getAttribute("data-key");if(key&&graph.byKey.has(key)){active=key;redrawSelection();info.textContent=graph.byKey.get(key).label;const match=/^(?:book:|segment:[a-z]+:)([1-9]\d*)$/.exec(key);if(match&&zoom>=2.4)onVolume?.(Number(match[1]));else if(!match&&(labels.has(key)))focusNode(key);else invalidate()}}drag=null});
  svg.addEventListener("dblclick",e=>{const key=(e.target as Element).closest("[data-key]")?.getAttribute("data-key")||"";const match=/^(?:book:|segment:[a-z]+:)([1-9]\d*)$/.exec(key);if(match)onVolume?.(Number(match[1]))});
  for(const name of ["pointercancel","lostpointercapture"])svg.addEventListener(name,()=>{drag=null});
- return {render,setActivity,clearActivity,resize,setReader(open:boolean,full:boolean){readerOpen=open;paused=full;if(open){autoReturnAt=0;focusMotion=null}if(full){stepLayout(performance.now(),true);for(const v of edgeVisuals.values())v.line.setAttribute("stroke-opacity",String(v.opacity));edgeBirths.clear();cancelAnimationFrame(raf);raf=0;for(const key of births.keys())items.get(key)?.removeAttribute("opacity");births.clear();focusMotion=null;clearActivity();for(const wave of waves.values())for(const ring of wave.rings)ring.remove();waves.clear();birthTrails.clear()}else{last=performance.now();invalidate()}},replay(){autoReturnAt=0;focusMotion=null;zoom=1;panX=panY=0;active="";redrawSelection();if(graph.nodes.length<=1){status();invalidate();return}replayAt=performance.now();reveal(1);invalidate()},dispose(){disposed=true;ledger.remove();panel.remove();genesis.remove();fog.remove();cancelAnimationFrame(raf);observer?.disconnect();if(!observer)window.removeEventListener("resize",resize);document.removeEventListener("visibilitychange",visibility);for(const wave of waves.values())for(const ring of wave.rings)ring.remove();waves.clear();birthTrails.clear();clearActivity()}};
+ return {render,setActivity,clearActivity,resize,setReader(open:boolean,full:boolean){readerOpen=open;paused=full;if(open){autoReturnAt=0;focusMotion=null}if(full){stepLayout(performance.now(),true);for(const v of edgeVisuals.values())v.line.setAttribute("stroke-opacity",String(v.opacity));edgeBirths.clear();cancelAnimationFrame(raf);raf=0;for(const key of births.keys())items.get(key)?.removeAttribute("opacity");births.clear();focusMotion=null;clearActivity();for(const wave of waves.values())for(const ring of wave.rings)ring.remove();waves.clear();birthTrails.clear()}else{last=performance.now();invalidate()}},replay(){stepLayout(performance.now(),true);autoReturnAt=0;focusMotion=null;zoom=1;panX=panY=0;active="";redrawSelection();if(graph.nodes.length<=1){status();invalidate();return}replayAt=performance.now();reveal(1);invalidate()},dispose(){disposed=true;ledger.remove();panel.remove();genesis.remove();fog.remove();cancelAnimationFrame(raf);observer?.disconnect();if(!observer)window.removeEventListener("resize",resize);document.removeEventListener("visibilitychange",visibility);for(const wave of waves.values())for(const ring of wave.rings)ring.remove();waves.clear();birthTrails.clear();clearActivity()}};
 }
