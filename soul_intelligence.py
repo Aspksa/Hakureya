@@ -228,9 +228,21 @@ def metrics(db,visible=False):
     gaps=[a for a in actors.values() if last-a["last"]>=8]
     cross=sum(f["cause"] is not None and o.volume(f["cause"])!=o.volume(n) for n,f in data)
     usage=db.execute("SELECT COUNT(*),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0) FROM cloud_writer_usage").fetchone()
+    kinds=Counter(f["kind"] for _,f in data)
+    gaps_profile=[]
+    for key,a in actors.items():
+        fields={f["kind"] for _,f in data if norm(f["subject"])==key}
+        missing=sorted({"biography","goal","voice","trait"}-fields)
+        if missing:gaps_profile.append({"name":a["name"],"missing":missing})
+    rapid=[]
+    for rel in relations.values():
+        if rel["kind"] in ("love","trust","ally") and rel["first"]>=14:
+            pair=[actors.get(norm(rel[x])) for x in ("a","b")]
+            if all(pair) and rel["first"]-max(p["first"] for p in pair)<=1:
+                rapid.append(rel)
     return {"chapters":len(chapters),"volumes":len({o.volume(n) for n in chapters}),"words":words,"characters":len(actors),
       "relations":len(relations),"events":sum(f["kind"]=="event" for _,f in data),"cross_volume":cross,
-      "arcs":dict(arcs),"warnings":warnings,"originality":round(sum(originality)/len(originality),1) if originality else None,
+      "arcs":dict(arcs),"kinds":dict(kinds),"profile_gaps":gaps_profile[:8],"rapid":rapid[:8],"warnings":warnings,"originality":round(sum(originality)/len(originality),1) if originality else None,
       "forgotten":sorted(gaps,key=lambda a:a["last"])[:8],"token_days":usage[0],"input_tokens":usage[1],"output_tokens":usage[2]}
 
 def prepare(db,plan):
@@ -256,7 +268,7 @@ def prepare(db,plan):
     brain("memory",[{"number":x["number"],"story":x["story"][:220]} for x in recall])
     m=metrics(db)
     brain("editor",{"warnings":m["warnings"],"originality":m["originality"],"guide":"Не повторяй диалог и сцену; действие, выбор и последствия вместо одинаковых эпитетов."})
-    brain("analytics",{"chapters":m["chapters"],"characters":m["characters"],"cross_volume":m["cross_volume"],"guide":"Если уместно, дай второстепенному герою собственную цель и свяжи давнее событие с текущим."})
+    brain("analytics",{"chapters":m["chapters"],"characters":m["characters"],"cross_volume":m["cross_volume"],"profile_gaps":m["profile_gaps"][:2],"rapid_relations":m["rapid"][:1],"guide":"Если уместно, дай второстепенному герою собственную цель и свяжи давнее событие с текущим."})
     brain("twist",{"causes":[{"chapter":n,"cause":f["cause"],"value":f["value"][:100]} for n,f in recent if f["cause"] is not None][-2:],"guide":"Поворот должен опираться на улику, а не отменять прежние события."})
     # Coordinator selects an explicit capped set, without cutting JSON in the middle.
     budget=4200;selected={}
@@ -284,7 +296,12 @@ def report(db):
         "\n".join(f"{label}: {m[k]}" for k,label in (("chapters","Частей"),("volumes","Томов"),("words","Слов"),("characters","Имен с подтверждением"),("relations","Связей с подтверждением"),("events","Записанных событий"),("cross_volume","Межтомовых причин"),("warnings","Предупреждений редактора"),("token_days","Дней с отчётом Cloud.ru"),("input_tokens","Входных токенов"),("output_tokens","Выходных токенов")))+
         "\nОригинальность (эвристика): "+str(m["originality"] if m["originality"] is not None else "нет данных")+
         "\nВетки: "+", ".join(f"{k}: {v}" for k,v in m["arcs"].items())+
-        "\nЗабытые герои (8+ частей): "+(", ".join(x["name"] for x in m["forgotten"]) or "нет данных"))
+        "\nЗабытые герои (8+ частей): "+(", ".join(x["name"] for x in m["forgotten"]) or "нет данных")+
+        "\nТипы свидетельств: "+", ".join(f"{k}: {v}" for k,v in sorted(m["kinds"].items()))+
+        "\nПлотность записанных событий на 1000 слов: "+str(round(1000*m["events"]/max(1,m["words"]),2))+
+        "\nСреднее слов на опубликованную часть: "+str(round(m["words"]/max(1,m["chapters"])))+
+        "\nВозможное быстрое сближение (эвристика): "+str(len(m["rapid"]))+
+        "\nПробелы в досье: "+("; ".join(x["name"]+": "+", ".join(x["missing"]) for x in m["profile_gaps"]) or "нет данных"))
 
 def characters_text(db,page=1):
     refresh(db);actors,_=registry(list(rows(db,True)))
@@ -344,3 +361,37 @@ def graph(db,existing=()):
         a=allowed.get(norm(x["a"]));b=allowed.get(norm(x["b"]))
         if a and b:edge(a,b,"lit_rel_"+x["kind"],shared=min(5,x["count"]))
     return nodes,edges
+
+
+def audit_text(db):
+    """Check source-derived payload and search rows without modifying original tables."""
+    for n,arc,title,story,source,did in db.execute("SELECT number,arc,title,story,checksum,draft_id FROM omega_index ORDER BY number"):
+        records=collect_chapter(db,n,story,did)
+        payload=o.dump({"version":VERSION,"number":n,"arc":arc,"title":title,"words":len(re.findall(r"\w+",story)),"records":records})
+        fingerprint=o.digest(o.dump([VERSION,source,o.digest(story),o.digest(payload)]))
+        if db.execute("SELECT fingerprint,payload,checksum FROM lit_index WHERE number=?",(n,)).fetchone()!=(fingerprint,payload,o.digest(payload)):
+            return f"требует обновления, глава {n}"
+        expected=[(i,f["kind"],norm(f["subject"]),norm(f["object"]),o.dump(f)) for i,f in enumerate(records)]
+        actual=db.execute("SELECT ordinal,kind,subject,object,payload FROM lit_entries WHERE number=? ORDER BY ordinal",(n,)).fetchall()
+        if actual!=expected:return f"повреждён поисковый индекс главы {n}"
+    if db.execute("SELECT 1 FROM lit_index WHERE number NOT IN (SELECT number FROM omega_index)").fetchone() or db.execute("SELECT 1 FROM lit_entries WHERE number NOT IN (SELECT number FROM omega_index)").fetchone():
+        return "лишние записи"
+    return "целостность подтверждена"
+
+def dossier(db,name):
+    refresh(db);key=norm(name);data=list(rows(db,True));actors,_=registry(data)
+    a=actors.get(key)
+    if not a:return "Нет подтверждённых записей об этом имени."
+    facts=[(n,f) for n,f in data if norm(f["subject"])==key or (f["object"] and norm(f["object"])==key)]
+    return f"{a['name']} · ID {identifier(name)}\nПервое свидетельство: {a['first']}; последнее: {a['last']}; появлений: {a['count']}.\n"+"\n\n".join(f"Глава {n} · {f['kind']}: {f['value']} «{f['quote']}»" for n,f in facts[-25:])
+
+def possible_duplicates(db):
+    refresh(db);actors,_=registry(list(rows(db,True)));names=sorted(actors)
+    # Bounded candidate check. Never silently merge distinct fictional identities.
+    result=[]
+    for i,a in enumerate(names[-250:]):
+        for b in names[-250:][i+1:]:
+            if a[0]==b[0] and len(a)>=4 and len(b)>=4 and SequenceMatcher(None,a,b).ratio()>=.85:
+                result.append((actors[a]["name"],actors[b]["name"]))
+                if len(result)>=15:return result
+    return result
