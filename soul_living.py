@@ -1,4 +1,4 @@
-"""Local fictional writing scheduler. Consent is persisted, API credentials are not."""
+"""Local fictional writing scheduler. Consent is persisted; optional credentials are stored outside SQLite by cloud_vault."""
 import json
 import os
 import sqlite3
@@ -238,7 +238,7 @@ def status(db):
     attempt=db.execute("SELECT status FROM chronicle_attempts WHERE day=?",(datetime.now(timezone.utc).date().isoformat(),)).fetchone()
     return ("Развитие: "+{"off":"выключено","draft":"черновики","auto":"автопубликация с проверками"}[mode(db)]+
         f". Черновиков: {pending}. Попытка UTC сегодня: "+(attempt[0] if attempt else "не использована")+
-        ". Не более одной попытки в сутки, до 1800 выходных токенов. Ключ Cloud.ru вводится заново после запуска.")
+        ". Не более одной попытки в сутки, до 1800 выходных токенов. Подключение и причины ожидания: панель писателя.")
 
 def news(db):
     rows=db.execute("SELECT number,title FROM omega_index WHERE number>13 ORDER BY number DESC LIMIT 5").fetchall()
