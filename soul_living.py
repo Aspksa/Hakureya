@@ -4,6 +4,7 @@ import os
 import sqlite3
 from pathlib import Path
 from datetime import datetime, timezone
+import writer_volume
 import soul_omega as o
 import soul_genesis as g
 import soul_shadow as sh
@@ -235,10 +236,13 @@ def backup(db_path,folder):
 
 def status(db):
     pending=db.execute("SELECT COUNT(*) FROM chronicle_drafts WHERE status='pending'").fetchone()[0]
-    attempt=db.execute("SELECT status FROM chronicle_attempts WHERE day=?",(datetime.now(timezone.utc).date().isoformat(),)).fetchone()
+    day=writer_volume.today()
+    attempts=writer_volume.attempts(db,day)
+    pages=writer_volume.target(db)
     return ("Развитие: "+{"off":"выключено","draft":"черновики","auto":"автопубликация с проверками"}[mode(db)]+
-        f". Черновиков: {pending}. Попытка UTC сегодня: "+(attempt[0] if attempt else "не использована")+
-        ". Не более одной попытки в сутки, до 1800 выходных токенов. Подключение и причины ожидания: панель писателя.")
+        f". Черновиков: {pending}. Запросов UTC сегодня: {len(attempts)}/{writer_volume.limit(db)}."+
+        (f" Цель: {pages} условных страниц А4 (по {writer_volume.PAGE_CHARS} символов)." if pages else " Обычный режим: одна попытка в сутки.")+
+        " До 1800 выходных токенов на запрос. Подключение и причины ожидания: панель писателя.")
 
 def news(db):
     rows=db.execute("SELECT number,title FROM omega_index WHERE number>13 ORDER BY number DESC LIMIT 5").fetchall()
