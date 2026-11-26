@@ -4,7 +4,7 @@ const $=(id:string)=>document.getElementById(id)!;
 let selectedVolume:number|null=null;
 let live:ReturnType<typeof mountGraph>|null=null;
 function ensureGraph(){
- if(!live){try{live=mountGraph($("graph") as unknown as SVGSVGElement,$("info"),volume=>{selectedVolume=volume;void refreshGraph()})}catch(e){console.error("Hakureya graph initialization",e);$("info").textContent="Ошибка визуализации · ↻ повторить"}}
+ if(!live){try{$("graph").replaceChildren();live=mountGraph($("graph") as unknown as SVGSVGElement,$("info"),volume=>{selectedVolume=volume;void refreshGraph()})}catch(e){console.error("Hakureya graph initialization",e);$("graph").replaceChildren();$("info").textContent="Ошибка визуализации · ↻ повторить"}}
  return live;
 }
 let busy=false;
