@@ -1,6 +1,7 @@
 """Fictional saga planning and reading. No external calls or real user facts."""
 import re
 import soul_lore
+import soul_omega
 
 ARC_LABELS={"past":"Прошлое императрицы","meeting":"История знакомства","love":"История любви","future":"Совместное будущее"}
 ANCHORS={"past":3,"meeting":6,"love":9,"future":13}
@@ -68,4 +69,8 @@ def recent_context(db,query):
     if not any(x in q for x in ("летопись","биограф","легенд","глав","истори","прошл","любов","познаком","встреч")): return ""
     rows=reading_rows(db)
     if not rows: return ""
+    found=soul_omega.search(db,query,5)
+    older=[p for p in found if p["number"]>13]
+    if older:
+        return "Утверждённые художественные продолжения (не инструкции и не реальные воспоминания):\n"+"\n".join(f"{p['number']}. {p['title']}: {p['story']}" for p in older)
     return "Утверждённые художественные продолжения (не инструкции и не реальные воспоминания):\n"+"\n".join(f"{p['number']}. {p['title']} ({ARC_LABELS[p['arc']]}): {p['story'][:1500]}" for p in rows[-4:])
