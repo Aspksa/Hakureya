@@ -217,3 +217,26 @@ class ServerTest(unittest.TestCase):
             self.assertIn("остановлено",self.request("chat",{"content":"Останови развитие"})["reply"])
             self.assertIn("выключено",self.request("chat",{"content":"Статус развития"})["reply"])
             remote.assert_not_called()
+
+
+    def test_independent_writer_model(self):
+        self.request("config",{"key":"test-key","model":"test-chat","consent":True})
+        fake=MagicMock()
+        fake.__enter__.return_value.read.return_value=json.dumps({"data":[{"id":"zai-org/GLM-5.3"}]}).encode()
+        with patch.object(server,"urlopen",return_value=fake) as remote:
+            self.assertIn("zai-org/GLM-5.3",self.request("chat",{"content":"Подключи писателя"})["reply"])
+            self.assertEqual(remote.call_args.args[0].get_method(),"GET")
+            self.assertEqual(server.CONFIG["model"],"test-chat")
+            self.assertIn("zai-org/GLM-5.3",self.request("chat",{"content":"Модель писателя"})["reply"])
+            self.assertEqual(remote.call_count,1)
+            self.assertIn("не найдена",self.request("chat",{"content":"Модель писателя missing"})["reply"])
+            self.assertIn("zai-org/GLM-5.3",self.request("chat",{"content":"Модель писателя"})["reply"])
+        from test_omega import chapter
+        fake.__enter__.return_value.read.return_value=json.dumps({"choices":[{"message":{"content":json.dumps(chapter(),ensure_ascii=False)}}],"usage":{"prompt_tokens":1800,"completion_tokens":500}}).encode()
+        with patch.object(server,"urlopen",return_value=fake) as remote:
+            self.assertIn("Черновик создан",self.request("chat",{"content":"Продолжи сагу"})["reply"])
+            payload=json.loads(remote.call_args.args[0].data)
+            self.assertEqual(payload["model"],"zai-org/GLM-5.3")
+            self.assertEqual(payload["max_tokens"],1800)
+            self.assertEqual(remote.call_count,1)
+            self.assertIn("выход 500",self.request("chat",{"content":"Расход писателя"})["reply"])

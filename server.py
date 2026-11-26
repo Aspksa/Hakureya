@@ -17,6 +17,7 @@ import soul_reader
 import soul_guardians
 import soul_destiny
 import soul_living
+import cloud_writer
 import graph_activity
 import time, re
 import base64, binascii
@@ -94,20 +95,24 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
             if plan:
                 previous=[{"number":n,"title":t,"story":s[:1800]} for n,t,s in reversed(db.execute("SELECT number,title,story FROM omega_index WHERE arc=? AND number>13 ORDER BY number DESC LIMIT 2",(plan["arc"],)).fetchall())]
                 previous.append({"published_titles":[t for t, in db.execute("SELECT title FROM omega_index ORDER BY number DESC LIMIT 12")]})
+            writer=cloud_writer.selected(db)
         if not reservation:
             return "Есть незавершённая попытка или ожидающий черновик, нарушена целостность канона либо исчерпан дневной лимит."
-        key, model, epoch=CONFIG["key"],CONFIG["model"],CHRONICLE["epoch"]
+        key, model, epoch=CONFIG["key"],writer or CONFIG["model"],CHRONICLE["epoch"]
     with graph_activity.track("chronicle",("destiny:root" if destiny_plan else "guardians:root" if guardian_plan else "shadow:root" if shadow_plan else (f"d:{reservation[1]}" if reservation[1]>0 else ("heart:root" if plan["arc"]=="love" else "living:root" if plan.get("living") and plan["arc"]=="future" else "arc:"+plan["arc"])))) as activity:
         return execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
 
 def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan):
     try:
-        payload={"model":model,"messages":soul_chronicle.prompt(reservation,traits,previous,plan),"max_tokens":1800,"stream":False}
+        payload={"model":model,"messages":soul_chronicle.prompt(reservation,traits,previous,plan),"max_tokens":cloud_writer.LIMIT,"stream":False}
         req=Request(API,data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
         graph_activity.update(activity,"waiting")
         with urlopen(req,timeout=60) as res:
             result=json.loads(res.read(1_000_000))
         graph_activity.update(activity,"validating","hub:4")
+        with LOCK, closing(connect()) as db, db:
+            cloud_writer.usage(db,reservation[0],model,result)
+        if result["choices"][0].get("finish_reason")=="length":raise ValueError("incomplete literary response")
         raw=result["choices"][0]["message"]["content"]
         if not isinstance(raw,str) or len(raw)>24000:
             raise ValueError("invalid draft")
@@ -153,6 +158,29 @@ def chronicle_command(content):
     aliases.update({"девять хранительниц":"летопись: хранительницы","хранительницы":"летопись: хранительницы","продолжи историю хранительниц":"летопись: создать хранительниц","план хранительниц":"летопись: план хранительниц"})
     aliases.update({"за пределами девяти небес":"летопись: судьба","план судьбы":"летопись: план судьбы","новые герои":"летопись: новые герои","продолжи судьбу":"летопись: создать судьбу","история силы":"летопись: судьба сила","путешествия":"летопись: судьба путешествия","развитие императрицы":"летопись: судьба развитие"})
     q=aliases.get(q,q)
+    if q in ("модель писателя","расход писателя","модели cloud.ru","подключи писателя","модель писателя как в чате") or q.startswith("модель писателя "):
+        if q in ("модель писателя","расход писателя","модель писателя как в чате"):
+            with LOCK, closing(connect()) as db, db:
+                if q=="расход писателя":return cloud_writer.usage_text(db)
+                if q=="модель писателя как в чате":
+                    cloud_writer.choose(db,"")
+                    CHRONICLE["epoch"]+=1
+                    return "Писатель использует модель обычного чата."
+                return "Модель писателя: "+(cloud_writer.selected(db) or CONFIG["model"] or "не выбрана")+". Рекомендация: GLM-5.3. Подключение: «Подключи писателя»."
+        with LOCK:
+            key,epoch=CONFIG["key"],CHRONICLE["epoch"]
+        if not key:return "Сначала подключите API-ключ Cloud.ru в существующих настройках аватара."
+        try:ids=cloud_writer.list_models(key,urlopen)
+        except (URLError,ValueError,KeyError,TypeError,OSError):return "Не удалось получить список моделей Cloud.ru. Проверьте ключ и доступ к Foundation Models."
+        if q=="модели cloud.ru":return "Модели, доступные по API:\n"+"\n".join(ids[:150]) if ids else "Список моделей пуст."
+        requested=cloud_writer.PREFERRED if q=="подключи писателя" else q[len("модель писателя "):].strip()
+        model=cloud_writer.match(ids,requested)
+        if not model:return "Модель не найдена однозначно. Напишите «Модели Cloud.ru», затем укажите точный идентификатор: «Модель писателя ID». Прежняя модель сохранена."
+        with LOCK, closing(connect()) as db, db:
+            if CONFIG["key"]!=key or CHRONICLE["epoch"]!=epoch:return "Настройки изменились; повторите выбор модели."
+            cloud_writer.choose(db,model)
+            CHRONICLE["epoch"]+=1
+        return "Модель писателя выбрана: "+model+". Платный запрос не выполнялся. Модель чата не изменена."
     living_commands={"развивай историю сама":"draft","включи автопубликацию глав":"auto","останови развитие":"off","что нового написала":"news","статус развития":"status","план развития романа":"queue"}
     if q in living_commands:
         with LOCK, closing(connect()) as db, db:
@@ -216,7 +244,7 @@ def chronicle_command(content):
         if q=="летопись: хранительницы":return soul_guardians.profiles(db)
         if q in ("летопись: план хранительниц","летопись: статус хранительниц"):return soul_guardians.status(db,q=="летопись: план хранительниц")
         if q=="летопись: помощь":
-            return "Летопись\n\nЧитать книгу · Дальше · Назад · Продолжить чтение\nГде остановился · Остановить чтение · Оглавление\nПродолжи сагу · Продолжи нашу историю любви\nПокажи черновик · Принять главу · Отклонить главу\nЧто дальше по сюжету · История любви · Девять хранительниц · Новые герои\nРазвивай историю сама · Останови развитие · Что нового написала · Статус развития\n\nПодробности при необходимости: «план саги» (со спойлерами), «летопись: качество»."
+            return "Летопись\n\nЧитать книгу · Дальше · Назад · Продолжить чтение\nГде остановился · Остановить чтение · Оглавление\nПродолжи сагу · Продолжи нашу историю любви\nПокажи черновик · Принять главу · Отклонить главу\nЧто дальше по сюжету · История любви · Девять хранительниц · Новые герои\nРазвивай историю сама · Останови развитие · Что нового написала · Статус развития\nМодель писателя · Подключи писателя · Расход писателя\n\nПодробности при необходимости: «план саги» (со спойлерами), «летопись: качество»."
         if q in ("летопись: сага","летопись: сага план"):
             if q.endswith(" план"):return soul_shadow.status(db,True)+"\n\n"+soul_guardians.status(db,True)+"\n\n"+soul_destiny.status(db,True)
             if soul_destiny.ready(db):return soul_destiny.status(db)
