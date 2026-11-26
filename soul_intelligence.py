@@ -45,6 +45,9 @@ def init(db):
     db.execute("CREATE INDEX IF NOT EXISTS lit_kind ON lit_entries(kind,number)")
     db.execute("CREATE INDEX IF NOT EXISTS lit_object ON lit_entries(object,number)")
     db.execute("CREATE TABLE IF NOT EXISTS lit_runs(day TEXT PRIMARY KEY, selected TEXT NOT NULL, context_bytes INTEGER NOT NULL, recalled TEXT NOT NULL)")
+    db.execute("CREATE TABLE IF NOT EXISTS lit_maintenance(id INTEGER PRIMARY KEY CHECK(id=1), cursor INTEGER NOT NULL)")
+    db.execute("INSERT OR IGNORE INTO lit_maintenance VALUES(1,0)")
+    db.execute("CREATE TABLE IF NOT EXISTS lit_rejections(draft_id INTEGER PRIMARY KEY, reason TEXT NOT NULL)")
 
 def extra(db,did):
     row=db.execute("SELECT payload,source_hash,checksum FROM lit_extra WHERE draft_id=?",(did,)).fetchone()
@@ -87,6 +90,14 @@ def save(db,did,story,raw,plan):
     source=db.execute("SELECT checksum FROM chronicle_drafts WHERE id=?",(did,)).fetchone()[0]
     payload=o.dump(data)
     db.execute("INSERT INTO lit_extra VALUES(?,?,?,?)",(did,payload,source,o.digest(o.dump([payload,source]))))
+
+def save_optional(db,did,story,raw,plan):
+    try:save(db,did,story,raw,plan)
+    except (ValueError,TypeError,KeyError):
+        # The optional ungrounded fields are discarded, not the valid manuscript.
+        db.execute("INSERT OR REPLACE INTO lit_rejections VALUES(?,?)",(did,"Дополнительные литературные сведения не прошли проверку"))
+        m=o.metadata(db,did)
+        if m:db.execute("UPDATE omega_meta SET warnings=?,score=? WHERE draft_id=?",(o.dump(m["warnings"]+["Отклонены дополнительные литературные сведения"]),max(0,m["score"]-12),did))
 
 def validate_approval(db,did):
     facts=extra(db,did)
@@ -159,7 +170,7 @@ def collect_chapter(db,n,story,did):
     if ip:
         for f in ip["facts"]:add(f["kind"],f["key"],f["detail"],f["evidence"],cause=f["cause"])
     for f in extra(db,did):
-        if f["kind"] not in {"world","place","artifact","law","prophecy","interpretation","event","clue","secret","consequence"}:
+        if f["kind"] in {"character","biography","trait","habit","fear","goal","voice","age",*RELATIONS}:
             mention(f["subject"],f["quote"])
         if f["kind"] in RELATIONS:mention(f["object"],f["quote"])
         add(f["kind"],f["subject"],f["value"],f["quote"],f["object"],f["cause"])
@@ -198,6 +209,14 @@ def refresh(db,force=False,limit=None):
         if limit is not None and count>=limit:break
         if index_one(db,*row):count+=1
     return count
+
+def sweep(db,limit=20):
+    """Check older derived records incrementally, repairing only from verified sources."""
+    cursor=db.execute("SELECT cursor FROM lit_maintenance WHERE id=1").fetchone()[0]
+    batch=db.execute("SELECT number,arc,title,story,checksum,draft_id FROM omega_index WHERE number>? ORDER BY number LIMIT ?",(cursor,max(1,min(100,limit)))).fetchall()
+    repaired=sum(index_one(db,*row) for row in batch)
+    db.execute("UPDATE lit_maintenance SET cursor=? WHERE id=1",(batch[-1][0] if batch else 0,))
+    return repaired
 
 def rows(db,visible=False):
     for n,raw,h in db.execute("SELECT number,payload,checksum FROM lit_index ORDER BY number"):
@@ -421,7 +440,7 @@ def dossier(db,name):
     a=actors.get(key)
     if not a:return "Нет подтверждённых записей об этом имени."
     facts=[(n,f) for n,f in data if norm(f["subject"])==key or (f["object"] and norm(f["object"])==key)]
-    return f"{a['name']} · ID {identifier(name)}\nПервое свидетельство: {a['first']}; последнее: {a['last']}; появлений: {a['count']}.\n"+"\n\n".join(f"Глава {n} · {f['kind']}: {f['value']} «{f['quote']}»" for n,f in facts[-25:])
+    return f"{a['name']} · ID {a['id']}\nПервое свидетельство: {a['first']}; последнее: {a['last']}; появлений: {a['count']}.\n"+"\n\n".join(f"Глава {n} · {f['kind']}: {f['value']} «{f['quote']}»" for n,f in facts[-25:])
 
 def possible_duplicates(db):
     refresh(db);actors,_=registry(list(rows(db,True)));names=sorted(actors)
