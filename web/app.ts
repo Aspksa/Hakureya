@@ -6,7 +6,7 @@ let busy=false;
 $("replay").onclick=()=>live.replay();$("reset").onclick=()=>{live.replay();$("menu").hidden=true};
 let graphRequest=0;
 async function refreshGraph(){const id=++graphRequest;try{const data=await api("graph");if(id===graphRequest)live.render(data)}catch{if(id===graphRequest)$("info").textContent="Память недоступна"}}
-let activityBusy=false,activityRevision="",activityTimer=0;
+let activityBusy=false,activityRevision="",activityTimer=0,activityActive=false;
 async function refreshActivity(){
  if(document.hidden||activityBusy)return;
  activityBusy=true;
@@ -14,12 +14,13 @@ async function refreshActivity(){
   const controller=new AbortController(),timeout=window.setTimeout(()=>controller.abort(),3000);
   let data;try{const response=await fetch("/api/activity",{cache:"no-store",signal:controller.signal});if(!response.ok)throw Error("activity");data=await response.json()}finally{clearTimeout(timeout)}
   if(document.hidden)return;
+  activityActive=data.active.length>0;
   live.setActivity(data);
   const revision=data.session+":"+data.revision;
   if(revision!==activityRevision){activityRevision=revision;void refreshGraph()}
- }catch{activityRevision="";live.clearActivity()}finally{activityBusy=false}
+ }catch{activityRevision="";activityActive=false;live.clearActivity()}finally{activityBusy=false}
 }
-function scheduleActivity(){clearTimeout(activityTimer);if(document.hidden)return;activityTimer=window.setTimeout(async()=>{await refreshActivity();scheduleActivity()},500)}
+function scheduleActivity(){clearTimeout(activityTimer);if(document.hidden)return;activityTimer=window.setTimeout(async()=>{await refreshActivity();scheduleActivity()},activityActive||busy?400:1200)}
 document.addEventListener("visibilitychange",()=>{clearTimeout(activityTimer);if(!document.hidden){void refreshGraph();void refreshActivity();scheduleActivity()}});
 void refreshActivity();scheduleActivity();
 const avatar=$("avatar"),chat=$("chat"),prompt=$("prompt") as HTMLTextAreaElement,menu=$("menu"),config=$("config") as HTMLDialogElement;
