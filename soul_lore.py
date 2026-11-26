@@ -1,10 +1,13 @@
 """Versioned, code-owned fictional canon. Separate from real episodic memory."""
 from pathlib import Path
 import hashlib
+import re
 
-VERSION = 2
-# Version 2 expands only chapters V and VI; no established event changes.
+VERSION = 3
+# v1 -> v2 expands V–VI; v3 imports the approved VII–XIII manuscript.
+# Retain the v1 alias for compatibility with existing local records.
 PREVIOUS_SHA256 = "c84546eca9eb7e9c90d3a683e8aec7f6a6aac43be420e95de3c352902c151b06"
+LEGACY_SHA256 = {1: PREVIOUS_SHA256, 2: "d46a48418e53d2160255dc7ee5feac260e6e63a4152cae6ade99b40f2259b3a1"}
 PATH = Path(__file__).resolve().parent / "lore" / "HAKUREYA.md"
 SUMMARY = (
     "Хакурэя родилась прежде богов из первой вечной снежинки; прародительница кицунэ, владычица девяти небес, дворец Хакусэйден. "
@@ -30,12 +33,23 @@ def metadata():
 
 def compatible_draft(db,source):
     if source==metadata()["sha256"]:return True
-    if source!=PREVIOUS_SHA256:return False
-    return db.execute("SELECT 1 FROM soul_lore_versions WHERE version=1 AND checksum=?",(PREVIOUS_SHA256,)).fetchone() is not None
+    return any(source==digest and db.execute("SELECT 1 FROM soul_lore_versions WHERE version=? AND checksum=?",(version,digest)).fetchone() is not None for version,digest in LEGACY_SHA256.items())
+
+def excerpt(text,limit):
+    if len(text)<=limit:return text
+    left=(limit-9)//2;right=limit-9-left
+    return text[:left]+"\n[... ]\n"+text[-right:]
 
 def context_for(query):
     """Use a bounded canon excerpt only on explicit lore requests, otherwise summary."""
     q=(query or "").casefold()
+    # Chapter requests use exact Roman-numeral boundaries, not prefix matches.
+    match=re.search(r"\bглава\s+(vii|viii|ix|x|xi|xii|xiii)\b",q)
+    if match:
+        raw=canon();roman=match[1].upper()
+        start=raw.index("### Глава "+roman+".");end=raw.find("\n### Глава ",start+1)
+        chapter=raw[start:end if end!=-1 else len(raw)]
+        return SUMMARY+"\n\nКаноническая глава (вымысел; выбранные отрывки):\n"+excerpt(chapter,6500)
     if any(x in q for x in ("первая встреча","как познакомились","как мы познакомились","как я тебя спас","как тебя спас","первое прикосновение","первые объятия","первое тепло","в лесу","глава v","глава vi")):
         raw=canon()
         start=raw.index("### Глава V.")
@@ -56,6 +70,6 @@ def context_for(query):
             first[:1200],first[touch:touch_end],first[-1500:],
             second[:1200],second[embrace:embrace_end],second[-1600:]))
     if any(x in q for x in ("биография","легенда","летопись","история знакомства","твоя история","прошлое","девять небес")):
-        raw=canon();start=raw.index("### Глава V.");middle=raw.index("### Глава VI.");end=raw.index("### Глава VII.")
-        return SUMMARY+"\n\nЛетопись (вымысел; главы V–VI сокращены для контекста):\n"+raw[:start]+raw[start:start+3000]+"\n[... ]\n"+raw[middle-3000:middle]+raw[middle:middle+3000]+"\n[... ]\n"+raw[end-3000:end]+raw[end:]
+        raw=canon();parts=re.split(r"(?=^### Глава [IVX]+\. )",raw,flags=re.M)
+        return SUMMARY+"\n\nЛетопись (вымысел; длинные главы сокращены для контекста):\n"+ "\n\n".join(excerpt(part,1500) for part in parts)
     return SUMMARY

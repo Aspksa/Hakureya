@@ -77,9 +77,9 @@ def init(db):
         created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
     soul_chronicle.init(db)
     lore = soul_lore.metadata()
-    previous=db.execute("SELECT checksum FROM soul_lore_versions WHERE version=1").fetchone()
-    # Only migrate an intact recognized v1 installation; do not silently bless a damaged one.
-    if previous is None or previous[0]==soul_lore.PREVIOUS_SHA256:
+    previous=db.execute("SELECT version,checksum FROM soul_lore_versions WHERE version<?",(soul_lore.VERSION,)).fetchall()
+    # Accept only recognized intact earlier editions, including installations that skipped v2.
+    if all(soul_lore.LEGACY_SHA256.get(version)==digest for version,digest in previous):
         db.execute("INSERT OR IGNORE INTO soul_lore_versions(version,checksum) VALUES(?,?)",
                    (lore["version"],lore["sha256"]))
         if db.execute("SELECT changes()").fetchone()[0]:
