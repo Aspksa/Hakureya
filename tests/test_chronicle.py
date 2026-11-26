@@ -45,17 +45,21 @@ class ChronicleTest(unittest.TestCase):
         self.assertTrue(any(e["kind"]=="emotion" and e["a"]=="c:1" for e in graph["edges"]))
         self.assertTrue(any(e["kind"]=="chronicle" for e in graph["edges"]))
         self.assertEqual(len([n for n in c.biography_graph(self.db)["nodes"] if n["kind"]=="fictional_chapter"]),13)
-    def test_expanded_canon_v2_migration(self):
+    def test_expanded_canon_v3_migration(self):
         import soul_saga
         import soul_genesis
         import soul_intelligence
         import soul_reader
         chapters=soul_saga.canonical_chapters()
         self.assertEqual(len(chapters),13)
-        self.assertEqual(soul_lore.VERSION,2)
+        self.assertEqual(soul_lore.VERSION,3)
         for n in (5,6):
             story=chapters[n-1][2]
             self.assertTrue(12000<=len(story)<=12600)
+            self.assertEqual("".join(soul_reader.paginate(story)),story)
+        for n in range(7,14):
+            story=chapters[n-1][2]
+            self.assertTrue(len(story)>7500)
             self.assertEqual("".join(soul_reader.paginate(story)),story)
         self.reviews()
         r=c.reserve(self.db)
@@ -78,6 +82,27 @@ class ChronicleTest(unittest.TestCase):
         self.assertFalse(soul_lore.compatible_draft(self.db,"unknown"))
         self.db.execute("UPDATE soul_lore_versions SET checksum='damaged' WHERE version=1")
         self.assertFalse(soul_lore.compatible_draft(self.db,old))
+
+    def test_v2_pending_survives_v3(self):
+        import soul_saga
+        import soul_genesis
+        import soul_heart
+        import soul_intelligence
+        self.reviews()
+        r=c.reserve(self.db)
+        c.finish(self.db,r,draft())
+        old=soul_lore.LEGACY_SHA256[2]
+        self.db.execute("DELETE FROM soul_lore_versions")
+        self.db.execute("INSERT INTO soul_lore_versions(version,checksum) VALUES(2,?)",(old,))
+        self.db.execute("UPDATE chronicle_drafts SET canon_hash=?",(old,))
+        self.db.execute("UPDATE omega_index SET checksum=? WHERE number<=13",(old,))
+        soul_core.init(self.db)
+        soul_intelligence.refresh(self.db)
+        self.assertTrue(c.canon_ok(self.db))
+        self.assertTrue(c.decide(self.db,1,True))
+        self.assertFalse(soul_genesis.audit(self.db))
+        self.assertEqual(len(list(soul_heart.canon_events(self.db))),len(soul_heart.CANON))
+        self.assertEqual(self.db.execute("SELECT story FROM omega_index WHERE number=13").fetchone()[0],soul_saga.canonical_chapters()[12][2])
 
     def test_validation_and_failure(self):
         self.reviews()
