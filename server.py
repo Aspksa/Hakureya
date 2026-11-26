@@ -28,6 +28,7 @@ import soul_immortal
 import soul_novel
 import soul_infinite
 import soul_intelligence
+import soul_director
 import graph_activity
 import writer_activity
 import instance_guard
@@ -195,6 +196,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                     soul_immortal.enrich(db,plan)
                     soul_novel.enrich(db,plan)
                     soul_infinite.context(db,plan)
+                    soul_director.context(db,plan)
                     soul_intelligence.prepare(db,plan)
             previous=[]
             if plan:
@@ -320,6 +322,12 @@ def chronicle_command(content):
     aliases.update({"девять хранительниц":"летопись: хранительницы","хранительницы":"летопись: хранительницы","продолжи историю хранительниц":"летопись: создать хранительниц","план хранительниц":"летопись: план хранительниц"})
     aliases.update({"за пределами девяти небес":"летопись: судьба","план судьбы":"летопись: план судьбы","новые герои":"летопись: новые герои","продолжи судьбу":"летопись: создать судьбу","история силы":"летопись: судьба сила","путешествия":"летопись: судьба путешествия","развитие императрицы":"летопись: судьба развитие"})
     q=aliases.get(q,q)
+    director_commands={"сюжетный режиссёр":"decision","сюжетный режиссер":"decision","сюжетные циклы":"cycles","качество сюжета":"quality","план трёх томов":"forecast","план трех томов":"forecast"}
+    if q in director_commands:
+        with LOCK, closing(connect()) as db, db:
+            if not soul_chronicle.canon_ok(db):return "Целостность канона нарушена."
+            try:return soul_director.report(db,director_commands[q])
+            except (ValueError,TypeError,KeyError,sqlite3.Error):return "Записи сюжетного режиссёра повреждены; проверьте литературную базу."
     lit_chars=re.fullmatch(r"реестр персонажей(?: ([1-9][0-9]{0,4}))?",q)
     lit_search=re.fullmatch(r"поиск по роману (.{2,180})",q)
     lit_dossier=re.fullmatch(r"литературное досье (.{2,60})",q)
