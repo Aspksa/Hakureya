@@ -150,12 +150,19 @@ def context(db,plan):
     old=ge.state(db)
     # All published chapters are eligible, not just the most recent four volumes.
     causes=sorted(old["consequences"],key=lambda x:(x["from"],-x["to"]))[:3]
-    prior=db.execute("SELECT number,title,story FROM omega_index WHERE number<? ORDER BY number LIMIT 1",(max(14,n-100),)).fetchone()
+    # Rotate through genuinely old source material rather than repeatedly recalling chapter one.
+    cutoff=max(14,n-100)
+    recall=1+(n*37)%max(1,cutoff-1)
+    prior=db.execute("SELECT number,title,story FROM omega_index WHERE number<=? ORDER BY number DESC LIMIT 1",(recall,)).fetchone()
     if prior:causes.append({"from":prior[0],"title":prior[1],"excerpt":prior[2][-220:]})
     last=list(rows[-4:]);tension=sum(x[2]["quality"]["tension"] for x in last)/max(1,len(last))
     pace=PACINGS[3] if tension>65 else PACINGS[(n-14)%3]
     # Don't overfill a 1800-token generation with metadata. Store all facts, recall bounded relevant context.
     recent=sorted(facts.values(),key=lambda f:(f["kind"] in STABLE,f["chapter"]),reverse=True)[:6]
+    if selected is None and not fixed and ready(db):
+        # After all fixed stages, choose a bounded long-range proposal for the actual next scene.
+        proposal=forecast(db)["items"][0]
+        if "novel" in plan:plan["novel"]["next_line"]={k:proposal[k] for k in ("theme","title","guide")}
     focus=gu.CAST[(n-14)%len(gu.CAST)]
     plan["infinite"]={"selected":selected,"pace":pace,"mature":mature[:3],"protected":pending[:3],
       "facts":recent,"older_causes":causes,"forgotten":old["forgotten"][:2],
@@ -357,9 +364,24 @@ def graph(db):
     # Reuse canonical protagonist, love and guardian hubs; keep new nodes bounded and spoiler-filtered.
     nodes=[];edges=[];seen=set();last_hero="character:hero"
     guardians={o.normalized(x[1]):"guardian:"+x[0] for x in gu.CAST}
-    def node(k,label,kind):
+    # Existing character nodes are reused whenever available.
+    existing={}
+    for n,did,p in list(ev.published(db))[-60:]:
+        if source_visible(db,n):
+            for f in p["facts"]:
+                key=o.normalized(f["subject"]);existing[key]="evolution:subject:"+o.digest(key)[:20]
+    for n,did in db.execute("SELECT number,draft_id FROM omega_index ORDER BY number DESC LIMIT 24"):
+        if did is None or not source_visible(db,n):continue
+        m=o.metadata(db,did)
+        if m:
+            for event in m["data"]["events"]:
+                for name in event["characters"]:
+                    key=o.normalized(name);existing.setdefault(key,"actor:"+o.digest(key)[:20])
+    def node(k,label,kind,area=None):
         if k not in seen:
-            seen.add(k);nodes.append({"key":k,"group":4,"kind":kind,"content":label,"created":"","order":len(nodes)})
+            seen.add(k);item={"key":k,"group":4,"kind":kind,"content":label,"created":"","order":len(nodes)}
+            if area:item["infinite_group"]=area
+            nodes.append(item)
     def edge(a,b,kind):
         if a and b and a!=b:edges.append({"a":a,"b":b,"kind":kind})
     def hub(name):
@@ -367,10 +389,11 @@ def graph(db):
         if key in ("герой","герой легенды"):return "character:hero"
         if key in ("хакурэя","императрица"):return "character:empress"
         if key in guardians:return guardians[key]
-        k="infinite:character:"+o.digest(key)[:20]
-        node(k,name,"infinite_character");edge("infinite:root",k,"infinite_character")
+        k=existing.get(key) or "infinite:character:"+o.digest(key)[:20]
+        if key not in existing:node(k,name,"infinite_character",k)
+        edge("infinite:root",k,"infinite_character")
         return k
-    node("infinite:root","Бесконечная судьба","infinite_root")
+    node("infinite:root","Бесконечная судьба","infinite_root","infinite:root")
     edge("evolution:root","infinite:root","infinite_branch")
     edge("infinite:root","character:hero","infinite_hero")
     for n in (5,6,9,10,11,12,13):edge(f"canon:{n}","character:hero","infinite_hero")
@@ -378,19 +401,21 @@ def graph(db):
     for n,did,p in public_rows(db)[-100:]:
         if p["step"]:
             k=f"infinite:stage:{p['step']}"
-            node(k,stage(p["step"])["title"],"infinite_stage")
+            node(k,stage(p["step"])["title"],"infinite_stage","infinite:root")
             edge("infinite:root",k,"infinite_branch");edge(f"c:{did}",k,"infinite_source")
             if stage(p["step"])["theme"]=="love":edge("heart:root",k,"infinite_love")
         for j,f in enumerate(p["facts"]):
             k=f"infinite:fact:{did}:{j}";subject=hub(f["subject"])
             kind="infinite_hero" if subject=="character:hero" else "infinite_love" if f["kind"] in ("letter","tradition","relationship") and subject=="character:empress" else "infinite_fact"
-            node(k,f["value"],kind)
+            node(k,f["value"],kind,"heart:root" if kind=="infinite_love" else subject)
             edge(subject,k,kind);edge(f"c:{did}",k,"infinite_source")
             if kind=="infinite_hero":
                 edge(last_hero,k,"infinite_hero");last_hero=k
             if kind=="infinite_love":edge("heart:root",k,"infinite_love")
             if f["cause"] is not None and source_visible(db,f["cause"]):
-                edge(source_key(db,f["cause"]),k,"infinite_cross_volume" if o.volume(f["cause"])!=o.volume(n) else "infinite_cause")
+                across=o.volume(f["cause"])!=o.volume(n)
+                edge(source_key(db,f["cause"]),k,"infinite_cross_volume" if across else "infinite_cause")
+                if across:edge("book:"+str(o.volume(f["cause"])),"book:"+str(o.volume(n)),"infinite_cross_volume")
     # Real older literary causes also connect volumes without duplicating the event node.
     for n,did in db.execute("SELECT number,draft_id FROM omega_index WHERE draft_id IS NOT NULL ORDER BY number DESC LIMIT 120"):
         if not source_visible(db,n):continue
@@ -400,4 +425,8 @@ def graph(db):
             cause=e["cause"]
             if cause is not None and source_visible(db,cause) and o.volume(cause)!=o.volume(n):
                 edge(source_key(db,cause),f"c:{did}","infinite_cross_volume")
+                edge("book:"+str(o.volume(cause)),"book:"+str(o.volume(n)),"infinite_cross_volume")
+            # Named, published appearances also feed the same character constellations.
+            for name in e["characters"]:
+                actor=hub(name);edge(actor,f"c:{did}","infinite_hero" if actor=="character:hero" else "infinite_character")
     return nodes,edges
