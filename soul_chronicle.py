@@ -182,14 +182,14 @@ def graph(db,limit=5000):
     chapters=approved(db,limit)
     for a in chapters:
         key=f"c:{a['id']}"
-        records.append({"key":key,"group":1,"content":"Вымысел: "+a["title"]+" "+" ".join(a["tags"]),"created":a["created"],"order":a["id"]})
+        records.append({"key":key,"group":4,"content":"Вымысел: "+a["title"]+" "+" ".join(a["tags"]),"created":a["created"],"order":a["id"]})
         edges.append({"a":f"d:{a['diary_id']}","b":key,"kind":"chronicle"})
     # Link chapters sharing an approved tag, bounded to one preceding chapter per tag.
     prior={}
     for a in chapters:
         key=f"c:{a['id']}"
         for prev in sorted({prior[t] for t in a["tags"] if t in prior}):
-            edges.append({"a":prev,"b":key,"kind":"chronicle"})
+            edges.append({"a":prev,"b":key,"kind":"chronicle","shared":len(set(a["tags"]) & {t for t,p in prior.items() if p==prev})})
         for t in a["tags"]:
             prior[t]=key
     return records,edges
@@ -218,3 +218,62 @@ def biography_graph(db):
                 nodes.append({"key":t,"kind":"theme","label":tag});seen.add(t)
             edges.append({"a":key,"b":t,"kind":"theme"})
     return {"nodes":nodes,"edges":edges}
+
+
+# Curated, source-backed literary associations, never real psychological measurements.
+CANON_EMOTIONS={3:("одиночество",),5:("удивление","тепло","смущение"),6:("удивление","нежность","спокойствие"),7:("нежность",),8:("доверие","любознательность"),9:("любовь",),11:("любовь","достоинство")}
+CANON_TRAITS={2:("властность","гордость"),3:("самообладание",),5:("гордость","решительность"),6:("властность","любознательность"),8:("любознательность",),11:("самостоятельность","гордость"),12:("любознательность",)}
+EMOTION_LABELS={"wonder":"удивление","calm":"спокойствие","joy":"радость"}
+TRAIT_LABELS={"patience":"терпение","curiosity":"любознательность","warmth":"теплота"}
+
+def constellation(db,limit=5000):
+    """Permanent canon and its thematic evidence; draft is explicitly provisional."""
+    if not canon_ok(db):
+        return [],[],None
+    raw=biography_graph(db)
+    records=[]; edges=[]; seen=set()
+    def node(key,label,kind="theme",value=None):
+        if key not in seen:
+            item={"key":key,"group":4,"content":label,"kind":kind,"created":"","order":len(records)}
+            if value is not None: item["value"]=value
+            records.append(item);seen.add(key)
+    for n in raw["nodes"]:
+        if n["kind"] in ("fictional_chapter","theme"):
+            node(n["key"],("Канон: " if n["kind"]=="fictional_chapter" else "Тема: ")+n["label"],n["kind"])
+    for i in range(1,14):
+        key=f"canon:{i}"
+        for kind,mapping in (("emotion",CANON_EMOTIONS),("trait",CANON_TRAITS)):
+            for label in mapping.get(i,()):
+                dest=f"{kind}:{label}"
+                node(dest,("Чувство персонажа: " if kind=="emotion" else "Черта персонажа: ")+label,kind)
+                edges.append({"a":key,"b":dest,"kind":kind})
+    # Named story roles, not inferred real-world identities.
+    for key,label,chapters in (("character:empress","Хакурэя (персонаж)",range(1,14)),("character:hero","Герой легенды",range(5,14))):
+        node(key,label,"character")
+        edges.extend({"a":f"canon:{i}","b":key,"kind":"character"} for i in chapters)
+    edges.extend(e for e in raw["edges"] if e["a"] in seen or e["b"] in seen)
+    chapters=approved(db,limit)
+    if chapters:
+        previous="canon:13"
+        for a in chapters:
+            key=f"c:{a['id']}"
+            edges.append({"a":previous,"b":key,"kind":"chronology"})
+            previous=key
+            for k,v in a["emotions"].items():
+                dest="emotion:"+EMOTION_LABELS[k]
+                node(dest,"Чувство персонажа: "+EMOTION_LABELS[k],"emotion")
+                edges.append({"a":key,"b":dest,"kind":"emotion","value":v})
+            for k,v in a["traits"].items():
+                if v:
+                    dest="trait:"+TRAIT_LABELS[k]
+                    node(dest,"Черта персонажа: "+TRAIT_LABELS[k],"trait")
+                    edges.append({"a":key,"b":dest,"kind":"trait","value":v})
+    try:
+        p=latest_pending(db)
+    except (ValueError,TypeError):
+        p=None
+    pending=None
+    if p:
+        pending={"key":f"draft:{p['id']}","group":4,"content":"Черновик (не канон): "+p["title"],"kind":"draft","created":"","order":10**9}
+        edges.append({"a":f"c:{chapters[-1]['id']}" if chapters else "canon:13","b":pending["key"],"kind":"draft"})
+    return records,edges,pending
