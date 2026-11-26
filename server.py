@@ -82,10 +82,9 @@ def writer_status(db):
     elif mode=="off" and not CHRONICLE["enabled"]:reason="Автоматическое написание выключено"
     elif not soul_chronicle.canon_ok(db):reason="Нарушена целостность канона"
     elif reserved:reason="Запрос уже выполняется или ожидает восстановления"
-    elif pending:reason="Черновик ожидает решения"
+    elif pending:reason="Разовое задание приостановлено: требуется решение по черновику" if once else "Черновик ожидает решения"
     elif once and task["model"]!=model:reason="Модель задания изменена; остановите задание и подтвердите новое."
-    elif once and pending:reason="Задание приостановлено: требуется решение по черновику"
-    elif once:reason="Разовое задание активно. Следующая проверка планировщика — не позднее обычного минутного цикла при свободном сервере."
+    elif once:reason="Разовое задание активно. Ожидание следующего цикла планировщика."
     elif pages and not writer_volume.budget_ready(db,model):reason="Настройте месячный бюджет и тарифы выбранной модели"
     elif pages and chars>=pages*writer_volume.PAGE_CHARS:reason="Дневная цель по опубликованному тексту достигнута"
     elif len(attempts)>=writer_volume.limit(db):reason="Лимит запросов на сегодня использован"
@@ -99,7 +98,7 @@ def writer_status(db):
             "interval":idle//60,"wait_seconds":0 if once else wait,"pending":pending,"job":task,
             "published":soul_reader.latest(db),"attempt":attempt,
             "chapter_pages":soul_universe.chapter_pages(db),"target_pages":pages,"published_chars":chars,"page_chars":writer_volume.PAGE_CHARS,"attempts_today":len(attempts),
-            "daily_limit":writer_volume.limit(db),"max_tokens":cloud_writer.LIMIT,"reason":reason,
+            "daily_limit":writer_volume.limit(db),"max_tokens":writer_volume.JOB_OUTPUT_LIMIT if once else cloud_writer.LIMIT,"reason":reason,
             "budget":soul_evolution.budget_text(db,day[:7])}
 
 def writer_status_text(db):
@@ -214,6 +213,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
             traits=soul_chronicle.profile(db)
             plan=soul_genesis.enrich(db,soul_omega.enrich_plan(db,soul_saga.plan(db,arc))) if reservation else None
             if plan:
+                if once:plan["writer_job"]={"pages":task["pages"],"remaining_chars":max(0,task["pages"]*writer_volume.PAGE_CHARS-task["chars"])}
                 soul_romance.enrich(db,plan)
                 soul_heart.enrich(db,plan)
                 plan["alternative"]=alternative
@@ -253,7 +253,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                     db.execute("DELETE FROM chronicle_attempts WHERE day=? AND status='reserved'",(reservation[0],))
                     if once:writer_volume.close_job(db,"error","Контекст превышает безопасный предел.")
                     return "Контекст писателя превышает безопасный предел; платный запрос не отправлен."
-                allowed,cost=soul_evolution.budget_check(db,model,messages,cloud_writer.LIMIT,reservation[0])
+                allowed,cost=soul_evolution.budget_check(db,model,messages,writer_volume.JOB_OUTPUT_LIMIT if once else cloud_writer.LIMIT,reservation[0])
                 if not allowed:
                     db.execute("DELETE FROM writer_job_attempt WHERE day=?",(reservation[0],))
                     db.execute("DELETE FROM chronicle_attempts WHERE day=? AND status='reserved'",(reservation[0],))
@@ -274,7 +274,7 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
         for brain in plan.get("intelligence",{}).get("completed",[]):
             graph_activity.update(activity,"brain:"+brain,"brain:"+brain)
         graph_activity.update(activity,"context","root")
-        payload={"model":model,"messages":soul_chronicle.prompt(reservation,traits,previous,plan),"max_tokens":cloud_writer.LIMIT,"stream":True,"stream_options":{"include_usage":True}}
+        payload={"model":model,"messages":soul_chronicle.prompt(reservation,traits,previous,plan),"max_tokens":writer_volume.JOB_OUTPUT_LIMIT if plan.get("writer_job") else cloud_writer.LIMIT,"stream":True,"stream_options":{"include_usage":True}}
         req=Request(API,data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
         graph_activity.update(activity,"waiting")
         try:
@@ -331,11 +331,18 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
         if plan.get("shadow"):
             return "Черновик создан.\n\n"+pending["title"]+"\n\n"+pending["story"]+"\n\n"+("Этап сюжета подтверждён цитатой." if shadow_saved else "Этап ещё не завершён; следующий пока не откроется.")+"\nПринять главу / Отклонить главу. Оценки: летопись: качество."
         return "Черновик создан. "+soul_saga.ARC_LABELS[plan["arc"]]+".\n\n"+pending["title"]+"\n\n"+pending["story"]+("\n\nЕсть варианты: летопись: варианты" if variants else "")+"\n\nПринять главу / Отклонить главу. Оценки: летопись: качество / летопись: оригинальность."
-    except (URLError,TimeoutError,ValueError,KeyError,IndexError,TypeError,OSError,sqlite3.Error,HTTPException,AttributeError):
+    except (URLError,TimeoutError,ValueError,KeyError,IndexError,TypeError,OSError,sqlite3.Error,HTTPException,AttributeError) as error:
         with LOCK, closing(connect()) as db, db:
             if isinstance(locals().get("value"),dict):soul_universe.save_fragment(db,reservation[0],value.get("story"),"unvalidated")
             soul_chronicle.fail(db,reservation)
-            soul_living.log(db,"generation_failed","Неудачная попытка учтена; повтор не раньше следующего дня UTC")
+            if isinstance(error,HTTPError):detail="Cloud.ru HTTP "+str(error.code)
+            elif isinstance(error,(URLError,TimeoutError,HTTPException,OSError)):detail="Обрыв или ошибка соединения с Cloud.ru"
+            elif isinstance(error,json.JSONDecodeError):detail="Модель вернула неполный или некорректный JSON"
+            elif isinstance(locals().get("result"),dict) and locals()["result"].get("choices") and isinstance(locals()["result"]["choices"][0],dict) and locals()["result"]["choices"][0].get("finish_reason")=="length":detail="Ответ модели достиг предельной длины"
+            else:detail="Ответ не прошёл литературную проверку ("+type(error).__name__+")"
+            if plan.get("writer_job"):
+                db.execute("UPDATE writer_job SET reason=? WHERE id=1 AND state='error'",(detail+". Задание остановлено; автоматического повтора нет.",))
+            soul_living.log(db,"generation_failed",detail+"; попытка учтена")
         graph_activity.update(activity,"error")
         return "Черновик не создан: ответ модели не прошёл проверку или запрос завершился ошибкой. Дневная попытка учтена."
 
