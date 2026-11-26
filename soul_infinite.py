@@ -135,7 +135,7 @@ def quality(story):
 
 def context(db,plan):
     rows=list(published(db));facts,threads,history=ledger(rows);n=latest(db)+1
-    fixed=any(k in plan for k in ("shadow","guardians","destiny")) or plan["arc"]!="future" or "cycle_id" in plan.get("romance",{})
+    fixed=bool(plan.get("dynasty_lane")) or any(k in plan for k in ("shadow","guardians","destiny")) or plan["arc"]!="future" or "cycle_id" in plan.get("romance",{})
     selected=None
     if not fixed and ready(db) and remaining(db):selected=remaining(db)[0]
     if selected:
