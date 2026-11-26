@@ -35,7 +35,8 @@ def plan(db,requested=None):
     parent=db.execute("SELECT draft_id FROM saga_arcs WHERE arc=? AND number IS NOT NULL ORDER BY number DESC LIMIT 1",(arc,)).fetchone()
     anchor=ANCHORS[arc]
     # Prior canonical scene, capped to avoid sending the whole book on each paid call.
-    scene=canonical_chapters()[anchor-1][2][:3600]
+    full=canonical_chapters()[anchor-1][2]
+    scene=full if len(full)<=3600 else full[:1800]+"\n[... ]\n"+full[-1790:]
     return {"arc":arc,"anchor":anchor,"parent":parent[0] if parent else None,"guide":ARC_GUIDES[arc],"scene":scene}
 
 def attach(db,did,plan):
