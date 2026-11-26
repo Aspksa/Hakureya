@@ -13,7 +13,9 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
  const cloudGlow=el("radialGradient",{id:"cloud-glow"},defs);for(const [offset,opacity] of [[0,.8],[.2,.35],[1,0]])el("stop",{offset,"stop-color":"#91cbff","stop-opacity":opacity},cloudGlow);
  const stars=el("g",{"pointer-events":"none"}),world=el("g"),links=el("g",{"pointer-events":"none"},world),orbits=el("g",{"pointer-events":"none"},world),dots=el("g",{},world),flows=el("g",{"pointer-events":"none"},world),overlay=el("g",{"pointer-events":"none"},world);
  const random=rng(920),starData=Array.from({length:2200},()=>({x:random(),y:random(),r:.12+random()**7*.72,o:.035+random()**2*.34}));
- const starEls=starData.map((p,i)=>el("circle",{r:p.r,fill:i%13===0?"#d8b9a1":"#e1dcd8",opacity:p.o},stars));
+ const starBuckets=new Map<string,{path:SVGPathElement,points:typeof starData}>();
+ for(const [i,p] of starData.entries()){const tone=i%13===0?"#d8b9a1":"#e1dcd8",opacity=Math.max(.05,Math.round(p.o*10)/10),key=tone+":"+opacity;let bucket=starBuckets.get(key);if(!bucket){bucket={path:el("path",{fill:tone,opacity},stars),points:[]};starBuckets.set(key,bucket)}bucket.points.push(p)}
+ function placeStars(){for(const b of starBuckets.values())b.path.setAttribute("d",b.points.map(p=>{const x=(p.x*w).toFixed(2),y=(p.y*h).toFixed(2),r=p.r.toFixed(2);return "M"+x+" "+y+"m-"+r+" 0a"+r+" "+r+" 0 1 0 "+(2*p.r).toFixed(2)+" 0a"+r+" "+r+" 0 1 0 -"+(2*p.r).toFixed(2)+" 0"}).join(""))}
  let snapshot:Snapshot={records:[],edges:[],total:0,limited:false},graph=layout({...snapshot,transport:true}),w=1,h=1,s=1,zoom=1,panX=0,panY=0,fit=1,desired=1,active="",drag:null|{x:number,y:number,moved:boolean}=null,items=new Map<string,SVGGElement>(),edgeEls:SVGLineElement[]=[],drawnEdges:any[]=[],replayAt=0,shown=0,last=performance.now(),raf=0,disposed=false;
  let session="",works=new Map<string,{item:Work,started:number,terminal:boolean}>(),seen=new Set<string>();
  let receivedSnapshot=false,maxChapter=0,level=-1,lastPublication=0,manualUntil=0,autoReturnAt=0,readerOpen=false,paused=false;
@@ -39,7 +41,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   // Draw glyphs at screen size, instead of shrinking every star together with the world.
   if(glyphScale!==inverse){
    glyphScale=inverse;
-   for(const [key,g] of glyphs){const n=graph.byKey.get(key);const density=graph.nodes.length>800&&zoom<1.25&&!labels.has(key)&&n?.kind!=="fictional_chapter"?.72:1;g.setAttribute("transform","scale("+(inverse*density)+")")}
+   for(const [key,g] of glyphs){const n=graph.byKey.get(key);const density=n&&n.group>=0?Math.min(1,Math.max(.12,.026*s*k/(2*n.r+3))):1;g.setAttribute("transform","scale("+(inverse*density)+")");labels.get(key)?.setAttribute("transform","scale("+1/density+")")}
    selectionGlyph?.setAttribute("transform","scale("+inverse+")");
   }
   const boxes:{l:number,r:number,t:number,b:number}[]=[];
@@ -75,7 +77,11 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   redrawSelection();
  }
  function invalidate(){if(!raf&&!disposed&&!document.hidden&&!paused)raf=requestAnimationFrame(frame)}
- function resize(){const nw=Math.max(1,svg.clientWidth),nh=Math.max(1,svg.clientHeight);if(nw===w&&nh===h)return;autoReturnAt=0;focusMotion=null;panX=panY=0;zoom=1;active="";level=-1;w=nw;h=nh;s=Math.max(1,Math.min(w,h));desired=baseFit();fit=desired;svg.setAttribute("viewBox","0 0 "+w+" "+h);starEls.forEach((e,i)=>{e.setAttribute("cx",String(starData[i].x*w));e.setAttribute("cy",String(starData[i].y*h))});place();glyphScale=NaN;invalidate()}
+ function resize(){const nw=Math.max(1,svg.clientWidth),nh=Math.max(1,svg.clientHeight);if(nw===w&&nh===h)return;
+  autoReturnAt=0;focusMotion=null;const oldScale=Math.max(.00001,s*fit*zoom),dx=panX/oldScale,dy=panY/oldScale;
+  w=nw;h=nh;s=Math.max(1,Math.min(w,h));desired=baseFit();fit=desired;
+  panX=dx*s*fit*zoom;panY=dy*s*fit*zoom;level=-1;
+  svg.setAttribute("viewBox","0 0 "+w+" "+h);placeStars();place();glyphScale=NaN;invalidate()}
  function reveal(n:number){
   const visible=new Set(graph.nodes.slice(0,n).map(x=>x.key));graph.nodes.forEach(x=>items.get(x.key)?.setAttribute("visibility",visible.has(x.key)?"visible":"hidden"));drawnEdges.forEach((e,i)=>edgeEls[i]?.setAttribute("visibility",visible.has(e.a)&&visible.has(e.b)?"visible":"hidden"));shown=n;
  }
@@ -103,11 +109,12 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   if(publication)lastPublication=Math.max(lastPublication,publication.number);
   snapshot=next;graph=layout({...next,transport:true});level=-1;
   recentChapterKeys=new Set<string>(next.records.filter(n=>/^c:[1-9]\d*$/.test(n.key)).sort((a,b)=>Number(b.key.slice(2))-Number(a.key.slice(2))).slice(0,20).map(n=>n.key));items.clear();glyphs.clear();labels.clear();labelWidths.clear();glyphScale=NaN;links.replaceChildren();dots.replaceChildren();orbits.replaceChildren();orbitEls.clear();overlay.replaceChildren();
-  for(const n of graph.nodes){if(n.kind!=="book_segment"||!n.book)continue;const members=graph.nodes.filter(c=>c.kind==="fictional_chapter"&&c.book===n.book&&c.sector===n.sector);if(!members.length)continue;const r=Math.max(.03,...members.map(c=>Math.hypot(c.x-n.x,c.y-n.y)))+.012;const circle=el("circle",{fill:"none",stroke:"#e8ca96","stroke-opacity":.19,"stroke-dasharray":"2 5","stroke-width":.7,"vector-effect":"non-scaling-stroke"},orbits);orbitEls.set(n.key,{circle,node:n,r})}
+  const chapterGroups=new Map<string,any[]>();for(const c of graph.nodes){if(c.kind!=="fictional_chapter")continue;const key=c.sector+":"+c.book;const group=chapterGroups.get(key)||[];group.push(c);chapterGroups.set(key,group)}
+  for(const n of graph.nodes){if(n.kind!=="book_segment"||!n.book)continue;const members=chapterGroups.get(n.sector+":"+n.book)||[];if(!members.length)continue;const r=Math.max(.03,...members.map(c=>Math.hypot(c.x-n.x,c.y-n.y)))+.012;const circle=el("circle",{fill:"none",stroke:"#e8ca96","stroke-opacity":.19,"stroke-dasharray":"2 5","stroke-width":.7,"vector-effect":"non-scaling-stroke"},orbits);orbitEls.set(n.key,{circle,node:n,r})}
   // Always preserve root, categories and canon links; thin dense secondary edges only.
   const essential=graph.edges.filter(e=>e.kind==="category"||e.kind==="chronology"||e.a.startsWith("canon:")||e.kind==="draft"||e.kind.startsWith("heart_")||e.kind.startsWith("shadow_")||e.kind.startsWith("guardian_")||e.kind.startsWith("destiny_")||e.kind.startsWith("living_")||e.kind.startsWith("evolution_")||e.kind.startsWith("immortal_")||e.kind.startsWith("infinite_")||e.kind.startsWith("lit_"));
   const essentialSet=new Set(essential);const secondary=graph.edges.filter(e=>!essentialSet.has(e));
-  drawnEdges=essential.concat(secondary.slice(0,Math.max(0,10000-essential.length)));
+  drawnEdges=essential.concat(secondary).slice(0,10000);
   edgeEls=drawnEdges.map(e=>{const b=graph.byKey.get(e.b);return el("line",{stroke:e.kind==="lit_rel_love"?"#efa1bd":e.kind==="lit_rel_conflict"||e.kind==="lit_rel_rival"?"#e88e72":e.kind==="lit_rel_trust"||e.kind==="lit_rel_ally"?"#e7c46d":e.kind==="lit_rel_family"?"#a6d8ba":e.kind.startsWith("lit_")?"#a9c1e4":e.kind==="infinite_hero"?"#e7c46d":e.kind==="infinite_love"?"#f0a3c5":e.kind==="infinite_cross_volume"?"#9ec8f0":e.kind.startsWith("infinite_")?"#c7b3df":e.kind==="immortal_consequence"?"#d9bd80":e.kind==="immortal_love"?"#efa3c4":e.kind==="immortal_clue"||e.kind==="immortal_reveal"?"#c0a9e8":e.kind==="immortal_journey"?"#9fc9ec":e.kind.startsWith("immortal_")?"#d0c0a5":e.kind.startsWith("evolution_")?"#c5b7ed":e.kind.startsWith("living_")?"#b1d9ca":e.kind.startsWith("destiny_")?"#b8c9e8":e.kind.startsWith("guardian_")?"#e4d8ac":e.kind.startsWith("shadow_")?"#d9c799":e.kind.startsWith("heart_")?"#efa3c4":e.kind==="category"&&e.a==="root"?"#bbb2ab":colors[(b?.group??-1)+1],"stroke-opacity":e.kind==="category"?.22:e.kind==="keywords"?.12:Math.min(.65,.23+.07*(e.shared||0)),"stroke-width":e.a==="root"?1.1:Math.min(1.5,.65+.12*(e.shared||0)),"vector-effect":"non-scaling-stroke",...(e.kind==="draft"?{"stroke-dasharray":"2 3"}:{})},links)});
   const dense=graph.nodes.length>800;
   for(const n of graph.nodes){
@@ -133,7 +140,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   if(!graph.byKey.has(active))active="";
   replayAt=0;shown=graph.nodes.length;place();applyDetail();updateGlyphs();
   if(isNewPublication&&publication&&!motion.matches&&!paused&&!document.hidden){for(const [i,link] of publicationLinks(publication,graph).entries())birthTrails.set("birth:"+publication.number+":"+i,{...link,at:now});while(birthTrails.size>10)birthTrails.delete(birthTrails.keys().next().value!);pulse(publication.key,"#ffe2a0",now);births.set(publication.key,now);if(publication.first){for(const key of [publication.segment,"book:"+publication.volume])if(graph.byKey.has(key)){births.set(key,now);pulse(key,"#e7c46d",now)}if((publication.volume-1)%8===0){const key="novel:epoch:"+publication.epoch;if(graph.byKey.has(key)){births.set(key,now);pulse(key,"#c0a9e8",now)}}}if(publication.complete)pulse(publication.segment,"#fff3cb",now);if(!readerOpen&&!active&&!drag&&now>manualUntil&&zoom===1&&graph.byKey.has(publication.key)){const n=graph.byKey.get(publication.key),target=1.35,k=target*desired;focusMotion={start:now,fromZoom:zoom,toZoom:target,fromX:panX,fromY:panY,toX:-(n.x-camera.cx)*s*k,toY:-(n.y-camera.cy)*s*k};autoReturnAt=now+2400}}
-  if(wasReceived&&!scopeChanged&&!paused&&!motion.matches){for(const n of next.records){if((n.key.startsWith("draft:")||n.kind==="lit_character"||n.kind==="lit_world"||n.kind==="lit_power"||n.kind==="lit_place"||n.kind==="lit_family")&&!oldKeys.has(n.key)){births.set(n.key,now);pulse(n.key,"#e8c6ed",now)}}}
+  if(isNewPublication&&!paused&&!motion.matches){for(const n of next.records){if((n.key.startsWith("draft:")||n.kind==="lit_character"||n.kind==="lit_world"||n.kind==="lit_power"||n.kind==="lit_place"||n.kind==="lit_family")&&!oldKeys.has(n.key)){births.set(n.key,now);pulse(n.key,"#e8c6ed",now)}}}
   status();invalidate();
  }
  function clearActivity(){works.clear();stages.clear();birthTrails.clear();for(const p of particles.values())p.group.remove();particles.clear();for(const ring of highlighted.values())ring.remove();highlighted.clear();status();invalidate()}
@@ -163,18 +170,18 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   let routeBudget=graph.nodes.length>800?6:16;
   for(const [id,a] of stages){
    let elapsed=now-a.started;
-   const duration=a.current.stage.startsWith("brain:")?240:a.current.stage==="waiting"?950:a.current.stage==="received"?680:500;
+   const duration=a.current.stage.startsWith("brain:")?420:a.current.stage==="waiting"?1100:a.current.stage==="received"?900:680;
    if(a.queue.length&&(elapsed>=duration||motion.matches)){a.current=motion.matches?a.queue[a.queue.length-1]:a.queue.shift()!;if(motion.matches)a.queue=[];a.started=now;elapsed=0;status();if(a.current.stage==="received")pulse("root","#ffe2a0",now);if(a.current.stage==="saved"||a.current.stage==="published")pulse(a.current.target,"#ffe2a0",now)}
    if(a.terminal&&!a.queue.length&&elapsed>1500){stages.delete(id);works.delete(id);status();continue}
    const fade=a.terminal&&!a.queue.length?Math.max(0,1-elapsed/1500):1;
-   const routes=flowPaths(a.current,graph).slice(0,routeBudget);routeBudget-=routes.length;
+   const routes=flowPaths(a.current,graph).filter(route=>route.points.every(p=>!p.key||items.get(p.key)?.getAttribute("visibility")!=="hidden")).slice(0,routeBudget);routeBudget-=routes.length;
    routes.forEach((route,i)=>{
     const key=id+":"+i;used.add(key);
     let p=particles.get(key);
     if(!p){const group=el("g",{},flows),line=el("polyline",{fill:"none","stroke-width":1.1},group),dots=Array.from({length:6},()=>el("circle",{r:1.5},group));p={group,line,dots};particles.set(key,p)}
     p.line.setAttribute("points",route.points.map(q=>(q.x*s)+","+(q.y*s)).join(" "));
     p.line.setAttribute("vector-effect","non-scaling-stroke");p.line.setAttribute("stroke",route.color);p.line.setAttribute("opacity",String(.35*fade));
-    p.dots.forEach((d,j)=>{const count=graph.nodes.length>800?3:6,t=motion.matches?.5:a.current.stage==="waiting"?Math.min(1,Math.max(0,elapsed/1100-j*.07)):((elapsed/(1000+120*i)+i*.17-j*.055+2)%1),q=pointOn(route.points,t);d.setAttribute("r",String((j===0?2.8:Math.max(.65,2.1-j*.27))*inverse));d.setAttribute("cx",String(q.x*s));d.setAttribute("cy",String(q.y*s));d.setAttribute("fill",route.color);d.setAttribute("opacity",String((j>=count||motion.matches&&j>0?0:1-j*.14)*fade*(a.current.stage==="waiting"&&!motion.matches?Math.max(0,Math.min(1,(1800-elapsed)/500)):1)))});
+    p.dots.forEach((d,j)=>{const count=graph.nodes.length>800?3:6,t=motion.matches?.5:a.current.stage==="waiting"?Math.min(1,Math.max(0,elapsed/1100-j*.07)):Math.min(1,Math.max(0,elapsed/duration-j*.055)),q=pointOn(route.points,t);d.setAttribute("r",String((j===0?2.8:Math.max(.65,2.1-j*.27))*inverse));d.setAttribute("cx",String(q.x*s));d.setAttribute("cy",String(q.y*s));d.setAttribute("fill",route.color);d.setAttribute("opacity",String((j>=count||motion.matches&&j>0?0:1-j*.14)*fade*(a.current.stage==="waiting"&&!motion.matches?Math.max(0,Math.min(1,(1800-elapsed)/500)):1)))});
    });
    if(!a.terminal||fade>.15){
     hot.set("root","#e9cf9c");
@@ -187,16 +194,16 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   }
   for(const [key,b] of birthTrails){
    const a=graph.byKey.get(b.a),z=graph.byKey.get(b.b),t=(now-b.at)/1700;
-   if(t>=1||!a||!z||motion.matches){birthTrails.delete(key);continue}
+   if(t>=1||!a||!z||motion.matches||items.get(b.a)?.getAttribute("visibility")==="hidden"||items.get(b.b)?.getAttribute("visibility")==="hidden"){birthTrails.delete(key);continue}
    if(routeBudget<=0)continue;routeBudget--;used.add(key);
    let p=particles.get(key);if(!p){const group=el("g",{},flows),line=el("polyline",{fill:"none","stroke-width":1.2,"vector-effect":"non-scaling-stroke"},group),dots=Array.from({length:4},()=>el("circle",{},group));p={group,line,dots};particles.set(key,p)}
    p.line.setAttribute("points",[[a.x*s,a.y*s],[z.x*s,z.y*s]].map(v=>v.join(",")).join(" "));p.line.setAttribute("stroke",b.color);p.line.setAttribute("opacity",String(.5*(1-t)));
    p.dots.forEach((dot,i)=>{const q=pointOn([a,z],Math.max(0,Math.min(1,t*1.3-i*.09)));dot.setAttribute("cx",String(q.x*s));dot.setAttribute("cy",String(q.y*s));dot.setAttribute("r",String((2.8-i*.5)*inverse));dot.setAttribute("fill",b.color);dot.setAttribute("opacity",String((1-t)*(1-i*.15)))})
   }
   for(const [id,p] of particles)if(!used.has(id)){p.group.remove();particles.delete(id)}
-  for(const [key,ring] of highlighted)if(!hot.has(key)||!graph.byKey.has(key)){ring.remove();highlighted.delete(key)}
+  for(const [key,ring] of highlighted)if(!hot.has(key)||!graph.byKey.has(key)||items.get(key)?.getAttribute("visibility")==="hidden"){ring.remove();highlighted.delete(key)}
   for(const [key,color] of [...hot].slice(0,12)){
-   const n=graph.byKey.get(key);if(!n)continue;
+   const n=graph.byKey.get(key);if(!n||items.get(key)?.getAttribute("visibility")==="hidden")continue;
    let ring=highlighted.get(key);if(!ring){ring=el("circle",{fill:"none","stroke-width":1.4,"vector-effect":"non-scaling-stroke"},flows);highlighted.set(key,ring)}
    ring.setAttribute("cx",String(n.x*s));ring.setAttribute("cy",String(n.y*s));ring.setAttribute("stroke",color);ring.setAttribute("r",String((n.r+8+(motion.matches?0:4*Math.sin(now/240)))*inverse));ring.setAttribute("opacity",String(motion.matches?.6:.55+.35*Math.sin(now/220)**2));
   }
@@ -213,7 +220,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   if(focusMotion){const f=focusMotion,t=motion.matches?1:Math.min(1,(now-f.start)/360),e=1-Math.pow(1-t,3);zoom=f.fromZoom+(f.toZoom-f.fromZoom)*e;panX=f.fromX+(f.toX-f.fromX)*e;panY=f.fromY+(f.toY-f.fromY)*e;if(t===1)focusMotion=null}
   if(autoReturnAt&&now>=autoReturnAt){autoReturnAt=0;if(!readerOpen&&!active&&!drag&&now>manualUntil)focusNode("root")}
   const cameraOrigin=origin();world.setAttribute("transform","translate("+cameraOrigin.x+" "+cameraOrigin.y+") scale("+cameraOrigin.k+")");
-  applyDetail();if(now-lastLabelFrame>80||fit!==desired||focusMotion||!stages.size){updateGlyphs();lastLabelFrame=now}
+  applyDetail();if(now-lastLabelFrame>80||fit!==desired||focusMotion){updateGlyphs();lastLabelFrame=now}
   drawActivity(now);
   for(const [key,start] of births){const t=Math.min(1,(now-start)/1000);const g=items.get(key);if(g)g.setAttribute("opacity",String(.08+.92*t));if(t===1||!g||motion.matches){g?.removeAttribute("opacity");births.delete(key)}}
   if(births.size||waves.size||birthTrails.size||autoReturnAt||replayAt||focusMotion||fit!==desired||[...stages.values()].some(a=>a.terminal||a.queue.length||!motion.matches))invalidate();
