@@ -264,6 +264,10 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                 soul_universe.record(db,reservation[0],plan)
                 visual_sources=writer_activity.context_keys(db,plan,previous)
         if not reservation:
+            if once:
+                with closing(connect()) as db, db:
+                    if writer_volume.active_job(db) and not db.execute("SELECT 1 FROM chronicle_attempts WHERE status='reserved'").fetchone() and not db.execute("SELECT 1 FROM chronicle_drafts WHERE status='pending'").fetchone():
+                        writer_volume.close_job(db,"error","Задание остановлено: литературные данные или лимит не позволяют начать сцену.")
             return "Есть незавершённая попытка или ожидающий черновик, нарушена целостность канона либо исчерпан дневной лимит."
         key, model, epoch=CONFIG["key"],writer or CONFIG["model"],CHRONICLE["epoch"]
     with graph_activity.track("chronicle",("dynasty:root" if dynasty_lane else "destiny:root" if destiny_plan else "guardians:root" if guardian_plan else "shadow:root" if shadow_plan else (f"d:{reservation[1]}" if reservation[1]>0 else ("heart:root" if plan["arc"]=="love" else "living:root" if plan.get("living") and plan["arc"]=="future" else "arc:"+plan["arc"]))),sources=visual_sources) as activity:
@@ -695,6 +699,7 @@ def chronicle_command(content):
         if q=="летопись: содержание": return soul_saga.contents(db)
         if q=="летопись: последняя": return soul_reader.move(db,"latest")
         if q=="летопись: включить сон":
+            if writer_volume.active_job(db):return "Разовое задание активно. Сначала остановите его."
             if not CONFIG["key"]:
                 return "Сначала подключите Cloud.ru. Сон не включён."
             CHRONICLE.update(enabled=True,epoch=CHRONICLE["epoch"]+1)
@@ -893,7 +898,7 @@ class Handler(SimpleHTTPRequestHandler):
                             return self.respond({"error":"Защитный предел 20 запросов за сутки уже достигнут."},400)
                     elif mode!="off" and writer_volume.active_job(db):
                         return self.respond({"error":"Сначала остановите разовое задание."},409)
-                    budget=data.get("budget")
+                    budget=data.get("budget") if mode!="off" else None
                     if budget is not None:
                         if not model or not isinstance(budget,dict) or any(type(budget.get(k)) is not int or not 1<=budget[k]<=1_000_000 for k in ("monthly","input","output")):
                             return self.respond({"error":"Введите положительные целые тарифы и бюджет в рублях."},400)
