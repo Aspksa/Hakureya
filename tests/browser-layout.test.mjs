@@ -89,6 +89,11 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
    assert.ok(metrics.font>=13&&metrics.font<=16,JSON.stringify(metrics));
    assert.ok(metrics.labels>=1);
    assert.equal(await evaluate("document.querySelector('#graph [data-key=\\\"cloud:api\\\"] title').textContent"),"Cloud.ru");
+   assert.ok(await evaluate("!!document.querySelector('#stellar-core') && !!document.querySelector('#stellar-chapter')"));
+   await evaluate("document.querySelector('#stellar-cinema').click()");
+   assert.ok(await evaluate("document.querySelector('#stage').classList.contains('stellar-cinema') && document.querySelector('#stellar-cinema').getAttribute('aria-pressed')==='true'"));
+   await evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))");
+   assert.equal(await evaluate("document.querySelector('#stage').classList.contains('stellar-cinema')"),false);
    await evaluate("document.querySelector('#avatar').click()");
    await waitFor(()=>evaluate("!document.querySelector('#chat').hidden"));
    await delay(200);
