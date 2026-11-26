@@ -399,6 +399,8 @@ def constellation(db,limit=5000):
     more+=evolution_nodes;connections+=evolution_edges
     immortal_nodes,immortal_edges=soul_immortal.graph(db)
     more+=immortal_nodes;connections+=immortal_edges
+    novel_nodes,novel_edges=soul_novel.graph(db)
+    more+=novel_nodes;connections+=novel_edges
     records.extend(n for n in more if n["key"] not in seen)
     edges.extend(connections)
     return records,edges,pending
