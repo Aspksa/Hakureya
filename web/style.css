@@ -132,3 +132,25 @@ dialog button:hover{background:#d5b38b12}
 /* A4 proportions for local reader, scaled to the available screen width. */
 #book-page{width:100%;max-width:var(--a4-width,210mm);padding:clamp(16px,5%,36px) clamp(18px,7%,56px);min-height:0;box-sizing:border-box}
 #writer-dialog details{border:1px solid #6f5744;padding:8px;border-radius:6px}#writer-dialog details summary{cursor:pointer;color:#dbc294}#writer-dialog details label{margin-top:8px}
+
+/* Searchable chat command palette, consistent with the gold/dark reader. */
+#composer #command-plus{flex:0 0 42px;border-radius:10px;color:#d9bd8f;font:300 31px/1 var(--ui-font);transition:background .16s,transform .16s}
+#composer #command-plus:hover,#composer #command-plus[aria-expanded=true]{background:#dfbf8720}
+#composer #prompt{min-width:0;flex:1}
+#command-dialog{width:min(560px,calc(100vw - 24px));max-width:100%;max-height:min(760px,calc(100dvh - 24px));padding:20px;overflow:auto;background:#11100f;border:1px solid #6c5536;border-radius:18px;color:#e8dfd1;scrollbar-width:thin;scrollbar-color:#786044 transparent}
+#command-dialog .command-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
+#command-dialog h2{font-size:21px;margin:0;color:#f1dfbf}
+#command-dialog #command-close{font-size:26px;padding:4px 12px}
+#command-dialog .command-help{font-size:13px;line-height:1.55;color:#b9ab98;margin-bottom:12px}
+#command-dialog .command-tools{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+#command-dialog .command-tools button{border:1px solid #675337;border-radius:9px;font-size:13px;color:#ead0a1}
+#command-dialog label{display:block;color:#b8a58d;font-size:12px;margin:8px 0 4px}
+#command-dialog input,#command-dialog select{width:100%;min-height:42px;padding:9px 11px;background:#1a1713;color:#f0e2c9;border:1px solid #584731;border-radius:8px;font:14px var(--ui-font)}
+#command-count{display:block;font-size:12px;color:#b29c7b;margin:10px 0}
+#command-results{display:block;max-height: min(390px,44dvh);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
+#command-results h3{margin:12px 0 5px;color:#c5a873;font-size:12px;font-weight:600;letter-spacing:.04em}
+#command-results .command-item{display:flex;flex-direction:column;align-items:flex-start;gap:3px;width:100%;min-height:48px;text-align:left;border-radius:8px;padding:8px 10px;font:14px/1.35 var(--ui-font)}
+#command-results .command-item strong{font-weight:550;color:#efe2cc;overflow-wrap:anywhere}
+#command-results .command-item small{font-size:11px;color:#af9c80;overflow-wrap:anywhere}
+#command-results .command-item:hover,#command-results .command-item:focus-visible{background:#d7b97e18}
+@media(max-width:600px){#command-dialog{padding:14px}#command-results{max-height:38dvh}#composer #command-plus{flex-basis:36px;min-width:36px}}
