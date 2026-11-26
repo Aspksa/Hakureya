@@ -81,11 +81,11 @@ def writer_status(db):
 
 def writer_status_text(db):
     st=writer_status(db)
-    return (soul_living.status(db)+"\\nПричина: "+st["reason"]+
-        "\\nПоследняя опубликованная глава: "+str(st["published"])+
-        "\\nМодель: "+(st["model"] or "не выбрана")+
-        "\\nПодключение: "+("сохранено для этой учётной записи Windows" if st["saved_connection"] else "только текущий сеанс")+
-        "\\n"+st["budget"])
+    return (soul_living.status(db)+"\nПричина: "+st["reason"]+
+        "\nПоследняя опубликованная глава: "+str(st["published"])+
+        "\nМодель: "+(st["model"] or "не выбрана")+
+        "\nПодключение: "+("сохранено для этой учётной записи Windows" if st["saved_connection"] else "только текущий сеанс")+
+        "\n"+st["budget"])
 
 def connect():
     DB.parent.mkdir(parents=True, exist_ok=True)
