@@ -74,6 +74,7 @@ def writer_status(db):
     reserved=db.execute("SELECT 1 FROM chronicle_attempts WHERE status='reserved'").fetchone()
     idle=soul_immortal.preferences(db)[1]
     wait=max(0,int(idle-(time.monotonic()-CHRONICLE["last_activity"])))
+    cooldown=writer_volume.cooldown(db,idle)
     if not CONFIG["key"]:reason="Cloud.ru не подключён"
     elif mode=="off" and not CHRONICLE["enabled"]:reason="Автоматическое написание выключено"
     elif not soul_chronicle.canon_ok(db):reason="Нарушена целостность канона"
@@ -83,6 +84,7 @@ def writer_status(db):
     elif pages and chars>=pages*writer_volume.PAGE_CHARS:reason="Дневная цель по опубликованному тексту достигнута"
     elif len(attempts)>=writer_volume.limit(db):reason="Лимит запросов на сегодня использован"
     elif pages and writer_volume.auto_block(db,day):reason="Автоматические повторные запросы остановлены после ошибки"
+    elif cooldown:reason="Пауза между литературными запросами: "+str(cooldown)+" сек."
     elif wait and not reading_window(db):reason="Ожидание бездействия"
     else:reason="Готов к следующей проверке планировщика"
     budget_row=db.execute("SELECT model,input_rate,output_rate,monthly_kopecks FROM evolution_budget WHERE id=1").fetchone()
@@ -161,6 +163,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
         with closing(connect()) as db, db:
             if background and not reading_window(db) and time.monotonic()-CHRONICLE["last_activity"]<soul_immortal.preferences(db)[1]:return "Ожидание фонового интервала."
             if background and not CHRONICLE["enabled"] and soul_living.mode(db)=="off":return "Автономное развитие выключено."
+            if background and writer_volume.cooldown(db,soul_immortal.preferences(db)[1]):return "Пауза между литературными запросами."
             pages=writer_volume.target(db)
             if pages:
                 model=cloud_writer.selected(db) or CONFIG["model"]
@@ -181,12 +184,16 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                 dynasty_lane=soul_dynasty.choose_lane(db,explicit=dynasty)
             if dynasty and not dynasty_lane:return "Династия: сначала завершите текущую литературную главу/цикл либо все этапы уже пройдены."
             if dynasty_lane:arc="future"
+            if arc is None and not alternative and not (shadow or guardians or destiny):
+                last=db.execute("SELECT arc FROM omega_index ORDER BY number DESC LIMIT 1").fetchone()
+                if last and soul_novel.next_group(db,last[0],cycle)["part"]>1:arc=last[0]
             shadow_plan=soul_shadow.plan(db) if not cycle and not alternative and (shadow or arc is None) and not soul_shadow.audit(db) else None
             guardian_plan=soul_guardians.plan(db) if not cycle and not alternative and (guardians or shadow or arc is None) else None
             destiny_plan=soul_destiny.plan(db) if not cycle and not alternative and (destiny or shadow or arc is None) else None
             if destiny and not destiny_plan:return soul_destiny.status(db)
             if guardians and not guardian_plan:return soul_guardians.status(db)
-            if guardian_plan:shadow_plan=None
+            if destiny_plan:shadow_plan=guardian_plan=None
+            elif guardian_plan:shadow_plan=None
             if shadow and not (shadow_plan or guardian_plan or destiny_plan) and (soul_destiny.audit(db) or len(soul_destiny.published(db))!=len(soul_destiny.ORDER)):return "Сюжетные данные повреждены или продолжение недоступно."
             if shadow_plan or guardian_plan or destiny_plan:arc="future"
             elif arc is None and not alternative and not soul_destiny.audit(db) and len(soul_destiny.published(db))==len(soul_destiny.ORDER):arc="future"
@@ -225,7 +232,11 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
             writer=cloud_writer.selected(db)
             if reservation:
                 model=writer or CONFIG["model"]
-                allowed,cost=soul_evolution.budget_check(db,model,soul_chronicle.prompt(reservation,traits,previous,plan),cloud_writer.LIMIT,reservation[0])
+                messages=soul_chronicle.prompt(reservation,traits,previous,plan)
+                if len(json.dumps(messages,ensure_ascii=False).encode("utf-8"))>soul_universe.MAX_CONTEXT_BYTES:
+                    db.execute("DELETE FROM chronicle_attempts WHERE day=? AND status='reserved'",(reservation[0],))
+                    return "Контекст писателя превышает безопасный предел; платный запрос не отправлен."
+                allowed,cost=soul_evolution.budget_check(db,model,messages,cloud_writer.LIMIT,reservation[0])
                 if not allowed:
                     db.execute("DELETE FROM chronicle_attempts WHERE day=? AND status='reserved'",(reservation[0],))
                     return "Литературный запрос остановлен: проверьте денежный лимит или тариф модели."
@@ -250,6 +261,10 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
         try:
             with urlopen(req,timeout=60) as res:
                 result=writer_stream.read_response(res,lambda chars,chunks:graph_activity.progress(activity,chars,chunks),lambda raw:writer_preview.push(activity,raw))
+        except (HTTPException,URLError,TimeoutError,ValueError,OSError):
+            with LOCK, closing(connect()) as db, db:
+                soul_universe.save_fragment(db,reservation[0],writer_preview.fragment(activity),"interrupted")
+            raise
         finally:
             writer_preview.clear(activity)
         graph_activity.update(activity,"received","hub:4")
@@ -257,11 +272,18 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
         with LOCK, closing(connect()) as db, db:
             cloud_writer.usage(db,reservation[0],model,result)
             soul_evolution.settle_cost(db,reservation[0],result)
-        if result["choices"][0].get("finish_reason")=="length":raise ValueError("incomplete literary response")
+        if result["choices"][0].get("finish_reason")=="length":
+            with LOCK, closing(connect()) as db, db:
+                soul_universe.save_fragment(db,reservation[0],writer_preview.story_prefix(result["choices"][0]["message"]["content"]),"truncated")
+            raise ValueError("incomplete literary response")
         raw=result["choices"][0]["message"]["content"]
         if not isinstance(raw,str) or len(raw)>24000:
             raise ValueError("invalid draft")
-        value=json.loads(raw)
+        try:value=json.loads(raw)
+        except ValueError:
+            with LOCK, closing(connect()) as db, db:
+                soul_universe.save_fragment(db,reservation[0],writer_preview.story_prefix(raw),"invalid_json")
+            raise
         with LOCK, closing(connect()) as db, db:
             if CHRONICLE["epoch"]!=epoch:
                 soul_chronicle.fail(db,reservation)
@@ -290,8 +312,9 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
         if plan.get("shadow"):
             return "Черновик создан.\n\n"+pending["title"]+"\n\n"+pending["story"]+"\n\n"+("Этап сюжета подтверждён цитатой." if shadow_saved else "Этап ещё не завершён; следующий пока не откроется.")+"\nПринять главу / Отклонить главу. Оценки: летопись: качество."
         return "Черновик создан. "+soul_saga.ARC_LABELS[plan["arc"]]+".\n\n"+pending["title"]+"\n\n"+pending["story"]+("\n\nЕсть варианты: летопись: варианты" if variants else "")+"\n\nПринять главу / Отклонить главу. Оценки: летопись: качество / летопись: оригинальность."
-    except (URLError,TimeoutError,ValueError,KeyError,IndexError,TypeError,OSError,sqlite3.Error):
+    except (URLError,TimeoutError,ValueError,KeyError,IndexError,TypeError,OSError,sqlite3.Error,HTTPException,AttributeError):
         with LOCK, closing(connect()) as db, db:
+            if isinstance(locals().get("value"),dict):soul_universe.save_fragment(db,reservation[0],value.get("story"),"unvalidated")
             soul_chronicle.fail(db,reservation)
             soul_living.log(db,"generation_failed","Неудачная попытка учтена; повтор не раньше следующего дня UTC")
         graph_activity.update(activity,"error")
@@ -349,12 +372,17 @@ def chronicle_command(content):
     universe_commands={"литературная вселенная":"overview","координатор сюжета":"plan","матрица знаний":"knowledge","восстановить индекс сцен":"repair","проверить индекс сцен":"audit","хронология вселенной":"timeline","атлас вселенной":"atlas"}
     scene_query=re.fullmatch(r"поиск сцены (.{2,180})",q)
     actor_query=re.fullmatch(r"история персонажа (.{2,80})",q)
-    if q in universe_commands or scene_query or actor_query:
+    timeline_query=re.fullmatch(r"хронология вселенной ([1-9][0-9]{0,5})",q)
+    if q=="восстановить фрагмент":
+        with LOCK, closing(connect()) as db:return soul_universe.fragment_text(db)
+    if q in ("поиск сцены","история персонажа"):return "Укажите запрос после названия команды. Запрос Cloud.ru не отправлен."
+    if q in universe_commands or scene_query or actor_query or timeline_query:
         with LOCK, closing(connect()) as db, db:
             if not soul_chronicle.canon_ok(db):return "Целостность канона нарушена."
             try:
                 if scene_query:return soul_universe.report(db,"search",scene_query[1])
                 if actor_query:return soul_universe.report(db,"actor",actor_query[1])
+                if timeline_query:return soul_universe.report(db,"timeline",timeline_query[1])
                 return soul_universe.report(db,universe_commands[q])
             except (ValueError,TypeError,KeyError,sqlite3.Error):return "Литературный индекс недоступен."
     if q=="продолжи династию":
