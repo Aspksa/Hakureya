@@ -38,7 +38,7 @@ def record(db,did):
     if not row:return None
     start,part,target,source,check=row
     base=db.execute("SELECT checksum FROM chronicle_drafts WHERE id=?",(did,)).fetchone()
-    if not base or base[0]!=source or check!=checksum(did,start,part,target,source) or not (start>=14 and 1<=part<=12 and 500<=target<=6000):
+    if not base or base[0]!=source or check!=checksum(did,start,part,target,source) or not (start>=14 and 1<=part<=12 and 500<=target<=7500):
         raise ValueError("damaged novel part")
     return {"start":start,"part":part,"target":target}
 
@@ -64,7 +64,11 @@ def group_for(db,n):
 def next_group(db,arc,cycle=None):
     last=db.execute("SELECT number,arc,draft_id FROM omega_index ORDER BY number DESC LIMIT 1").fetchone()
     n=last[0]+1
-    target=cycle["target"] if cycle else TARGETS[im.preferences(db)[0]]
+    import soul_universe
+    pages=soul_universe.chapter_pages(db)
+    # Approximation: 250 words per 1800-character manuscript page.
+    # The existing 12-part / volume safety boundary still applies.
+    target=cycle["target"] if cycle else pages*250 if pages else TARGETS[im.preferences(db)[0]]
     if last[2] is not None and last[1]==arc:
         p=record(db,last[2])
         if p:
