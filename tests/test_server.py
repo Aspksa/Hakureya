@@ -30,6 +30,42 @@ class ServerTest(unittest.TestCase):
         h.update(headers or {})
         with urlopen(Request(self.url+path,data=None if data is None else json.dumps(data).encode(),headers=h),timeout=5) as r:
             return json.load(r)
+    def test_writer_panel_persistence_and_consent(self):
+        st=self.request("writer")
+        self.assertEqual(st["mode"],"off")
+        self.assertEqual(st["published"],13)
+        self.assertFalse(st["connected"])
+        with self.assertRaises(HTTPError) as err:
+            self.request("writer",{"mode":"auto","interval":20,"consent":False})
+        self.assertEqual(err.exception.code,400)
+        self.request("config",{"key":"test-key","model":"test-model","consent":True})
+        st=self.request("writer",{"mode":"auto","interval":30,"consent":True,"start_now":True})
+        self.assertEqual(st["mode"],"auto")
+        self.assertEqual(st["interval"],30)
+        self.assertEqual(st["wait_seconds"],0)
+        self.assertEqual(self.request("writer")["mode"],"auto")
+        self.assertEqual(self.request("writer")["daily_limit"],1)
+        self.assertFalse(self.request("config/forget",{})["connected"])
+        self.assertEqual(self.request("writer")["mode"],"off")
+
+    def test_opt_in_vault_restore(self):
+        import cloud_vault
+        if not cloud_vault.supported():
+            self.skipTest("Windows DPAPI only")
+        secret="test-key-not-plaintext"
+        self.request("config",{"key":secret,"model":"test-model","consent":True,"remember":True})
+        path=server.DB.parent/"cloud.dpapi"
+        self.assertTrue(path.is_file())
+        self.assertNotIn(secret.encode(),path.read_bytes())
+        self.assertNotIn(secret.encode(),server.DB.read_bytes())
+        server.CONFIG.update(key="",model="")
+        self.assertTrue(server.restore_connection())
+        self.assertEqual(server.CONFIG["key"],secret)
+        self.assertTrue(self.request("writer")["saved_connection"])
+        self.request("config/forget",{})
+        self.assertFalse(path.exists())
+        self.assertFalse(server.restore_connection())
+
     def test_local_persistence(self):
         self.assertEqual(self.request("history")["messages"],[])
         self.assertFalse(self.request("chat",{"content":"Привет"})["connected"])

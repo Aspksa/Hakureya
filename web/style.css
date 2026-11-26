@@ -126,3 +126,9 @@ dialog button:hover{background:#d5b38b12}
 .genesis-settings input{width:100%;min-width:0;accent-color:#c9a86b}
 .genesis-settings summary:focus-visible{outline:1px solid #e6c380;outline-offset:3px}
 #stage.book-full .genesis-settings{display:none}
+
+#writer-dialog{max-height:90vh;overflow:auto;width:min(460px,92vw)}#writer-status{display:block;white-space:pre-line;line-height:1.55;padding:10px 0;color:#e5c994}#writer-dialog select{color:inherit;background:#100e0e;border:1px solid #6f5744;padding:8px;font:inherit}#writer-dialog label:has(input[type=checkbox]),#config label:has(input[type=checkbox]){flex-direction:row;align-items:flex-start}#writer-dialog button,#forget-cloud{padding:8px;color:#e4c28e}
+
+/* A4 proportions for local reader, scaled to the available screen width. */
+#book-page{width:100%;max-width:var(--a4-width,210mm);padding:clamp(16px,5%,36px) clamp(18px,7%,56px);min-height:0;box-sizing:border-box}
+#writer-dialog details{border:1px solid #6f5744;padding:8px;border-radius:6px}#writer-dialog details summary{cursor:pointer;color:#dbc294}#writer-dialog details label{margin-top:8px}
