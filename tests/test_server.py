@@ -54,6 +54,26 @@ class ServerTest(unittest.TestCase):
             self.assertIn("завершите текущую главу Династии",self.request("chat",{"content":"летопись: цикл обычная"})["reply"])
             self.assertEqual(remote.call_count,1)
 
+    def test_universe_local_panel_and_export(self):
+        with patch.object(server,"urlopen") as remote:
+            data=self.request("universe/1")
+            self.assertEqual(data["chapters"],13)
+            self.assertGreater(data["scenes"],13)
+            self.assertEqual(data["volume_groups"],[{"volume":1,"count":13}])
+            self.assertIn("Глава",self.request("chat",{"content":"Поиск сцены первое прикосновение"})["reply"])
+            self.assertFalse(self.request("writer/preview")["active"])
+            self.assertIn("подтверждена",self.request("chat",{"content":"Проверить индекс сцен"})["reply"])
+            remote.assert_not_called()
+        for kind in ("epub","docx","html"):
+            with urlopen(self.url+"universe/export/"+kind,timeout=5) as res:
+                self.assertEqual(res.status,200)
+                self.assertTrue(res.read())
+        self.request("config",{"key":"test-key","model":"test-model","consent":True})
+        data=self.request("writer",{"mode":"draft","interval":30,"consent":True,"target_pages":30,"chapter_pages":20,"budget":{"monthly":1000,"input":100,"output":200}})
+        self.assertEqual(data["target_pages"],30)
+        self.assertEqual(data["chapter_pages"],20)
+        self.assertEqual(self.request("writer")["chapter_pages"],20)
+
     def test_writer_panel_persistence_and_consent(self):
         st=self.request("writer")
         self.assertEqual(st["mode"],"off")
