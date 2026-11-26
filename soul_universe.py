@@ -190,7 +190,8 @@ def overview(db,page=1):
     visible=[{"number":n,"volume":o.volume(n),"arc":arc,"title":title if n<=13 or ev.readable(db,n) else "Непрочитанная часть","chars":length} for n,arc,title,length in rows]
     actors,relations=li.registry(list(li.rows(db,visible=True)))
     volumes=Counter(o.volume(r[0]) for r in rows)
-    return {"volume_groups":[{"volume":v,"count":count} for v,count in sorted(volumes.items()) if any(item["volume"]==v for item in visible[(page-1)*50:page*50])],"chapters":len(rows),"chars":sum(r[3] for r in rows),"scenes":db.execute("SELECT COUNT(*) FROM universe_scenes").fetchone()[0],
+    visible_volumes={item["volume"] for item in visible[(page-1)*50:page*50]}
+    return {"volume_groups":[{"volume":v,"count":count} for v,count in sorted(volumes.items()) if v in visible_volumes],"chapters":len(rows),"chars":sum(r[3] for r in rows),"scenes":db.execute("SELECT COUNT(*) FROM universe_scenes").fetchone()[0],
             "volumes":len({o.volume(r[0]) for r in rows}),"actors":len(actors),"relations":len(relations),
             "items":visible[(page-1)*50:page*50],"pages":max(1,(len(rows)+49)//50),
             "chapter_pages":chapter_pages(db),
@@ -218,11 +219,17 @@ def report(db,mode,query=""):
         records=[(n,f) for n,f in li.rows(db,visible=True) if li.norm(f["subject"])==name or (f.get("object") and li.norm(f["object"])==name)]
         return "\n\n".join(f"Глава {n}: {f['kind']} — {f['value']}\n«{f['quote']}»" for n,f in records[-30:]) or "Нет доступных свидетельств о персонаже."
     if mode=="timeline":
-        data=overview(db)
+        data=overview(db,int(query or 1))
         return "\n".join(f"{r['number']}. {r['title']} · том {r['volume']} · {r['arc']}" for r in data["items"])
     if mode=="atlas":
         import soul_genesis
-        return soul_genesis.atlas(db)
+        data=soul_genesis.state(db)
+        lines=["Атлас девяти небес — доступные опубликованные места.",
+               "Девять сил: "+", ".join(soul_genesis.POWERS)]
+        for i in range(1,10):
+            places=[p for p in data["places"] if p["realm"]==i and ev.readable(db,p["chapter"])]
+            lines.append(f"Царство {i}: "+("; ".join(f"{p['name']} — {p['description']} (гл. {p['chapter']})" for p in places) if places else "нет доступных сведений"))
+        return "\n".join(lines)
     if mode=="audit":
         refresh(db)
         for n,story in db.execute("SELECT number,story FROM omega_index"):
