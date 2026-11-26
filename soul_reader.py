@@ -54,6 +54,9 @@ def display(db,n,p,loaded=None):
     if not 0<=p<len(pages):return "Такой страницы нет. Закладка сохранена."
     db.execute("INSERT OR REPLACE INTO book_reader VALUES(1,?,?,?,1)",(n,p,check))
     soul_omega.mark(db,n)
+    if p==len(pages)-1:
+        import soul_evolution
+        soul_evolution.mark_read(db,n)
     end="\n\nВсе опубликованные главы прочитаны. Новые появятся после утверждения." if n==latest(db) and p==len(pages)-1 else ""
     return f"Глава {n} · Страница {p+1}/{len(pages)}\n\n"+pages[p].strip()+end
 

@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -18,6 +19,7 @@ import soul_guardians
 import soul_destiny
 import soul_living
 import cloud_writer
+import soul_evolution
 import graph_activity
 import time, re
 import base64, binascii
@@ -78,7 +80,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
             if shadow and not (shadow_plan or guardian_plan or destiny_plan) and (soul_destiny.audit(db) or len(soul_destiny.published(db))!=len(soul_destiny.ORDER)):return "Сюжетные данные повреждены или продолжение недоступно."
             if shadow_plan or guardian_plan or destiny_plan:arc="future"
             elif arc is None and not alternative and not soul_destiny.audit(db) and len(soul_destiny.published(db))==len(soul_destiny.ORDER):arc="future"
-            reservation=soul_chronicle.reserve(db,allow_story=True) if not (soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)) else None
+            reservation=soul_chronicle.reserve(db,allow_story=True) if not (soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)+soul_evolution.audit(db)) else None
             traits=soul_chronicle.profile(db)
             plan=soul_genesis.enrich(db,soul_omega.enrich_plan(db,soul_saga.plan(db,arc))) if reservation else None
             if plan:
@@ -90,12 +92,21 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                 if guardian_plan:plan["guardians"]=guardian_plan
                 else:plan["guardian_guard"]=soul_guardians.guard(db,plan["arc"])
                 if not shadow_plan:plan["shadow_guard"]=soul_shadow.guard(db,plan["arc"])
-                if not alternative:soul_living.enrich(db,plan,background)
+                if not alternative:
+                    soul_living.enrich(db,plan,background)
+                    soul_evolution.enrich(db,plan)
             previous=[]
             if plan:
                 previous=[{"number":n,"title":t,"story":s[:1800]} for n,t,s in reversed(db.execute("SELECT number,title,story FROM omega_index WHERE arc=? AND number>13 ORDER BY number DESC LIMIT 2",(plan["arc"],)).fetchall())]
                 previous.append({"published_titles":[t for t, in db.execute("SELECT title FROM omega_index ORDER BY number DESC LIMIT 12")]})
             writer=cloud_writer.selected(db)
+            if reservation:
+                model=writer or CONFIG["model"]
+                allowed,cost=soul_evolution.budget_check(db,model,soul_chronicle.prompt(reservation,traits,previous,plan),cloud_writer.LIMIT,reservation[0])
+                if not allowed:
+                    db.execute("DELETE FROM chronicle_attempts WHERE day=? AND status='reserved'",(reservation[0],))
+                    return "Литературный запрос остановлен: проверьте денежный лимит или тариф модели."
+                soul_evolution.reserve_cost(db,reservation[0],model,cost)
         if not reservation:
             return "Есть незавершённая попытка или ожидающий черновик, нарушена целостность канона либо исчерпан дневной лимит."
         key, model, epoch=CONFIG["key"],writer or CONFIG["model"],CHRONICLE["epoch"]
@@ -112,6 +123,7 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
         graph_activity.update(activity,"validating","hub:4")
         with LOCK, closing(connect()) as db, db:
             cloud_writer.usage(db,reservation[0],model,result)
+            soul_evolution.settle_cost(db,reservation[0],result)
         if result["choices"][0].get("finish_reason")=="length":raise ValueError("incomplete literary response")
         raw=result["choices"][0]["message"]["content"]
         if not isinstance(raw,str) or len(raw)>24000:
@@ -181,6 +193,42 @@ def chronicle_command(content):
             cloud_writer.choose(db,model)
             CHRONICLE["epoch"]+=1
         return "Модель писателя выбрана: "+model+". Платный запрос не выполнялся. Модель чата не изменена."
+    evolution_style=re.fullmatch(r"стиль романа (баланс|романтика|приключения|интриги)",q)
+    evolution_preference=re.fullmatch(r"больше (любви|хранительниц|магии|миров|интриг|загадок|развития|героев)",q)
+    evolution_profile=re.fullmatch(r"судьба персонажа (.{2,60})",q)
+    evolution_archive=re.fullmatch(r"архив судеб ([1-9][0-9]{0,5})",q)
+    evolution_volume=re.fullmatch(r"аннотация тома ([1-9][0-9]{0,5})",q)
+    evolution_format=re.fullmatch(r"формат главы (короткая|обычная|большая|романтическая)",q)
+    evolution_budget=re.fullmatch(r"бюджет писателя ([1-9][0-9]{0,5}) тариф ([1-9][0-9]{0,5}) ([1-9][0-9]{0,5})",q)
+    if evolution_style or evolution_preference or evolution_profile or evolution_volume or evolution_archive or evolution_format or evolution_budget or q in ("бюджет писателя","спойлеры выключить","спойлеры включить","новые сюжеты","сравнение писателей"):
+        with LOCK, closing(connect()) as db, db:
+            if evolution_style:
+                soul_evolution.style(db,evolution_style[1])
+                return "Стиль романа: "+evolution_style[1]+"."
+            if evolution_preference:
+                themes=dict(zip(("любви","хранительниц","магии","миров","интриг","загадок","развития","героев"),soul_evolution.THEMES))
+                soul_evolution.preference(db,themes[evolution_preference[1]])
+                return "Предпочтение сохранено для новых сюжетов после обязательных саг."
+            if q=="сравнение писателей":return soul_evolution.model_report(db)
+            if evolution_archive:return soul_evolution.archive(db,(int(evolution_archive[1])-1)*20)
+            if evolution_profile:return soul_evolution.profile(db,evolution_profile[1])
+            if evolution_volume:return soul_evolution.annotation(db,int(evolution_volume[1]))
+            if evolution_format:
+                fmt=evolution_format[1]
+                if not soul_romance.start_cycle(db,fmt,"future",soul_evolution.FORMATS[fmt]):return "Сначала завершите открытый цикл или обработайте черновик."
+                return "Открыт литературный цикл: "+fmt+". Цель "+str(soul_evolution.FORMATS[fmt])+" слов, последовательными частями. Суточный лимит не изменён."
+            if evolution_budget:
+                model=cloud_writer.selected(db) or CONFIG["model"]
+                if not model:return "Сначала выберите модель писателя."
+                cap,inp,out=map(int,evolution_budget.groups())
+                soul_evolution.set_budget(db,model,inp*100,out*100,cap*100)
+                CHRONICLE["epoch"]+=1
+                return soul_evolution.budget_text(db,datetime.now(timezone.utc).strftime("%Y-%m"))
+            if q=="бюджет писателя":return soul_evolution.budget_text(db,datetime.now(timezone.utc).strftime("%Y-%m"))
+            if q in ("спойлеры выключить","спойлеры включить"):
+                db.execute("UPDATE evolution_settings SET spoilers=? WHERE id=1",(int(q=="спойлеры выключить"),))
+                return "Защита новых карточек от спойлеров "+("включена." if q=="спойлеры выключить" else "отключена.")
+            return "Новые сюжетные замыслы (спойлеры):\n"+"\n".join(f"{n}. {title}" for n,_,title,_ in soul_evolution.SCENES)
     living_commands={"развивай историю сама":"draft","включи автопубликацию глав":"auto","останови развитие":"off","что нового написала":"news","статус развития":"status","план развития романа":"queue"}
     if q in living_commands:
         with LOCK, closing(connect()) as db, db:
@@ -233,7 +281,7 @@ def chronicle_command(content):
         return generate_chronicle(arc=soul_saga.ALIASES.get(create_match[1]),alternative=create_match[1]=="варианты",shadow=create_match[1]=="сагу",guardians=create_match[1]=="хранительниц",destiny=create_match[1]=="судьбу")
     with LOCK, closing(connect()) as db, db:
         if q=="летопись: аудит":
-            issues=soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)
+            issues=soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)+soul_evolution.audit(db)
             return "Проверка целостности (не семантическая проверка): "+("\n"+"\n".join(issues) if issues else "нарушений не найдено.")
         if (destiny_read or q in destiny_commands or guardian_profile or q in guardian_commands or q in simple_commands or heart_read or q in heart_commands or romance_start or romance_read or q in romance_commands or genesis_read or genesis_arc or q in genesis_commands or omega_read or omega_search or q in omega_commands or read_match or q in ("летопись: содержание","летопись: последняя","летопись: главы")) and not soul_chronicle.canon_ok(db):
             return "Целостность исходной летописи нарушена; чтение заблокировано."
@@ -244,7 +292,7 @@ def chronicle_command(content):
         if q=="летопись: хранительницы":return soul_guardians.profiles(db)
         if q in ("летопись: план хранительниц","летопись: статус хранительниц"):return soul_guardians.status(db,q=="летопись: план хранительниц")
         if q=="летопись: помощь":
-            return "Летопись\n\nЧитать книгу · Дальше · Назад · Продолжить чтение\nГде остановился · Остановить чтение · Оглавление\nПродолжи сагу · Продолжи нашу историю любви\nПокажи черновик · Принять главу · Отклонить главу\nЧто дальше по сюжету · История любви · Девять хранительниц · Новые герои\nРазвивай историю сама · Останови развитие · Что нового написала · Статус развития\nМодель писателя · Подключи писателя · Расход писателя\n\nПодробности при необходимости: «план саги» (со спойлерами), «летопись: качество»."
+            return "Летопись\n\nЧитать книгу · Дальше · Назад · Продолжить чтение\nГде остановился · Остановить чтение · Оглавление\nПродолжи сагу · Продолжи нашу историю любви\nПокажи черновик · Принять главу · Отклонить главу\nЧто дальше по сюжету · История любви · Девять хранительниц · Новые герои\nРазвивай историю сама · Останови развитие · Что нового написала · Статус развития\nМодель писателя · Подключи писателя · Расход писателя\nСтиль романа романтика · Формат главы большая · Судьба персонажа Хакурэя\n\nПодробности при необходимости: «план саги» (со спойлерами), «летопись: качество»."
         if q in ("летопись: сага","летопись: сага план"):
             if q.endswith(" план"):return soul_shadow.status(db,True)+"\n\n"+soul_guardians.status(db,True)+"\n\n"+soul_destiny.status(db,True)
             if soul_destiny.ready(db):return soul_destiny.status(db)
@@ -364,7 +412,7 @@ def chronicle_worker(stop):
                 soul_chronicle.collect(db)
                 if soul_chronicle.canon_ok(db):
                     soul_genesis.consolidate(db)
-                    if not (soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)):soul_living.queue(db)
+                    if not (soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)+soul_evolution.audit(db)):soul_living.queue(db)
                 enabled=CHRONICLE["enabled"] or soul_living.mode(db)!="off"
             with LOCK, closing(connect()) as db:
                 backed_up=db.execute("SELECT 1 FROM living_backups WHERE day=date('now')").fetchone()
