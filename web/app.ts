@@ -2,11 +2,15 @@ import "./style.css";
 import {mountGraph} from "./live-graph";
 const $=(id:string)=>document.getElementById(id)!;
 let selectedVolume:number|null=null;
-const live=mountGraph($("graph") as unknown as SVGSVGElement,$("info"),volume=>{selectedVolume=volume;void refreshGraph()});
+let live:ReturnType<typeof mountGraph>|null=null;
+function ensureGraph(){
+ if(!live){try{live=mountGraph($("graph") as unknown as SVGSVGElement,$("info"),volume=>{selectedVolume=volume;void refreshGraph()})}catch(e){console.error("Hakureya graph initialization",e);$("info").textContent="Ошибка визуализации · ↻ повторить"}}
+ return live;
+}
 let busy=false;
-$("replay").onclick=()=>{selectedVolume=null;void refreshGraph().then(()=>live.replay())};$("reset").onclick=()=>{selectedVolume=null;void refreshGraph().then(()=>live.replay());$("menu").hidden=true};
+$("replay").onclick=()=>{selectedVolume=null;void refreshGraph().then(()=>live?.replay())};$("reset").onclick=()=>{selectedVolume=null;void refreshGraph().then(()=>live?.replay());$("menu").hidden=true};
 let graphRequest=0;
-async function refreshGraph(){const id=++graphRequest;try{const data=await api(selectedVolume===null?"graph":"graph/volume/"+selectedVolume);if(id===graphRequest)live.render(data)}catch{if(id===graphRequest)$("info").textContent="Область недоступна · ↻ для общей карты"}}
+async function refreshGraph(){const id=++graphRequest;try{const data=await api(selectedVolume===null?"graph":"graph/volume/"+selectedVolume);if(id===graphRequest)ensureGraph()?.render(data)}catch(e){console.error("Hakureya graph refresh",e);if(id===graphRequest)$("info").textContent="Область недоступна · ↻ для общей карты"}}
 let activityBusy=false,activityRevision="",activityTimer=0,activityActive=false;
 async function refreshActivity(){
  if(document.hidden||activityBusy)return;
@@ -16,20 +20,19 @@ async function refreshActivity(){
   let data;try{const response=await fetch("/api/activity",{cache:"no-store",signal:controller.signal});if(!response.ok)throw Error("activity");data=await response.json()}finally{clearTimeout(timeout)}
   if(document.hidden)return;
   activityActive=data.active.length>0;
-  live.setActivity(data);
+  live?.setActivity(data);
   const revision=data.session+":"+data.revision;
   if(revision!==activityRevision){activityRevision=revision;void refreshGraph()}
- }catch{activityRevision="";activityActive=false;live.clearActivity()}finally{activityBusy=false}
+ }catch{activityRevision="";activityActive=false;live?.clearActivity()}finally{activityBusy=false}
 }
 function scheduleActivity(){clearTimeout(activityTimer);if(document.hidden)return;activityTimer=window.setTimeout(async()=>{await refreshActivity();scheduleActivity()},activityActive||busy?400:1200)}
 document.addEventListener("visibilitychange",()=>{clearTimeout(activityTimer);if(!document.hidden){void refreshGraph();void refreshActivity();scheduleActivity()}});
-void refreshActivity();scheduleActivity();
 const avatar=$("avatar"),chat=$("chat"),prompt=$("prompt") as HTMLTextAreaElement,menu=$("menu"),config=$("config") as HTMLDialogElement;
 function toggle(open=chat.hidden){chat.hidden=!open;avatar.setAttribute("aria-expanded",String(open));avatar.setAttribute("aria-label",open?"Свернуть чат":"Открыть чат Hakureya");if(open){if(!book.hidden)$("book-scroll").focus();else prompt.focus()}else avatar.focus()}
 avatar.onclick=()=>toggle();$("close").onclick=()=>toggle(false);avatar.oncontextmenu=e=>{e.preventDefault();menu.hidden=!menu.hidden};document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(!menu.hidden)menu.hidden=true;else if(!chat.hidden&&!config.open)toggle(false)}});document.addEventListener("click",e=>{if(!menu.contains(e.target as Node)&&!avatar.contains(e.target as Node))menu.hidden=true});
 function message(role:string,content:string){const p=document.createElement("p");p.className="message "+role;p.textContent=content;$("messages").append(p);p.scrollIntoView({block:"end"});return p}
 async function api(path:string,data?:unknown){const response=await fetch("/api/"+path,data===undefined?{}:{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});const value=await response.json();if(!response.ok)throw Error(value.error||"Ошибка сервера");return value}
-async function init(){try{const data=await api("history");for(const m of data.messages)message(m.role,m.content);$("status").textContent=data.connected?"Cloud.ru подключён":"Локальный режим · Cloud.ru не подключён";const page=await api("reader");if(page.reader&&!busy)showBook(page.reader)}catch{$("status").textContent="Сервер недоступен"}}void refreshGraph();setInterval(()=>{if(!document.hidden)void refreshGraph()},12000);
+async function init(){try{const data=await api("history");for(const m of data.messages)message(m.role,m.content);$("status").textContent=data.connected?"Cloud.ru подключён":"Локальный режим · Cloud.ru не подключён";const page=await api("reader");if(page.reader&&!busy)showBook(page.reader)}catch{$("status").textContent="Сервер недоступен"}}
 $("settings").onclick=()=>{menu.hidden=true;config.showModal()};$("save").onclick=async()=>{const model=($("model") as HTMLInputElement).value.trim(),key=$("key") as HTMLInputElement,consent=($("consent") as HTMLInputElement).checked;try{await api("config",{model,key:key.value,consent});key.value="";$("status").textContent="Cloud.ru подключён";$("config-status").textContent="Настройки сохранены";config.close()}catch(e){$("config-status").textContent=String(e)}};
 $("composer").onsubmit=async e=>{e.preventDefault();const content=prompt.value.trim();if(!content||busy)return;busy=true;prompt.value="";message("user",content);$("status").textContent="Обработка запроса…";try{const result=await api("chat",{content});if(result.reader)showBook(result.reader);else message("assistant",result.reply);$("status").textContent=result.connected?"Cloud.ru · ответ получен":"Локальный режим · сообщение сохранено"}catch(e){message("error",String(e));$("status").textContent="Ошибка запроса"}finally{busy=false;await refreshGraph();if(book.hidden)prompt.focus();else $("book-scroll").focus()}};
 
@@ -67,7 +70,7 @@ function showBook(p:BookPage){
  $("book-end").hidden=!p.last_published;
  $("book-status").textContent="";
  scroll.scrollTop=0;
- $("book-page").animate([{opacity:.3,transform:"translateY(5px)"},{opacity:1,transform:"none"}],{duration:window.matchMedia("(prefers-reduced-motion: reduce)").matches?0:180});
+ $("book-page").animate?.([{opacity:.3,transform:"translateY(5px)"},{opacity:1,transform:"none"}],{duration:window.matchMedia("(prefers-reduced-motion: reduce)").matches?0:180});
 }
 function exitBook(){book.hidden=true;chat.classList.remove("reading","book-focus");focused=false;$("book-focus").setAttribute("aria-pressed","false");$("messages").hidden=false;$("composer").hidden=false;$("status").hidden=false;prompt.focus()}
 async function turn(action:string){
@@ -86,3 +89,6 @@ scroll.addEventListener("touchstart",e=>{touch=e.touches.length===1?{x:e.touches
 scroll.addEventListener("touchcancel",()=>{touch=null},{passive:true});
 scroll.addEventListener("touchend",e=>{const start=touch;touch=null;if(!start||e.changedTouches.length!==1||window.getSelection()?.toString())return;const dx=e.changedTouches[0].clientX-start.x,dy=e.changedTouches[0].clientY-start.y;if(Math.abs(dx)>85&&Math.abs(dx)>Math.abs(dy)*2)void turn(dx<0?"next":"back")},{passive:true});
 void init();
+// Initialize optional visualization only after all chat and reader handlers are registered.
+ensureGraph();void refreshGraph();void refreshActivity();scheduleActivity();
+setInterval(()=>{if(!document.hidden)void refreshGraph()},12000);
