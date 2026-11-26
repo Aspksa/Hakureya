@@ -240,3 +240,15 @@ class ServerTest(unittest.TestCase):
             self.assertEqual(payload["max_tokens"],1800)
             self.assertEqual(remote.call_count,1)
             self.assertIn("выход 500",self.request("chat",{"content":"Расход писателя"})["reply"])
+
+
+    def test_evolution_local_budget(self):
+        self.request("config",{"key":"test-key","model":"test-model","consent":True})
+        with patch.object(server,"urlopen") as remote:
+            self.assertIn("романтика",self.request("chat",{"content":"Стиль романа романтика"})["reply"])
+            self.assertIn("сохранено",self.request("chat",{"content":"Больше магии"})["reply"])
+            self.assertIn("Империя чёрной луны",self.request("chat",{"content":"Новые сюжеты"})["reply"])
+            self.assertIn("1.00",self.request("chat",{"content":"Бюджет писателя 1 тариф 999999 999999"})["reply"])
+            self.assertIn("остановлен",self.request("chat",{"content":"Продолжи сагу"})["reply"])
+            self.assertIn("4000",self.request("chat",{"content":"Формат главы большая"})["reply"])
+            remote.assert_not_called()
