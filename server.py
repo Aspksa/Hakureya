@@ -74,9 +74,9 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
             if destiny and not destiny_plan:return soul_destiny.status(db)
             if guardians and not guardian_plan:return soul_guardians.status(db)
             if guardian_plan:shadow_plan=None
-            if shadow and not (shadow_plan or guardian_plan or destiny_plan) and len(soul_destiny.published(db))!=len(soul_destiny.ORDER):return "Сюжетные данные повреждены или продолжение недоступно."
+            if shadow and not (shadow_plan or guardian_plan or destiny_plan) and (soul_destiny.audit(db) or len(soul_destiny.published(db))!=len(soul_destiny.ORDER)):return "Сюжетные данные повреждены или продолжение недоступно."
             if shadow_plan or guardian_plan or destiny_plan:arc="future"
-            elif arc is None and not alternative and len(soul_destiny.published(db))==len(soul_destiny.ORDER):arc="future"
+            elif arc is None and not alternative and not soul_destiny.audit(db) and len(soul_destiny.published(db))==len(soul_destiny.ORDER):arc="future"
             reservation=soul_chronicle.reserve(db,allow_story=True) if not (soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)) else None
             traits=soul_chronicle.profile(db)
             plan=soul_genesis.enrich(db,soul_omega.enrich_plan(db,soul_saga.plan(db,arc))) if reservation else None
@@ -336,12 +336,15 @@ def chronicle_worker(stop):
                 soul_chronicle.collect(db)
                 if soul_chronicle.canon_ok(db):
                     soul_genesis.consolidate(db)
-                    if not (soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)):soul_living.queue(db)
+                    if not (soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)):soul_living.queue(db)
                 enabled=CHRONICLE["enabled"] or soul_living.mode(db)!="off"
-            with LOCK:
-                filename=soul_living.backup(DB,DB.parent/"backups")
-                with closing(connect()) as db, db:
-                    db.execute("INSERT OR IGNORE INTO living_backups VALUES(date('now'),?)",(filename,))
+            with LOCK, closing(connect()) as db:
+                backed_up=db.execute("SELECT 1 FROM living_backups WHERE day=date('now')").fetchone()
+            if not backed_up:
+                with LOCK:
+                    filename=soul_living.backup(DB,DB.parent/"backups")
+                    with closing(connect()) as db, db:
+                        db.execute("INSERT OR IGNORE INTO living_backups VALUES(date('now'),?)",(filename,))
             if enabled:
                 generate_chronicle(background=True)
         except (sqlite3.Error,ValueError,OSError):
