@@ -177,8 +177,10 @@ function renderNovelPage(animate=false){
 }
 function reflowNovel(anchor?:number,animate=false){
  const d=novelDoc;if(!d||book.hidden||chat.hidden)return;
- const width=scroll.clientWidth, pageWidth=Math.min(width,210*96/25.4),height=pageWidth*297/210;
- if(height<1||width<1)return;
+ const width=scroll.clientWidth,available=scroll.clientHeight;
+ if(available<1||width<1)return;
+ const pageWidth=Math.min(width,210*96/25.4,available*210/297),height=pageWidth*297/210;
+ $("book-page").style.setProperty("--a4-width",pageWidth+"px");
  const offset=anchor??novelPages[novelIndex]?.start??d.offset;
  const key=[d.hash,width,height,font,spacing,offset].join(":");
  if(key===layoutKey&&novelPages.length)return;
