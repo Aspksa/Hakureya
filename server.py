@@ -196,10 +196,11 @@ def chronicle_command(content):
     evolution_style=re.fullmatch(r"стиль романа (баланс|романтика|приключения|интриги)",q)
     evolution_preference=re.fullmatch(r"больше (любви|хранительниц|магии|миров|интриг|загадок|развития|героев)",q)
     evolution_profile=re.fullmatch(r"судьба персонажа (.{2,60})",q)
+    evolution_archive=re.fullmatch(r"архив судеб ([1-9][0-9]{0,5})",q)
     evolution_volume=re.fullmatch(r"аннотация тома ([1-9][0-9]{0,5})",q)
     evolution_format=re.fullmatch(r"формат главы (короткая|обычная|большая|романтическая)",q)
     evolution_budget=re.fullmatch(r"бюджет писателя ([1-9][0-9]{0,5}) тариф ([1-9][0-9]{0,5}) ([1-9][0-9]{0,5})",q)
-    if evolution_style or evolution_preference or evolution_profile or evolution_volume or evolution_format or evolution_budget or q in ("бюджет писателя","спойлеры выключить","спойлеры включить","новые сюжеты"):
+    if evolution_style or evolution_preference or evolution_profile or evolution_volume or evolution_archive or evolution_format or evolution_budget or q in ("бюджет писателя","спойлеры выключить","спойлеры включить","новые сюжеты","сравнение писателей"):
         with LOCK, closing(connect()) as db, db:
             if evolution_style:
                 soul_evolution.style(db,evolution_style[1])
@@ -208,6 +209,8 @@ def chronicle_command(content):
                 themes=dict(zip(("любви","хранительниц","магии","миров","интриг","загадок","развития","героев"),soul_evolution.THEMES))
                 soul_evolution.preference(db,themes[evolution_preference[1]])
                 return "Предпочтение сохранено для новых сюжетов после обязательных саг."
+            if q=="сравнение писателей":return soul_evolution.model_report(db)
+            if evolution_archive:return soul_evolution.archive(db,(int(evolution_archive[1])-1)*20)
             if evolution_profile:return soul_evolution.profile(db,evolution_profile[1])
             if evolution_volume:return soul_evolution.annotation(db,int(evolution_volume[1]))
             if evolution_format:
@@ -289,7 +292,7 @@ def chronicle_command(content):
         if q=="летопись: хранительницы":return soul_guardians.profiles(db)
         if q in ("летопись: план хранительниц","летопись: статус хранительниц"):return soul_guardians.status(db,q=="летопись: план хранительниц")
         if q=="летопись: помощь":
-            return "Летопись\n\nЧитать книгу · Дальше · Назад · Продолжить чтение\nГде остановился · Остановить чтение · Оглавление\nПродолжи сагу · Продолжи нашу историю любви\nПокажи черновик · Принять главу · Отклонить главу\nЧто дальше по сюжету · История любви · Девять хранительниц · Новые герои\nРазвивай историю сама · Останови развитие · Что нового написала · Статус развития\nМодель писателя · Подключи писателя · Расход писателя\n\nПодробности при необходимости: «план саги» (со спойлерами), «летопись: качество»."
+            return "Летопись\n\nЧитать книгу · Дальше · Назад · Продолжить чтение\nГде остановился · Остановить чтение · Оглавление\nПродолжи сагу · Продолжи нашу историю любви\nПокажи черновик · Принять главу · Отклонить главу\nЧто дальше по сюжету · История любви · Девять хранительниц · Новые герои\nРазвивай историю сама · Останови развитие · Что нового написала · Статус развития\nМодель писателя · Подключи писателя · Расход писателя\nСтиль романа романтика · Формат главы большая · Судьба персонажа Хакурэя\n\nПодробности при необходимости: «план саги» (со спойлерами), «летопись: качество»."
         if q in ("летопись: сага","летопись: сага план"):
             if q.endswith(" план"):return soul_shadow.status(db,True)+"\n\n"+soul_guardians.status(db,True)+"\n\n"+soul_destiny.status(db,True)
             if soul_destiny.ready(db):return soul_destiny.status(db)
