@@ -10,6 +10,7 @@ import soul_chronicle
 import soul_saga
 import soul_omega
 import soul_genesis
+import soul_romance
 import graph_activity
 import time, re
 import base64, binascii
@@ -54,10 +55,16 @@ def generate_chronicle(background=False, arc=None, alternative=False):
             return "Cloud.ru не подключён или фоновый сон не разрешён."
         with closing(connect()) as db, db:
             soul_chronicle.collect(db)
+            cycle=soul_romance.current_cycle(db)
+            if cycle and arc and arc!=cycle["arc"]:
+                return "Сначала завершите открытый художественный цикл или продолжите его сюжетную линию."
+            if cycle: arc=cycle["arc"]
             reservation=soul_chronicle.reserve(db,allow_story=True) if not soul_genesis.audit(db) else None
             traits=soul_chronicle.profile(db)
             plan=soul_genesis.enrich(db,soul_omega.enrich_plan(db,soul_saga.plan(db,arc))) if reservation else None
-            if plan: plan["alternative"]=alternative
+            if plan:
+                soul_romance.enrich(db,plan)
+                plan["alternative"]=alternative
             previous=[]
             if plan:
                 previous=[{"number":n,"title":t,"story":s[:1800]} for n,t,s in reversed(db.execute("SELECT number,title,story FROM omega_index WHERE arc=? AND number>13 ORDER BY number DESC LIMIT 2",(plan["arc"],)).fetchall())]
@@ -88,9 +95,10 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
             soul_chronicle.finish(db,reservation,value,plan)
             pending=soul_chronicle.latest_pending(db)
             editorial=soul_omega.metadata(db,pending["id"])
+            scene_report=soul_romance.report(db,pending["id"])
             variants=db.execute("SELECT COUNT(*) FROM genesis_variants WHERE draft_id=?",(pending["id"],)).fetchone()[0]
         graph_activity.update(activity,"done",f"draft:{pending['id']}" if pending else "hub:4")
-        return "Черновик создан. "+soul_saga.ARC_LABELS[plan["arc"]]+".\n\n"+pending["title"]+"\n\n"+pending["story"]+"\n\nОценка редактора (эвристика): "+str(editorial["score"])+"/100. "+", ".join(editorial["warnings"])+( "\nЕсть варианты: летопись: варианты" if variants else "")+"\n\nлетопись: принять "+str(pending["id"])+" / летопись: отклонить "+str(pending["id"])
+        return "Черновик создан. "+soul_saga.ARC_LABELS[plan["arc"]]+".\n\n"+pending["title"]+"\n\n"+pending["story"]+"\n\nОценка редактора (эвристика): "+str(editorial["score"])+"/100. "+", ".join(editorial["warnings"])+( "\nОригинальность (эвристика): "+str(scene_report["originality_heuristic"])+"/100, слов: "+str(scene_report["words"])+". "+", ".join(scene_report["warnings"]) if scene_report else "")+( "\nЕсть варианты: летопись: варианты" if variants else "")+"\n\nлетопись: принять "+str(pending["id"])+" / летопись: отклонить "+str(pending["id"])
     except (URLError,TimeoutError,ValueError,KeyError,IndexError,TypeError,OSError,sqlite3.Error):
         with LOCK, closing(connect()) as db, db:
             soul_chronicle.fail(db,reservation)
@@ -109,8 +117,11 @@ def chronicle_command(content):
     omega_read=re.fullmatch(r"летопись: (том|читать том|дневник героини) ([1-9][0-9]{0,8})",q)
     omega_search=re.fullmatch(r"летопись: (поиск|персонаж) (.{2,200})",q)
     omega_commands=("летопись: книги","летопись: продолжить чтение","летопись: план","летопись: загадки","летопись: качество","летопись: дневник героини","летопись: хронология")
+    romance_start=re.fullmatch(r"летопись: цикл (обычная|большая|романтическая)(?: (прошлое|встреча|любовь|будущее))?",q)
+    romance_read=re.fullmatch(r"летопись: читать цикл ([1-9][0-9]{0,8})",q)
+    romance_commands=("летопись: циклы","летопись: завершить цикл","летопись: оригинальность","летопись: замысел")
     decision=re.fullmatch(r"летопись: (принять|отклонить) ([1-9][0-9]{0,8})",q)
-    if q not in soul_chronicle.COMMANDS and not decision and not read_match and not create_match and not omega_read and not omega_search and not genesis_read and not genesis_arc and q not in genesis_commands and q not in omega_commands and q not in ("летопись: главы","летопись: содержание","летопись: последняя"):
+    if q not in soul_chronicle.COMMANDS and not decision and not read_match and not create_match and not omega_read and not omega_search and not genesis_read and not genesis_arc and not romance_start and not romance_read and q not in romance_commands and q not in genesis_commands and q not in omega_commands and q not in ("летопись: главы","летопись: содержание","летопись: последняя"):
         return None
     if create_match:
         with LOCK, closing(connect()) as db, db:
@@ -120,8 +131,21 @@ def chronicle_command(content):
         if q=="летопись: аудит":
             issues=soul_genesis.audit(db)
             return "Проверка целостности (не семантическая проверка): "+("\n"+"\n".join(issues) if issues else "нарушений не найдено.")
-        if (genesis_read or genesis_arc or q in genesis_commands or omega_read or omega_search or q in omega_commands or read_match or q in ("летопись: содержание","летопись: последняя","летопись: главы")) and not soul_chronicle.canon_ok(db):
+        if (romance_start or romance_read or q in romance_commands or genesis_read or genesis_arc or q in genesis_commands or omega_read or omega_search or q in omega_commands or read_match or q in ("летопись: содержание","летопись: последняя","летопись: главы")) and not soul_chronicle.canon_ok(db):
             return "Целостность исходной летописи нарушена; чтение заблокировано."
+        if romance_start:
+            arc=soul_saga.ALIASES.get(romance_start[2],"love")
+            ok=soul_romance.start_cycle(db,romance_start[1],arc)
+            return "Цикл открыт. Цель: "+str(soul_romance.FORMATS[romance_start[1]])+" слов в утверждённых частях. Создавайте части командой «летопись: создать». Действует прежний дневной лимит." if ok else "Сначала обработайте текущий черновик, запрос или открытый цикл."
+        if romance_read: return soul_romance.read_cycle(db,int(romance_read[1]))
+        if q=="летопись: циклы": return soul_romance.cycles_text(db)
+        if q=="летопись: завершить цикл": return "Цикл закрыт досрочно; опубликованные части сохранены." if soul_romance.close_cycle(db) else "Нет доступного для закрытия цикла или ещё есть черновик/запрос."
+        if q=="летопись: оригинальность": return soul_romance.report_text(db)
+        if q=="летопись: замысел":
+            cycle=soul_romance.current_cycle(db)
+            arc=cycle["arc"] if cycle else soul_saga.plan(db)["arc"]
+            p=soul_romance.choose(db,arc)
+            return "Предварительный художественный замысел, не канон:\n"+"\n".join(f"{k}: {v}" for k,v in p.items())
         if genesis_read:
             kind,n=genesis_read[1],int(genesis_read[2])
             if kind=="вариант":
