@@ -27,6 +27,7 @@ import soul_infinite
 import soul_intelligence
 import graph_activity
 import writer_activity
+import instance_guard
 import time, re
 import logging
 from logging.handlers import RotatingFileHandler
@@ -799,6 +800,21 @@ def main():
     args = parser.parse_args()
     if not (ROOT / "dist" / "index.html").is_file():
         raise SystemExit("Frontend not built: npm install && npm run build")
+    try:
+        with instance_guard.exclusive(DB):
+            handler=RotatingFileHandler(DB.parent/"hakureya.log",maxBytes=1_000_000,backupCount=3,encoding="utf-8")
+            handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+            LOG.addHandler(handler);LOG.setLevel(logging.INFO)
+            try:
+                LOG.info("server startup")
+                serve(args)
+            finally:
+                LOG.info("server shutdown")
+                LOG.removeHandler(handler);handler.close()
+    except RuntimeError as error:
+        raise SystemExit(str(error))
+
+def serve(args):
     with closing(connect()) as db, db:
         soul_chronicle.recover(db)
         soul_chronicle.collect(db)
