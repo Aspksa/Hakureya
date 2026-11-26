@@ -42,3 +42,25 @@ export function pointOn(points,t){
  for(let i=0;i<lengths.length;i++){const l=lengths[i];if(l>0&&(d<=l||i===lengths.length-1)){const f=Math.min(1,d/l);return {x:points[i].x+(points[i+1].x-points[i].x)*f,y:points[i].y+(points[i+1].y-points[i].y)*f}}d-=l}
  return points[points.length-1];
 }
+
+ // Only actual published links and a real chronological book boundary may produce birth trails.
+export function publicationLinks(publication,graph){
+ if(!publication||!graph.byKey.has(publication.key))return [];
+ const result=[],seen=new Set();
+ function add(a,b,color){
+  if(a===b||!graph.byKey.has(a)||!graph.byKey.has(b)||seen.has(a+"|"+b))return;
+  seen.add(a+"|"+b);result.push({a,b,color});
+ }
+ const k=publication.key,v=publication.volume;
+ add(k,publication.segment,"#e7c46d");
+ if(publication.first&&v>1)add("book:"+(v-1),"book:"+v,"#9ec8f0");
+ const linked=new Set([k]);
+ for(const e of graph.edges)if(e.a===k||e.b===k){
+  if(/(?:source|event|character|cause|relationship|story_continuation|cross_volume)/.test(e.kind)){
+   const other=e.a===k?e.b:e.a;linked.add(other);
+   add(k,other,e.kind.includes("cause")||e.kind.includes("cross_volume")?"#9ec8f0":sourceColor(other));
+  }
+ }
+ for(const e of graph.edges)if((linked.has(e.a)||linked.has(e.b))&&e.kind==="infinite_cross_volume")add(e.a,e.b,"#9ec8f0");
+ return result.slice(0,10);
+}
