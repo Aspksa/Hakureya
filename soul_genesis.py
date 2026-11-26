@@ -274,6 +274,8 @@ def select_variant(db,option):
     lit=o.validate_literary(db,base["story"],p["literary"])
     w=validate_world(db,base["story"],p["world"])
     score,warnings=o.review(db,base,lit)
+    arc=db.execute("SELECT arc FROM saga_arcs WHERE draft_id=?",(did,)).fetchone()[0]
+    warnings+=continuity_warnings(db,base,{"arc":arc})
     payload=c.encode(base);h=c.checksum(payload);meta=o.dump(lit);world_raw=o.dump(w)
     db.execute("UPDATE chronicle_drafts SET payload=?,checksum=? WHERE id=? AND status='pending'",(payload,h,did))
     db.execute("UPDATE omega_meta SET payload=?,checksum=?,score=?,warnings=? WHERE draft_id=?",(meta,o.digest(meta),score,o.dump(warnings),did))
@@ -296,3 +298,10 @@ def continuity_warnings(db,base,plan):
     if relevant and len(o.tokens(base["story"]) & o.tokens(relevant[0]["story"])) / max(1,len(o.tokens(base["story"])))>.75:
         warnings.append("проверь смысловое сходство с главой "+str(relevant[0]["number"]))
     return warnings
+
+
+def append_warnings(db,did,base,plan):
+    m=o.metadata(db,did)
+    if m:
+        extra=continuity_warnings(db,base,plan)
+        if extra: db.execute("UPDATE omega_meta SET warnings=?,score=? WHERE draft_id=?",(o.dump(m["warnings"]+extra),max(0,m["score"]-10*len(extra)),did))
