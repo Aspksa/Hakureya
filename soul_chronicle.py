@@ -129,6 +129,7 @@ def finish(db, reservation, value, saga_plan=None):
         soul_omega.save(db,cur.lastrowid,data,literary,plan)
     if "genesis" in plan or world is not None:
         soul_genesis.save_world(db,cur.lastrowid,data["story"],world)
+        soul_genesis.append_warnings(db,cur.lastrowid,data,plan)
         soul_genesis.save_variants(db,cur.lastrowid,data,literary,world,alt,plan)
     db.execute("UPDATE chronicle_attempts SET status='draft' WHERE day=?",(day,))
 
