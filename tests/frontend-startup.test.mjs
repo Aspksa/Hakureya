@@ -24,7 +24,7 @@ const src=async name=>readFile(new URL("../web/"+name,import.meta.url),"utf8");
 function moduleURL(code){return "data:text/javascript;base64,"+Buffer.from(code).toString("base64")}
 const graphSource=(await src("live-graph.ts")).replace(/from "(\.\/[^"]+\.mjs)"/g,(_,p)=>'from "'+new URL("../web/"+p.slice(2),import.meta.url).href+'"');
 const graphURL=moduleURL((await transformWithEsbuild(graphSource,"live-graph.ts",{loader:"ts",format:"esm"})).code);
-const appSource=(await src("app.ts")).replace('import "./style.css";',"").replace('from "./live-graph"','from "'+graphURL+'"').replace('from "./reader-pagination.mjs"','from "'+new URL("../web/reader-pagination.mjs",import.meta.url).href+'"');
+const appSource=(await src("app.ts")).replace('import "./style.css";',"").replace('from "./live-graph"','from "'+graphURL+'"').replace(/from "(\.\/[^"\n]+\.mjs)"/g,(_,p)=>'from "'+new URL("../web/"+p.slice(2),import.meta.url).href+'"');
 const appURL=moduleURL((await transformWithEsbuild(appSource,"app.ts",{loader:"ts",format:"esm"})).code);
 
 function browser(failGraph=false){

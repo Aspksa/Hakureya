@@ -1,6 +1,7 @@
 import "./style.css";
 import {mountGraph} from "./live-graph";
 import {measuredPages,pageAt} from "./reader-pagination.mjs";
+import {commandGroups,commandCount,searchCommands} from "./command-catalog.mjs";
 const $=(id:string)=>document.getElementById(id)!;
 let selectedVolume:number|null=null;
 let live:ReturnType<typeof mountGraph>|null=null;
@@ -32,7 +33,7 @@ document.addEventListener("visibilitychange",()=>{clearTimeout(activityTimer);if
 const avatar=$("avatar"),chat=$("chat"),prompt=$("prompt") as HTMLTextAreaElement,menu=$("menu"),config=$("config") as HTMLDialogElement;
 function syncGraphViewport(){const stage=$("stage");stage.classList.toggle("chat-open",!chat.hidden);stage.classList.toggle("book-open",!chat.hidden&&!book.hidden);stage.classList.toggle("book-full",!chat.hidden&&!book.hidden&&focused);live?.setReader(!chat.hidden&&!book.hidden,!chat.hidden&&!book.hidden&&focused);live?.resize()}
 function toggle(open=chat.hidden){chat.hidden=!open;syncGraphViewport();avatar.setAttribute("aria-expanded",String(open));avatar.setAttribute("aria-label",open?"Свернуть чат":"Открыть чат Hakureya");if(open){if(!book.hidden){$("book-scroll").focus();scheduleReflow()}else prompt.focus()}else avatar.focus()}
-avatar.onclick=()=>toggle();$("close").onclick=()=>toggle(false);avatar.oncontextmenu=e=>{e.preventDefault();menu.hidden=!menu.hidden};document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(!menu.hidden)menu.hidden=true;else if(!chat.hidden&&!config.open)toggle(false)}});document.addEventListener("click",e=>{if(!menu.contains(e.target as Node)&&!avatar.contains(e.target as Node))menu.hidden=true});
+avatar.onclick=()=>toggle();$("close").onclick=()=>toggle(false);avatar.oncontextmenu=e=>{e.preventDefault();menu.hidden=!menu.hidden};document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(!menu.hidden)menu.hidden=true;else if(!chat.hidden&&!config.open&&!writerDialog.open&&!commandDialog.open&&!note.open)toggle(false)}});document.addEventListener("click",e=>{if(!menu.contains(e.target as Node)&&!avatar.contains(e.target as Node))menu.hidden=true});
 function message(role:string,content:string){const p=document.createElement("p");p.className="message "+role;p.textContent=content;$("messages").append(p);p.scrollIntoView({block:"end"});return p}
 async function api(path:string,data?:unknown){
  const controller=new AbortController(),timeout=window.setTimeout(()=>controller.abort(),path==="chat"?130000:15000);
@@ -42,6 +43,45 @@ async function api(path:string,data?:unknown){
  }catch(e){if(controller.signal.aborted)throw Error("Истекло время ожидания. Запрос мог завершиться на сервере; проверьте историю.");throw e}finally{clearTimeout(timeout)}
 }
 async function init(){try{const data=await api("history");for(const m of data.messages)message(m.role,m.content);$("status").textContent=data.connected?"Cloud.ru подключён":"Локальный режим · Cloud.ru не подключён";const page=await api("reader");if(page.reader&&!busy)showBook(page.reader)}catch{$("status").textContent="Сервер недоступен"}}
+const commandDialog=$("command-dialog") as HTMLDialogElement,commandPlus=$("command-plus") as HTMLButtonElement,commandSearch=$("command-search") as HTMLInputElement,commandCategory=$("command-category") as HTMLSelectElement,commandResults=$("command-results");
+let commandInitialized=false;
+function renderCommands(){
+ const groups=searchCommands(commandSearch.value,commandCategory.value);
+ commandResults.replaceChildren();
+ let count=0;
+ for(const [name,entries] of groups){
+  const section=document.createElement("section"),title=document.createElement("h3");
+  title.textContent=name;section.append(title);
+  for(const [label,command,example] of entries){
+   count++;
+   const btn=document.createElement("button"),strong=document.createElement("strong"),small=document.createElement("small");
+   btn.type="button";btn.className="command-item";strong.textContent=label;small.textContent=command+(example??"");
+   btn.append(strong,small);
+   btn.onclick=()=>{
+    const value=command+(example??"");
+    if(prompt.value.trim()&&prompt.value!==value&&!window.confirm("Заменить текущий текст выбранной командой?"))return;
+    prompt.value=value;commandDialog.close();prompt.focus();
+    if(example)prompt.setSelectionRange(command.length,value.length);
+   };
+   section.append(btn);
+  }
+  commandResults.append(section);
+ }
+ $("command-count").textContent=count+" из "+commandCount+" команд";
+ if(!count){const empty=document.createElement("p");empty.textContent="Ничего не найдено. Попробуйте другое слово.";commandResults.append(empty)}
+}
+commandPlus.onclick=()=>{
+ if(!commandInitialized){
+  for(const [name] of commandGroups){const option=document.createElement("option");option.value=option.textContent=name;commandCategory.append(option)}
+  commandInitialized=true;
+ }
+ commandSearch.value="";commandCategory.value="";renderCommands();commandDialog.showModal();commandPlus.setAttribute("aria-expanded","true");commandSearch.focus();
+};
+commandDialog.onclose=()=>{commandPlus.setAttribute("aria-expanded","false")};
+$("command-close").onclick=()=>commandDialog.close();
+commandSearch.oninput=renderCommands;commandCategory.onchange=renderCommands;
+$("command-writer").onclick=()=>{commandDialog.close();$("writer-open").click()};
+$("command-cloud").onclick=()=>{commandDialog.close();$("settings").click()};
 const cloudModel=$("model") as HTMLInputElement,cloudKey=$("key") as HTMLInputElement;
 const modelList=$("model-list") as HTMLSelectElement,modelListLabel=$("model-list-label");
 const loadModels=$("load-models") as HTMLButtonElement,saveConfig=$("save") as HTMLButtonElement;
