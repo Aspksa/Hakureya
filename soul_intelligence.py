@@ -3,6 +3,7 @@ import json
 import re
 from collections import Counter, defaultdict
 from difflib import SequenceMatcher
+from time import perf_counter
 import soul_omega as o
 import soul_genesis as ge
 import soul_evolution as ev
@@ -287,8 +288,10 @@ def prepare(db,plan):
     facts,threads,_=inf.ledger(list(inf.published(db)))
     open_lines=[t for t in threads.values() if t["closed"] is None and last+1-t["chapter"]>=t["delay"]]
     theme=plan.get("universe") or plan.get("infinite",{}).get("selected") or plan.get("director") or plan.get("evolution",{}).get("chosen") or {}
-    completed=[];result={}
+    completed=[];result={};timings={};clock=perf_counter()
     def brain(name,value):
+        nonlocal clock
+        now=perf_counter();timings[name]=round((now-clock)*1000,3);clock=now
         result[name]=value;completed.append(name)
     brain("plot",{"theme":theme.get("theme",plan["arc"]),"open":[{"chapter":t["chapter"],"value":t["value"]} for t in open_lines[:2]],"guide":"Соблюдай обязательный текущий этап, не раскрывай ранние тайны."})
     forgotten=sorted((a for a in actors.values() if last-a["last"]>=8),key=lambda a:a["last"])
@@ -321,7 +324,7 @@ def prepare(db,plan):
         candidate={**selected,k:result[k]}
         if len(o.dump(candidate).encode("utf-8"))<=budget:selected[k]=result[k]
     brain("coordinator",{"included":list(selected),"bytes":len(o.dump(selected).encode("utf-8"))})
-    plan["intelligence"]={"context":selected,"completed":completed,"bytes":result["coordinator"]["bytes"],"recalled":[x["number"] for x in selected.get("memory",[])]}
+    plan["intelligence"]={"context":selected,"completed":completed,"timings_ms":timings,"bytes":result["coordinator"]["bytes"],"recalled":[x["number"] for x in selected.get("memory",[])]}
     return plan
 
 def record_run(db,day,plan):
