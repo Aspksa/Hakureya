@@ -80,7 +80,8 @@ def writer_status(db):
     elif pages and writer_volume.auto_block(db,day):reason="Автоматические повторные запросы остановлены после ошибки"
     elif wait and not reading_window(db):reason="Ожидание бездействия"
     else:reason="Готов к следующей проверке планировщика"
-    return {"mode":mode,"connected":bool(CONFIG["key"]),"model":cloud_writer.selected(db) or CONFIG["model"],
+    budget_row=db.execute("SELECT model,input_rate,output_rate,monthly_kopecks FROM evolution_budget WHERE id=1").fetchone()
+    return {"budget_settings":{"model":budget_row[0],"input":budget_row[1]/100,"output":budget_row[2]/100,"monthly":budget_row[3]/100} if budget_row else None,"mode":mode,"connected":bool(CONFIG["key"]),"model":cloud_writer.selected(db) or CONFIG["model"],
             "saved_connection":(DB.parent/"cloud.dpapi").is_file(),"can_remember":cloud_vault.supported(),
             "interval":idle//60,"wait_seconds":wait,"pending":pending,
             "published":soul_reader.latest(db),"attempt":attempt,
@@ -94,6 +95,7 @@ def writer_status_text(db):
         "\nПоследняя опубликованная глава: "+str(st["published"])+
         "\nМодель: "+(st["model"] or "не выбрана")+
         "\nПодключение: "+("сохранено для этой учётной записи Windows" if st["saved_connection"] else "только текущий сеанс")+
+        "\nОпубликовано за сутки: "+str(st["published_chars"])+" символов; запросов "+str(st["attempts_today"])+"/"+str(st["daily_limit"])+
         "\n"+st["budget"])
 
 def connect():
@@ -590,7 +592,7 @@ def chronicle_command(content):
                 return "Сначала подключите Cloud.ru. Сон не включён."
             CHRONICLE.update(enabled=True,epoch=CHRONICLE["epoch"]+1)
             soul_chronicle.control(db,"background_enabled")
-            return "Сон включён до закрытия сервера: не чаще одной попытки UTC в сутки, после 20 минут тишины, даже без новой записи дневника, по этапам саги о хранительницах и Тени либо открытого цикла; после завершения — по очереди веток. В Cloud.ru передаются канон, утверждённые художественные главы и счётчики (если есть), не текст чата. Отключение: летопись: выключить сон."
+            return "Сон включён до закрытия сервера: в пределах настроенной дневной цели и бюджета, после интервала тишины, даже без новой записи дневника, по этапам саги о хранительницах и Тени либо открытого цикла; после завершения — по очереди веток. В Cloud.ru передаются канон, утверждённые художественные главы и счётчики (если есть), не текст чата. Отключение: летопись: выключить сон."
         if q=="летопись: выключить сон":
             CHRONICLE.update(enabled=False,epoch=CHRONICLE["epoch"]+1)
             soul_living.set_mode(db,"off")
@@ -750,6 +752,11 @@ class Handler(SimpleHTTPRequestHandler):
                     if mode!="off" and not soul_chronicle.canon_ok(db):
                         return self.respond({"error":"Канон повреждён."},400)
                     model=cloud_writer.selected(db) or CONFIG["model"]
+                    budget=data.get("budget")
+                    if budget is not None:
+                        if not model or not isinstance(budget,dict) or any(type(budget.get(k)) is not int or not 1<=budget[k]<=1_000_000 for k in ("monthly","input","output")):
+                            return self.respond({"error":"Введите положительные целые тарифы и бюджет в рублях."},400)
+                        soul_evolution.set_budget(db,model,budget["input"]*100,budget["output"]*100,budget["monthly"]*100)
                     if pages and not writer_volume.budget_ready(db,model):return self.respond({"error":"Для увеличенного объёма задайте бюджет и тарифы модели писателя."},400)
                     writer_volume.set_target(db,pages)
                     soul_living.set_mode(db,mode)
