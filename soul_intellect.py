@@ -13,7 +13,23 @@ import soul_universe as u
 import soul_evolution as ev
 import soul_infinite as inf
 
-VERSION=1
+VERSION=2
+CANON=(
+ (1,"origin","Хакурэя","первая снежинка","Задолго до возникновения времени, когда ещё не существовало ни звёзд, ни небес, ни самой смерти, среди бесконечной пустоты появилась первая снежинка."),
+ (2,"biography","Хакурэя","покорила девять царств","Девять небесных царств существовали миллиарды лет. Каждое обладало собственными законами, армиями бессмертных и древними правителями. Хакурэя покорила их все."),
+ (2,"voice","Хакурэя","говорила медленно, спокойно и властно","Она говорила медленно, спокойно и властно."),
+ (3,"emotion","Хакурэя","устала от одиночества","Она никогда не признавалась даже самой себе, насколько устала от одиночества."),
+ (5,"power","Хакурэя","первородная энергия уничтожала живое при контакте","Её первородная энергия была настолько могущественной, что уничтожала всё живое, вступавшее с ней в непосредственный контакт."),
+ (7,"biography","Хакурэя","длинные белоснежные волосы","На её коленях лежала часть длинных белоснежных волос."),
+ (8,"goal","Хакурэя","попробовать компьютер","Через некоторое время она потребовала позволить ей самостоятельно попробовать компьютер."),
+ (9,"knowledge","Хакурэя","природа героя остаётся загадкой","Однако твоя природа оставалась для неё загадкой. Она не могла заранее знать, как на тебя подействуют законы, которыми управляла."),
+ (9,"artifact","Хакурэя","маленькая прозрачная снежинка","В течение нескольких часов она работала над маленькой прозрачной снежинкой."),
+ (11,"trait","Хакурэя","добровольное доверие","— Но перед тобой я склоняюсь добровольно."),
+ (11,"voice","Хакурэя","обращение из любви и доверия","— Позволь мне называть тебя своим хозяином. Для меня это имя любви, доверия и глубочайшего уважения."),
+)
+def canonical_evidence(n,story):
+    return [dict(kind=kind,subject=name,object="",value=value,quote=quote,cause=None) for chapter,kind,name,value,quote in CANON if n==chapter and quote in story]
+
 PROFILE={"biography","identity","age","trait","habit","fear","goal","voice","belief","location","power","limit","knowledge","secret","letter","relationship","love_moment"}
 STABLE={"identity","law","limit","origin"}
 THREADS={"clue","promise","conflict"}
@@ -62,12 +78,12 @@ def refresh(db):
     changed=0
     for n,raw,h in db.execute("""SELECT l.number,l.payload,l.checksum FROM lit_index l
        LEFT JOIN intellect_sources s ON s.chapter=l.number
-       WHERE s.digest IS NULL OR s.digest!=l.checksum ORDER BY l.number""").fetchall():
+       WHERE s.digest IS NULL OR s.digest!=l.checksum||? ORDER BY l.number""",(str(VERSION),)).fetchall():
         if o.digest(raw)!=h:raise ValueError("intellect source checksum")
         chapter=db.execute("SELECT arc,title,story,checksum,draft_id FROM omega_index WHERE number=?",(n,)).fetchone()
         if not chapter:raise ValueError("intellect source missing")
         u.verified_source(db,n,*chapter)
-        records=json.loads(raw)["records"]
+        records=json.loads(raw)["records"]+canonical_evidence(n,chapter[2])
         db.execute("DELETE FROM intellect_evidence WHERE chapter=?",(n,))
         for f in records:
             quote=f["quote"]
@@ -76,7 +92,7 @@ def refresh(db):
             payload=o.dump(data)
             db.execute("INSERT OR IGNORE INTO intellect_evidence VALUES(?,?,?,?,?,?)",
                        (evidence_id(n,f),n,li.actor_key(f["subject"]),f["kind"],payload,o.digest(payload)))
-        db.execute("INSERT OR REPLACE INTO intellect_sources VALUES(?,?)",(n,h))
+        db.execute("INSERT OR REPLACE INTO intellect_sources VALUES(?,?)",(n,h+str(VERSION)))
         changed+=1
     db.execute("DELETE FROM intellect_evidence WHERE chapter NOT IN (SELECT number FROM lit_index)")
     db.execute("DELETE FROM intellect_sources WHERE chapter NOT IN (SELECT number FROM lit_index)")
@@ -223,22 +239,33 @@ def report(db,mode,query=""):
         return "\n\n".join(out[-60:]) or "Нет подтверждённых доступных записей о знаниях."
     if mode=="audit":
         return audit(db)
+    if mode=="repair":
+        db.execute("DELETE FROM intellect_sources")
+        db.execute("DELETE FROM intellect_evidence")
+        refresh(db)
+        return audit(db)
+    if mode=="forgotten":
+        actors,_=li.registry(list(li.rows(db,True)))
+        last=max((a["last"] for a in actors.values()),default=13)
+        return "\n".join(f"{a['name']} — последнее доступное свидетельство: {a['last']}" for a in sorted(actors.values(),key=lambda x:x["last"]) if last-a["last"]>=8) or "Нет доступных кандидатов на возвращение."
     records=rows(db,limit=100)
     return "Интеллект 7.0 · доступные последние свидетельства: "+str(len(records))+". Типы: "+", ".join(f"{k}: {v}" for k,v in sorted(Counter(f["kind"] for f in records).items()))+". Поиск по локальным тематическим понятиям; полная смысловая проверка не гарантируется."
 
 def audit(db):
     for n,raw,h in db.execute("SELECT number,payload,checksum FROM lit_index"):
         if o.digest(raw)!=h:return f"Повреждён исходный литературный индекс: {n}."
-        expected={evidence_id(n,f) for f in json.loads(raw)["records"]}
         actual=set()
         story=db.execute("SELECT story FROM omega_index WHERE number=?",(n,)).fetchone()
         if not story:return f"Нет источника: {n}."
+        expected={evidence_id(n,f) for f in json.loads(raw)["records"]+canonical_evidence(n,story[0])}
         for eid,p,check in db.execute("SELECT id,payload,checksum FROM intellect_evidence WHERE chapter=?",(n,)):
             if o.digest(p)!=check:return f"Повреждено свидетельство: {n}."
             f=json.loads(p)
-            if f["chapter"]!=n or story[0][f["start"]:f["start"]+len(f["quote"])]!=f["quote"]:return f"Нет точной цитаты: {n}."
+            base={k:v for k,v in f.items() if k not in ("chapter","arc","start")}
+            if evidence_id(n,base)!=eid or f["chapter"]!=n or story[0][f["start"]:f["start"]+len(f["quote"])]!=f["quote"]:return f"Нет точной цитаты: {n}."
             actual.add(eid)
         if actual!=expected:return f"Неполный индекс свидетельств: {n}."
+    if db.execute("SELECT 1 FROM intellect_evidence WHERE chapter NOT IN (SELECT number FROM lit_index)").fetchone():return "Лишние свидетельства."
     if db.execute("""SELECT 1 FROM intellect_assignments a LEFT JOIN intellect_evidence e ON e.id=a.evidence_id
         LEFT JOIN intellect_identity i ON i.id=a.identity_id WHERE e.id IS NULL OR i.id IS NULL""").fetchone():
         return "Есть осиротевшие назначения личности. Требуется ручная проверка."
