@@ -8,5 +8,14 @@
 <footer id="book-footer"><button id="book-prev" aria-label="Предыдущая страница">‹</button><div><div id="book-position" aria-live="polite"></div><progress id="book-progress" max="1" value="0" aria-label="Прогресс главы"></progress><progress id="book-volume" max="1" value="0" aria-label="Прогресс опубликованной части тома"></progress></div><button id="book-next" aria-label="Следующая страница">›</button></footer><output id="book-status" role="status"></output>
 </section><form id="composer"><textarea id="prompt" required maxlength="12000" rows="2" placeholder="Сообщение…"></textarea><button type="submit">↑</button></form><small id="status">Локальный режим</small></aside>
 <menu id="menu" hidden><button id="settings">Подключение Cloud.ru</button><button id="avatar-picker">Загрузить PNG-аватар</button><button id="note-open">Сохранить знание или опыт</button><button id="reset">Повторить рост графа</button></menu>
-<dialog id="config"><form method="dialog"><h2>Cloud.ru</h2><p>Ключ хранится только в памяти сервера до перезапуска. Запросы к модели платные.</p><label>Модель<input id="model" maxlength="200"></label><label>API-ключ<input id="key" type="password" autocomplete="off"></label><label><input id="consent" type="checkbox"> Разрешаю отправку сообщений и платные запросы</label><output id="config-status"></output><div><button value="cancel">Закрыть</button><button id="save" type="button">Подключить</button></div></form></dialog>
+<dialog id="config"><form id="config-form" method="dialog" autocomplete="off">
+<h2>Cloud.ru</h2><p>Ключ хранится только в памяти сервера до перезапуска. Запросы к модели платные.</p>
+<label>Модель<input id="model" maxlength="200"></label>
+<button id="load-models" type="button">Загрузить модели</button>
+<label id="model-list-label" hidden>Доступные модели<select id="model-list"></select></label>
+<label>API-ключ<input id="key" type="password" maxlength="4096" autocomplete="off"></label>
+<label><input id="consent" type="checkbox"> Разрешаю отправку сообщений и платные запросы</label>
+<output id="config-status"></output>
+<div><button id="config-close" type="button">Закрыть</button><button id="save" type="submit">Подключить</button></div>
+</form></dialog>
 <input type="file" id="avatar-file" accept="image/png" hidden><dialog id="note-dialog"><form method="dialog"><h2>Добавить память</h2><select id="note-kind"><option value="1">Знание</option><option value="3">Опыт</option></select><textarea id="note-text" rows="5" maxlength="12000" placeholder="Что сохранить?"></textarea><output id="note-status"></output><div><button value="cancel">Закрыть</button><button type="button" id="note-save">Сохранить</button></div></form></dialog><script type="module" src="/web/app.ts"></script></body></html>

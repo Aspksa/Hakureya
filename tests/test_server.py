@@ -39,9 +39,55 @@ class ServerTest(unittest.TestCase):
         with self.assertRaises(HTTPError) as e:
             self.request("config",{"key":"key","model":"model","consent":False})
         self.assertEqual(e.exception.code,400)
+        self.assertIn("Подтвердите согласие",json.load(e.exception)["error"])
         with self.assertRaises(HTTPError) as e:
             self.request("history",headers={"Origin":"https://example.com"})
         self.assertEqual(e.exception.code,403)
+
+    def test_cloud_catalog_and_connection_without_generation(self):
+        key="test-cloud-key-memory-only"
+        model="vendor/Chat-Model"
+        fake=MagicMock()
+        fake.__enter__.return_value.read.return_value=json.dumps({"object":"list","data":[
+            {"id":model,"metadata":{"type":"llm"}},
+            {"id":"vendor/Embedding-Model","metadata":{"type":"embedder"}},
+            {"id":model},
+        ]}).encode()
+        with patch.object(server,"urlopen",return_value=fake) as remote:
+            self.assertEqual(self.request("config/models",{}),{"models":[model]})
+            self.assertIsNone(remote.call_args.args[0].get_header("Authorization"))
+            self.assertEqual(self.request("config/models",{"key":f"\t{key}\n"}),{"models":[model]})
+            outgoing=remote.call_args.args[0]
+            self.assertEqual(outgoing.get_method(),"GET")
+            self.assertIsNone(outgoing.data)
+            self.assertEqual(outgoing.get_header("Authorization"),f"Bearer {key}")
+            self.assertFalse(self.request("history")["connected"])
+            self.assertEqual(server.CONFIG["key"],"")
+            config={"key":f"\t{key}\n","model":"","consent":True}
+            with self.assertRaises(HTTPError) as e:
+                self.request("config",config)
+            self.assertEqual(e.exception.code,400)
+            self.assertIn("Выберите модель",json.load(e.exception)["error"])
+            self.assertEqual(self.request("config",{**config,"model":model}),{"connected":True})
+            self.assertEqual(remote.call_count,2)
+        self.assertEqual(server.CONFIG,{"key":key,"model":model})
+        self.assertNotIn(key.encode(),server.DB.read_bytes())
+
+    def test_cloud_catalog_errors_leave_connection_untouched(self):
+        with patch.object(server,"urlopen",side_effect=HTTPError(server.cloud_writer.MODELS_URL,401,"private detail",None,None)) as remote:
+            with self.assertRaises(HTTPError) as e:
+                self.request("config/models",{"key":"invalid-key"})
+            self.assertEqual(e.exception.code,401)
+            body=json.load(e.exception)["error"]
+            self.assertIn("Проверьте API-ключ",body)
+            self.assertNotIn("private detail",body)
+            self.assertNotIn("invalid-key",body)
+            with self.assertRaises(HTTPError) as e:
+                self.request("config/models",{"key":"bad\nkey"})
+            self.assertEqual(e.exception.code,400)
+            self.assertIn("формат API-ключа",json.load(e.exception)["error"])
+            self.assertEqual(remote.call_count,1)
+        self.assertEqual(server.CONFIG,{"key":"","model":""})
 
     def test_real_graph_and_notes(self):
         initial=self.request("graph")

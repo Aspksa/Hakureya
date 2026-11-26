@@ -33,7 +33,69 @@ avatar.onclick=()=>toggle();$("close").onclick=()=>toggle(false);avatar.oncontex
 function message(role:string,content:string){const p=document.createElement("p");p.className="message "+role;p.textContent=content;$("messages").append(p);p.scrollIntoView({block:"end"});return p}
 async function api(path:string,data?:unknown){const response=await fetch("/api/"+path,data===undefined?{}:{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});const value=await response.json();if(!response.ok)throw Error(value.error||"Ошибка сервера");return value}
 async function init(){try{const data=await api("history");for(const m of data.messages)message(m.role,m.content);$("status").textContent=data.connected?"Cloud.ru подключён":"Локальный режим · Cloud.ru не подключён";const page=await api("reader");if(page.reader&&!busy)showBook(page.reader)}catch{$("status").textContent="Сервер недоступен"}}
-$("settings").onclick=()=>{menu.hidden=true;config.showModal()};$("save").onclick=async()=>{const model=($("model") as HTMLInputElement).value.trim(),key=$("key") as HTMLInputElement,consent=($("consent") as HTMLInputElement).checked;try{await api("config",{model,key:key.value,consent});key.value="";$("status").textContent="Cloud.ru подключён";$("config-status").textContent="Настройки сохранены";config.close()}catch(e){$("config-status").textContent=String(e)}};
+const cloudModel=$("model") as HTMLInputElement,cloudKey=$("key") as HTMLInputElement;
+const modelList=$("model-list") as HTMLSelectElement,modelListLabel=$("model-list-label");
+const loadModels=$("load-models") as HTMLButtonElement,saveConfig=$("save") as HTMLButtonElement;
+const configStatus=$("config-status"),cloudConsent=$("consent") as HTMLInputElement;
+let configSession=0;
+function setConfigPending(pending:boolean){loadModels.disabled=saveConfig.disabled=pending}
+$("settings").onclick=()=>{
+ menu.hidden=true;
+ configSession++;
+ cloudKey.value="";
+ configStatus.textContent="";
+ modelListLabel.hidden=true;
+ modelList.replaceChildren();
+ config.showModal();
+};
+$("config-close").onclick=()=>config.close();
+config.onclose=()=>{if(!config.open)cloudKey.value=""};
+modelList.onchange=()=>{if(modelList.value)cloudModel.value=modelList.value};
+cloudModel.oninput=()=>{if(!modelListLabel.hidden)modelList.value=cloudModel.value.trim()};
+loadModels.onclick=async()=>{
+ if(loadModels.disabled)return;
+ const session=configSession;
+ setConfigPending(true);
+ modelListLabel.hidden=true;
+ configStatus.textContent="Загрузка моделей…";
+ try{
+  const {models}=await api("config/models",{key:cloudKey.value}) as {models:string[]};
+  if(session!==configSession||!config.open)return;
+  const placeholder=document.createElement("option");
+  placeholder.value="";
+  placeholder.textContent="Выберите модель";
+  modelList.replaceChildren(placeholder);
+  for(const id of models){
+   const option=document.createElement("option");
+   option.value=option.textContent=id;
+   modelList.append(option);
+  }
+  const currentModel=cloudModel.value.trim();
+  modelList.value=models.includes(currentModel)?currentModel:"";
+  modelListLabel.hidden=models.length===0;
+  configStatus.textContent=models.length?"":"Cloud.ru вернул пустой список моделей.";
+ }catch(e){
+  if(session===configSession&&config.open)configStatus.textContent=e instanceof Error?e.message:String(e);
+ }finally{
+  setConfigPending(false);
+ }
+};
+$("config-form").onsubmit=async e=>{
+ e.preventDefault();
+ if(saveConfig.disabled)return;
+ const session=configSession;
+ setConfigPending(true);
+ configStatus.textContent="";
+ try{
+  await api("config",{model:cloudModel.value,key:cloudKey.value,consent:cloudConsent.checked});
+  $("status").textContent="Cloud.ru подключён";
+  if(session===configSession&&config.open)config.close();
+ }catch(e){
+  if(session===configSession&&config.open)configStatus.textContent=e instanceof Error?e.message:String(e);
+ }finally{
+  setConfigPending(false);
+ }
+};
 $("composer").onsubmit=async e=>{e.preventDefault();const content=prompt.value.trim();if(!content||busy)return;busy=true;prompt.value="";message("user",content);$("status").textContent="Обработка запроса…";try{const result=await api("chat",{content});if(result.reader)showBook(result.reader);else message("assistant",result.reply);$("status").textContent=result.connected?"Cloud.ru · ответ получен":"Локальный режим · сообщение сохранено"}catch(e){message("error",String(e));$("status").textContent="Ошибка запроса"}finally{busy=false;await refreshGraph();if(book.hidden)prompt.focus();else $("book-scroll").focus()}};
 
 const image=$("avatar-image") as HTMLImageElement;

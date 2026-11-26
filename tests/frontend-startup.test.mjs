@@ -4,7 +4,7 @@ import {readFile} from 'node:fs/promises';
 import {transformWithEsbuild} from 'vite';
 
 class ElementStub {
- constructor(tag="div"){this.tagName=tag;this.children=[];this.attrs=new Map();this.hidden=false;this.clientWidth=900;this.clientHeight=650;this.textContent="";this.style={setProperty(){}};this.classList={add(){},remove(){},toggle(){}}}
+ constructor(tag="div"){this.tagName=tag;this.children=[];this.attrs=new Map();this.hidden=false;this.clientWidth=900;this.clientHeight=650;this.textContent="";this.value="";this.style={setProperty(){}};this.classList={add(){},remove(){},toggle(){}}}
  append(...nodes){this.children.push(...nodes)}
  replaceChildren(...nodes){this.children=nodes}
  setAttribute(k,v){this.attrs.set(k,String(v))}
@@ -14,6 +14,8 @@ class ElementStub {
  removeEventListener(){}
  focus(){}
  scrollIntoView(){}
+ showModal(){this.open=true}
+ close(){this.open=false;this.onclose?.()}
  getBBox(){return {x:0,y:0,width:20,height:10}}
  animate(){}
  remove(){}
@@ -48,6 +50,37 @@ test("renderer mounts empty root, then normal memories without a kind",async()=>
  assert.doesNotThrow(()=>live.render(snapshot));
  assert.match(get("info").textContent,/3 записей/);
  live.dispose();
+});
+test("Cloud.ru dialog loads models without consent and uses the selected ID on connect",async()=>{
+ const {get}=browser();
+ const oldFetch=globalThis.fetch,oldInterval=globalThis.setInterval;
+ const configCalls=[];
+ try{
+  globalThis.setInterval=()=>0;
+  globalThis.fetch=async (path,options)=>{
+   if(!path.startsWith("/api/config"))return oldFetch(path,options);
+   configCalls.push([path,JSON.parse(options.body)]);
+   if(path.endsWith("/models"))return {ok:true,json:async()=>({models:["vendor/Model-A","vendor/Model-B"]})};
+   return {ok:true,json:async()=>({connected:true})};
+  };
+  await import(appURL+"#cloud-config");
+  await new Promise(resolve=>setImmediate(resolve));
+  get("settings").onclick();
+  get("key").value="test-key";
+  get("consent").checked=false;
+  await get("load-models").onclick();
+  assert.deepEqual(configCalls,[["/api/config/models",{key:"test-key"}]]);
+  assert.equal(get("model-list-label").hidden,false);
+  assert.deepEqual(get("model-list").children.map(option=>option.value),["","vendor/Model-A","vendor/Model-B"]);
+  get("model-list").value="vendor/Model-B";
+  get("model-list").onchange();
+  assert.equal(get("model").value,"vendor/Model-B");
+  get("consent").checked=true;
+  await get("config-form").onsubmit({preventDefault(){}});
+  assert.deepEqual(configCalls[1],["/api/config",{model:"vendor/Model-B",key:"test-key",consent:true}]);
+  assert.equal(get("config").open,false);
+  assert.equal(get("key").value,"");
+ }finally{globalThis.fetch=oldFetch;globalThis.setInterval=oldInterval}
 });
 test("actual app initializes and opens chat even if optional SVG initialization fails",async()=>{
  const oldInterval=globalThis.setInterval,oldError=console.error;

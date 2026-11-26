@@ -2,7 +2,8 @@ from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.request import Request, urlopen
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
+from http.client import HTTPException
 import argparse, json, sqlite3, threading, webbrowser, os
 from contextlib import closing
 import memory_graph
@@ -31,6 +32,15 @@ API = "https://foundation-models.api.cloud.ru/v1/chat/completions"
 LOCK = threading.Lock()
 CONFIG = {"key": "", "model": ""}
 CHRONICLE = {"enabled": False, "last_activity": time.monotonic(), "epoch": 0}
+
+
+def normalize_cloud_key(value):
+    if not isinstance(value,str):
+        return None
+    key=value.strip()
+    if len(key)>4096 or any(not 33<=ord(char)<=126 for char in key):
+        return None
+    return key
 
 
 def connect():
@@ -600,14 +610,36 @@ class Handler(SimpleHTTPRequestHandler):
                 with closing(connect()) as db, db:
                     memory_graph.add_note(db,data.get("kind"),data.get("content"))
                 return self.respond({"ok":True})
-            if self.path == "/api/config":
-                key, model = data.get("key"),data.get("model")
-                if data.get("consent") is not True or not isinstance(key,str) or not isinstance(model,str) or not key.strip() or not model.strip() or len(key)>4096 or len(model)>200 or any(ord(c)<32 or ord(c)>126 for c in key):
-                    raise ValueError("Укажите ключ, модель и подтвердите разрешение")
+            if self.path in ("/api/config", "/api/config/models"):
+                key=normalize_cloud_key(data.get("key", ""))
+                if key is None:
+                    return self.respond({"error":"Проверьте формат API-ключа Cloud.ru."},400)
+                if self.path == "/api/config/models":
+                    try:
+                        models=cloud_writer.list_models(key,urlopen,chat_only=True)
+                    except HTTPError as error:
+                        error.close()
+                        if error.code in (401,403):
+                            return self.respond({"error":"Cloud.ru отклонил запрос. Проверьте API-ключ и доступ к Foundation Models."},error.code)
+                        if error.code == 429:
+                            return self.respond({"error":"Cloud.ru ограничил число запросов. Повторите позже."},429)
+                    except (OSError,HTTPException,ValueError,KeyError,TypeError):
+                        pass
+                    else:
+                        return self.respond({"models":models})
+                    return self.respond({"error":"Не удалось загрузить модели Cloud.ru. Повторите попытку или введите модель вручную."},502)
+                model=data.get("model")
+                if not key:
+                    return self.respond({"error":"Введите API-ключ Cloud.ru."},400)
+                if not isinstance(model,str) or not 0<len(model.strip())<=200:
+                    return self.respond({"error":"Выберите модель из списка или введите её идентификатор."},400)
+                if data.get("consent") is not True:
+                    return self.respond({"error":"Подтвердите согласие на отправку сообщений и платные запросы."},400)
+                model=model.strip()
                 with LOCK:
                     with closing(connect()) as db, db:
-                        soul_core.record_model(db,model.strip())
-                    CONFIG.update(key=key.strip(), model=model.strip())
+                        soul_core.record_model(db,model)
+                    CONFIG.update(key=key, model=model)
                     CHRONICLE.update(enabled=False,epoch=CHRONICLE["epoch"]+1)
                 return self.respond({"connected":True})
             if self.path != "/api/chat":
