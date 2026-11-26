@@ -50,6 +50,13 @@ def progress(key,chars,chunks):
         item["chunks"]=chunks
         REV+=1
 
+def prose(key,chars):
+    global REV
+    with LOCK:
+        item=ACTIVE.get(key)
+        if item and item["kind"]=="chronicle" and type(chars) is int and 0<=chars<=24000:
+            if item.get("prose_chars")!=chars:item["prose_chars"]=chars;REV+=1
+
 @contextmanager
 def track(kind,source="root",sources=()):
     global REV
