@@ -66,5 +66,5 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement){
  svg.addEventListener("pointerdown",e=>{if(e.button===0)drag={x:e.clientX,y:e.clientY,moved:false}});
  svg.addEventListener("pointermove",e=>{if(!drag)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.abs(dx)+Math.abs(dy)>2){drag.moved=true;if(!svg.hasPointerCapture(e.pointerId))svg.setPointerCapture(e.pointerId)}if(drag.moved){panX+=dx;panY+=dy}drag.x=e.clientX;drag.y=e.clientY});
  for(const name of ["pointerup","pointercancel","lostpointercapture"])svg.addEventListener(name,()=>{drag=null});
- return {render,setBusy(value:boolean){busy=value;redrawSelection()},replay(){zoom=1;panX=panY=0;active="";if(graph.nodes.length<=1){status();return}replayAt=performance.now();reveal(1);redrawSelection()},dispose(){cancelAnimationFrame(raf)}};
+ return {render,setBusy(value:boolean){busy=value;redrawSelection()},replay(){zoom=1;panX=panY=0;active="";if(graph.nodes.length<=1){status();return}replayAt=performance.now();active="root";reveal(1);redrawSelection()},dispose(){cancelAnimationFrame(raf)}};
 }
