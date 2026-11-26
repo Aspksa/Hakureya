@@ -23,6 +23,10 @@ export function publicationChanges(previous,next,publication){
  const oldNodes=new Set(previous.records.map(n=>n.key)),oldEdges=new Set(previous.edges.map(edgeKey));
  const newNodes=new Set(next.records.filter(n=>!oldNodes.has(n.key)).map(n=>n.key));
  const related=new Set([publication.key]);
+ if(publication.details===false){
+  const safe=new Set([publication.key,publication.segment,"book:"+publication.volume]);
+  return {nodes:[...newNodes].filter(k=>safe.has(k)),edges:next.edges.filter(e=>safe.has(e.a)&&safe.has(e.b)&&!oldEdges.has(edgeKey(e))).slice(0,12)};
+ }
  for(const e of next.edges)if(e.a===publication.key||e.b===publication.key)related.add(e.a===publication.key?e.b:e.a);
  const edges=next.edges.filter(e=>!oldEdges.has(edgeKey(e))&&e.kind!=="category"&&e.kind!=="keywords"&&
   (e.a===publication.key||e.b===publication.key||(related.has(e.a)&&newNodes.has(e.a))||(related.has(e.b)&&newNodes.has(e.b)))).slice(0,24);
