@@ -114,6 +114,7 @@ def read(db,did):
     if not base or base[0]!=source or o.digest(o.dump([raw,source]))!=check:raise ValueError("damaged dynasty record")
     p=json.loads(raw)
     if p.get("version")!=VERSION or type(p.get("step")) is not int or p["step"] not in (0,*ORDER):raise ValueError("dynasty schema")
+    if type(p.get("target")) is not int or p["target"] not in (0,*ORDER) or type(p.get("current")) is not int or p["current"] not in ORDER or type(p.get("group_start")) is not int or p["group_start"]<14 or not isinstance(p.get("evidence"),str) or (p["step"] and p["step"]!=p["target"]):raise ValueError("dynasty plan schema")
     return p
 
 def published(db):
@@ -147,8 +148,9 @@ def choose_lane(db,explicit=False):
     n,arc,did=last
     group=novel.next_group(db,arc,None)
     if group["part"]>1:return bool(arc=="future" and did is not None and read(db,did))
-    if next_step(db) is None:return False
-    if explicit:return True
+    upcoming=next_step(db)
+    if upcoming is None:return False
+    if explicit or upcoming["id"] in (11,12,13,14,15,32):return True
     previous=db.execute("""SELECT MAX(a.number) FROM dynasty_records r JOIN saga_arcs a ON a.draft_id=r.draft_id
        JOIN chronicle_drafts d ON d.id=r.draft_id WHERE d.status='approved'""").fetchone()[0]
     return previous is None or n-previous>=3
@@ -273,7 +275,7 @@ def graph(db):
     if 1 in done:
         node(sister,SISTER,"lit_character",dynasty_role="Сестра императрицы",dynasty_count=sum("цукинох" in o.normalized(p["evidence"]) for _,_,p in rows));edge(root,sister,"dynasty_character");edge(sister,"character:empress","dynasty_family")
     if 11 in done:
-        node(maid,MAID,"lit_character",dynasty_role="Спасённая горничная",dynasty_count=sum("маюри" in o.normalized(p["evidence"]) for _,_,p in rows));edge(root,maid,"dynasty_character")
+        node(maid,MAID,"lit_character",dynasty_role="Личная горничная" if 15 in done else "Спасённая кицунэ" if 12 in done else "Приговорённая кицунэ",dynasty_count=sum("маюри" in o.normalized(p["evidence"]) for _,_,p in rows));edge(root,maid,"dynasty_character")
     if 6 in done and 1 in done:edge(sister,"character:hero","dynasty_love")
     if 16 in done and 11 in done:edge(maid,"character:hero","dynasty_love")
     if 8 in done and 1 in done:edge(sister,"character:empress","dynasty_rival")
@@ -282,7 +284,8 @@ def graph(db):
     for n,did,p in rows:
         s=stage(p["step"]);g="dynasty:group:"+s["group"];groups.add(s["group"])
         group_ids={i for i in ORDER if stage(i)["group"]==s["group"]};count=len(group_ids&done)
-        node(g,GROUPS[s["group"]]+f" · {count}/{len(group_ids)}","dynasty_saga",cycle_complete=count==len(group_ids));edge(root,g,"dynasty_branch")
+        group_label=("Линия Маюри" if s["group"]=="maid" else "Линия Цукинохи" if s["group"]=="sister" else GROUPS[s["group"]])
+        node(g,group_label+f" · {count}/{len(group_ids)}","dynasty_saga",cycle_complete=count==len(group_ids));edge(root,g,"dynasty_branch")
         k="dynasty:stage:"+str(s["id"]);source="c:"+str(did)
         # Keep spoiler-protected titles neutral even when reading out of order.
         label=("Этап "+str(s["id"]) if ev.settings(db)[1] else s["title"])
