@@ -65,7 +65,7 @@ def generate_chronicle(background=False, arc=None):
     with graph_activity.track("chronicle",(f"d:{reservation[1]}" if reservation[1]>0 else "arc:"+plan["arc"])) as activity:
         return execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
 
-def execute_chronicle(reservation,traits,previous,key,model,epoch,activity):
+def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan):
     try:
         payload={"model":model,"messages":soul_chronicle.prompt(reservation,traits,previous,plan),"max_tokens":1800,"stream":False}
         req=Request(API,data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
@@ -140,8 +140,8 @@ def chronicle_command(content):
                 return "Нет ожидающего черновика."
             return f"Художественный черновик №{p['id']}: {p['title']}\n\n{p['story']}\n\nМодельные эмоции: {p['emotions']}\nПредлагаемые изменения характера: {p['traits']}\n\nлетопись: принять {p['id']} / летопись: отклонить {p['id']}"
         if q=="летопись: главы":
-            rows=soul_chronicle.approved(db,5)
-            return "\n\n".join(f"Вымышленная глава №{p['id']}: {p['title']}\n{p['story']}" for p in rows) or "Новых утверждённых глав пока нет."
+            rows=soul_saga.reading_rows(db)[-5:]
+            return "\n\n".join(f"Вымышленная глава №{p['number']}: {p['title']}\n{p['story']}" for p in rows) or "Новых утверждённых глав пока нет."
         st=soul_chronicle.status(db)
         return f"Канон: {st['canon_chapters']} глав, целостность: {st['canon_ok']}. Дневник: {st['diary_entries']}. Новые главы: {st['approved']}. Черновики: {st['pending']}. Сон: {'включён' if CHRONICLE['enabled'] else 'выключен'}. Параметры персонажа: {st['traits']}."
 
