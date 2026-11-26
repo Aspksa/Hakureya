@@ -98,6 +98,9 @@ def enrich(db,plan):
     p["guardian_focus"]=1+(p["previous_number"]%9)
     p["heaven_focus"]=1+((p["previous_number"]//2)%9)
     plan["novel"]=p
+    if plan["arc"]=="future" and not any(k in plan for k in ("shadow","guardians","destiny")) and "cycle_id" not in plan.get("romance",{}) and not plan.get("evolution",{}).get("chosen",{}).get("scene") and not plan.get("immortal",{}).get("chosen") and im.ready(db):
+        head=forecast(db)["items"][0]
+        p["next_line"]={"title":head["title"],"guide":head["guide"],"theme":head["theme"]}
     return plan
 
 def instruction(plan):
@@ -174,3 +177,24 @@ def status(db):
     if not rows:return "Новая длинная глава ещё не начата."
     written=sum(len(re.findall(r"\b\w+\b",p["story"])) for p in rows)
     return f"Глава {rows[0]['number']}: {len(rows)} частей, {written}/{rows[0]['target']} слов. Части сохранены в SQLite. Том {o.volume(n)}; эпоха {1+(o.volume(n)-1)//8}."
+
+
+def graph(db):
+    # A small, spoiler-neutral layer of assembled chapters and chronological eras.
+    nodes=[];edges=[];seen=set()
+    def node(key,label,kind):
+        if key not in seen:
+            seen.add(key);nodes.append({"key":key,"group":4,"content":label,"kind":kind,"created":"","order":len(nodes)})
+    groups=db.execute("""SELECT DISTINCT p.chapter_start FROM novel_parts p
+      JOIN chronicle_drafts d ON d.id=p.draft_id WHERE d.status='approved' ORDER BY p.chapter_start DESC LIMIT 36""").fetchall()
+    for start, in reversed(groups):
+        try:parts=published_group(db,start)
+        except (ValueError,TypeError,KeyError):continue
+        if not parts:continue
+        volume=o.volume(start);epoch=1+(volume-1)//8
+        e=f"novel:epoch:{epoch}";g=f"novel:chapter:{start}"
+        node(e,f"Литературная эпоха {epoch}","novel_epoch")
+        node(g,f"Большая глава {start} · {len(parts)} ч.","novel_chapter")
+        edges.extend([{"a":"immortal:root","b":e,"kind":"immortal_branch"},{"a":e,"b":g,"kind":"immortal_branch"},{"a":f"book:{volume}","b":g,"kind":"book_chapter"}])
+        for p in parts:edges.append({"a":g,"b":f"c:{p['id']}","kind":"immortal_source"})
+    return nodes,edges
