@@ -45,6 +45,40 @@ class ChronicleTest(unittest.TestCase):
         self.assertTrue(any(e["kind"]=="emotion" and e["a"]=="c:1" for e in graph["edges"]))
         self.assertTrue(any(e["kind"]=="chronicle" for e in graph["edges"]))
         self.assertEqual(len([n for n in c.biography_graph(self.db)["nodes"] if n["kind"]=="fictional_chapter"]),13)
+    def test_expanded_canon_v2_migration(self):
+        import soul_saga
+        import soul_genesis
+        import soul_intelligence
+        import soul_reader
+        chapters=soul_saga.canonical_chapters()
+        self.assertEqual(len(chapters),13)
+        self.assertEqual(soul_lore.VERSION,2)
+        for n in (5,6):
+            story=chapters[n-1][2]
+            self.assertTrue(12000<=len(story)<=12600)
+            self.assertEqual("".join(soul_reader.paginate(story)),story)
+        self.reviews()
+        r=c.reserve(self.db)
+        c.finish(self.db,r,draft())
+        # Simulate the installed version and a pending v1 draft.
+        old=soul_lore.PREVIOUS_SHA256
+        self.db.execute("DELETE FROM soul_lore_versions")
+        self.db.execute("INSERT INTO soul_lore_versions(version,checksum) VALUES(1,?)",(old,))
+        self.db.execute("UPDATE chronicle_drafts SET canon_hash=?",(old,))
+        self.db.execute("UPDATE omega_index SET checksum=? WHERE number<=13",(old,))
+        soul_intelligence.refresh(self.db)
+        soul_core.init(self.db)
+        soul_intelligence.refresh(self.db)
+        self.assertTrue(c.canon_ok(self.db))
+        self.assertEqual(self.db.execute("SELECT COUNT(*) FROM soul_lore_versions").fetchone()[0],2)
+        self.assertEqual(self.db.execute("SELECT story FROM omega_index WHERE number=5").fetchone()[0],chapters[4][2])
+        self.assertFalse(soul_genesis.audit(self.db))
+        self.assertTrue(c.decide(self.db,1,True))
+        self.assertEqual(self.db.execute("SELECT number FROM saga_arcs WHERE draft_id=1").fetchone()[0],14)
+        self.assertFalse(soul_lore.compatible_draft(self.db,"unknown"))
+        self.db.execute("UPDATE soul_lore_versions SET checksum='damaged' WHERE version=1")
+        self.assertFalse(soul_lore.compatible_draft(self.db,old))
+
     def test_validation_and_failure(self):
         self.reviews()
         r=c.reserve(self.db)

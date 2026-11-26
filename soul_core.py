@@ -77,10 +77,16 @@ def init(db):
         created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
     soul_chronicle.init(db)
     lore = soul_lore.metadata()
-    db.execute("INSERT OR IGNORE INTO soul_lore_versions(version,checksum) VALUES(?,?)",
-               (lore["version"],lore["sha256"]))
-    if db.execute("SELECT changes()").fetchone()[0]:
-        event(db,"lore_installed",lore)
+    previous=db.execute("SELECT checksum FROM soul_lore_versions WHERE version=1").fetchone()
+    # Only migrate an intact recognized v1 installation; do not silently bless a damaged one.
+    if previous is None or previous[0]==soul_lore.PREVIOUS_SHA256:
+        db.execute("INSERT OR IGNORE INTO soul_lore_versions(version,checksum) VALUES(?,?)",
+                   (lore["version"],lore["sha256"]))
+        if db.execute("SELECT changes()").fetchone()[0]:
+            # Canon-derived indexes are rebuilt from text by the existing startup refresh.
+            db.execute("DELETE FROM lit_entries WHERE number<=13")
+            db.execute("DELETE FROM lit_index WHERE number<=13")
+            event(db,"lore_installed",lore)
     if db.execute("SELECT 1 FROM soul_versions LIMIT 1").fetchone() is None:
         db.execute("INSERT OR IGNORE INTO soul_versions(id,schema,core_hash,state,checksum,reason) VALUES(1,?,?,?,?,?)",
                    (SCHEMA,CORE_HASH,canonical(DEFAULT),digest(canonical(DEFAULT)),"birth"))
