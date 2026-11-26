@@ -80,6 +80,10 @@ def save(db,did,story,raw,plan):
     if raw is None:return
     if not plan.get("intelligence"):raise ValueError("unexpected literary intelligence")
     data=validate(db,story,raw)
+    for f in data:
+        if f["kind"] not in ("law","limit") or not f["object"]:continue
+        prior=db.execute("SELECT number,payload FROM lit_entries WHERE subject=? AND object=? AND kind=? ORDER BY number DESC LIMIT 1",(norm(f["subject"]),norm(f["object"]),f["kind"])).fetchone()
+        if prior and o.normalized(json.loads(prior[1])["value"])!=o.normalized(f["value"]) and f["cause"]!=prior[0]:raise ValueError("unlinked change of recorded magic rule")
     source=db.execute("SELECT checksum FROM chronicle_drafts WHERE id=?",(did,)).fetchone()[0]
     payload=o.dump(data)
     db.execute("INSERT INTO lit_extra VALUES(?,?,?,?)",(did,payload,source,o.digest(o.dump([payload,source]))))
@@ -235,6 +239,8 @@ def metrics(db,visible=False):
     cross=sum(f["cause"] is not None and o.volume(f["cause"])!=o.volume(n) for n,f in data)
     usage=db.execute("SELECT COUNT(*),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0) FROM cloud_writer_usage").fetchone()
     kinds=Counter(f["kind"] for _,f in data)
+    # Speed is based on actual publication dates, not a fictional world clock.
+    speed=db.execute("SELECT COUNT(*),COUNT(DISTINCT date(decided)) FROM chronicle_drafts WHERE status='approved' AND decided IS NOT NULL").fetchone()
     gaps_profile=[]
     actor_fields=defaultdict(set)
     for _,f in data:actor_fields[norm(f["subject"])].add(f["kind"])
@@ -251,7 +257,7 @@ def metrics(db,visible=False):
     return {"chapters":len(chapters),"volumes":len({o.volume(n) for n in chapters}),"words":words,"characters":len(actors),
       "relations":len(relations),"events":sum(f["kind"]=="event" for _,f in data),"cross_volume":cross,
       "arcs":dict(arcs),"kinds":dict(kinds),"profile_gaps":gaps_profile[:8],"rapid":rapid[:8],"warnings":warnings,"originality":round(sum(originality)/len(originality),1) if originality else None,
-      "forgotten":sorted(gaps,key=lambda a:a["last"])[:8],"token_days":usage[0],"input_tokens":usage[1],"output_tokens":usage[2]}
+      "forgotten":sorted(gaps,key=lambda a:a["last"])[:8],"published_per_active_day":round(speed[0]/speed[1],2) if speed[1] else None,"token_days":usage[0],"input_tokens":usage[1],"output_tokens":usage[2]}
 
 def prepare(db,plan):
     """Ten actual deterministic local passes, one bounded context. No additional model calls."""
@@ -317,6 +323,7 @@ def report(db):
         "\nТипы свидетельств: "+", ".join(f"{k}: {v}" for k,v in sorted(m["kinds"].items()))+
         "\nПлотность записанных событий на 1000 слов: "+str(round(1000*m["events"]/max(1,m["words"]),2))+
         "\nСреднее слов на опубликованную часть: "+str(round(m["words"]/max(1,m["chapters"])))+
+        "\nОпубликовано частей за активный день: "+str(m["published_per_active_day"] if m["published_per_active_day"] is not None else "нет данных")+
         "\nВозможное быстрое сближение (эвристика): "+str(len(m["rapid"]))+
         "\nПробелы в досье: "+("; ".join(x["name"]+": "+", ".join(x["missing"]) for x in m["profile_gaps"]) or "нет данных"))
 
@@ -376,7 +383,12 @@ def graph(db,existing=()):
             if subject:edge(subject,k,"lit_fact")
     for x in sorted(relations.values(),key=lambda a:a["last"],reverse=True)[:120]:
         a=allowed.get(norm(x["a"]));b=allowed.get(norm(x["b"]))
-        if a and b:edge(a,b,"lit_rel_"+x["kind"],shared=min(5,x["count"]))
+        if a and b:
+            edge(a,b,"lit_rel_"+x["kind"],shared=min(5,x["count"]))
+            if x["kind"]=="family":
+                k="lit:family:"+o.digest(o.dump(sorted((norm(x["a"]),norm(x["b"])))))[:24]
+                node(k,"Семейная связь: "+x["a"]+" · "+x["b"],"lit_family",infinite_group=k)
+                edge(a,k,"lit_rel_family");edge(b,k,"lit_rel_family")
     return nodes,edges
 
 
