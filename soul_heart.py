@@ -35,6 +35,7 @@ def init(db):
     db.execute("""CREATE TABLE IF NOT EXISTS heart_drafts(
        draft_id INTEGER PRIMARY KEY, payload TEXT NOT NULL, checksum TEXT NOT NULL,
        source_hash TEXT NOT NULL, version INTEGER NOT NULL)""")
+    db.execute("CREATE TABLE IF NOT EXISTS heart_original(draft_id INTEGER PRIMARY KEY,payload TEXT NOT NULL,checksum TEXT NOT NULL)")
     db.execute("""CREATE TABLE IF NOT EXISTS heart_slots(
        key TEXT PRIMARY KEY, topic TEXT NOT NULL, slot INTEGER NOT NULL, UNIQUE(topic,slot))""")
 
@@ -147,18 +148,21 @@ def validate(db,story,raw,arc):
 
 def save(db,did,base,raw,arc):
     data=validate(db,base["story"],raw,arc)
+    write(db,did,data)
+
+def write(db,did,data):
     payload=o.dump(data)
     h=db.execute("SELECT checksum FROM chronicle_drafts WHERE id=?",(did,)).fetchone()[0]
     db.execute("INSERT OR REPLACE INTO heart_drafts VALUES(?,?,?,?,?)",(did,payload,o.digest(payload),h,VERSION))
 
-def on_variant(db,did,base,option):
-    # Alternative drafts lack heart metadata. Preserve the original when restoring variant 1.
-    row=db.execute("SELECT payload FROM heart_original WHERE draft_id=?",(did,)).fetchone() if db.execute("SELECT 1 FROM sqlite_master WHERE name='heart_original'").fetchone() else None
+def variant_payload(db,did,base,option):
+    if read(db,did) is None:return None
+    row=db.execute("SELECT payload,checksum FROM heart_original WHERE draft_id=?",(did,)).fetchone()
+    if option==1 and row and o.digest(row[0])!=row[1]:raise ValueError("damaged original moment")
     arc=db.execute("SELECT arc FROM saga_arcs WHERE draft_id=?",(did,)).fetchone()[0]
-    save(db,did,base,json.loads(row[0]) if option==1 and row else None,arc)
+    return validate(db,base["story"],json.loads(row[0]) if option==1 and row else None,arc)
 
 def remember_original(db,did):
-    db.execute("CREATE TABLE IF NOT EXISTS heart_original(draft_id INTEGER PRIMARY KEY,payload TEXT NOT NULL,checksum TEXT NOT NULL)")
     data=read(db,did)
     if data is not None:
         raw=o.dump(data);db.execute("INSERT OR IGNORE INTO heart_original VALUES(?,?,?)",(did,raw,o.digest(raw)))
@@ -187,11 +191,10 @@ def graph(db):
         edges.append({"a":"heart:root","b":key,"kind":"heart_branch","shared":counts[topic]})
     # Retain original moments and a bounded recent window of new detailed stars.
     rows=[p for p in all_rows if p["source"]=="canon"]+[p for p in all_rows if p["source"]=="approved"][-48:]
-    previous={};visible=set()
+    previous={}
     for p in rows:
         key=p["key"];topic=p["topic"]
         node(key,p["title"]+" · гл. "+str(p["chapter"]),"heart_moment",topic)
-        visible.add(key)
         edges.append({"a":"heart:topic:"+topic,"b":key,"kind":"heart_moment"})
         chapter=chapter_key(db,p["chapter"])
         if chapter:edges.append({"a":chapter,"b":key,"kind":"heart_source"})
