@@ -119,9 +119,9 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   for(const [key,start] of births){const t=Math.min(1,(now-start)/700);const g=items.get(key);if(g)g.setAttribute("opacity",String(.08+.92*t));if(t===1||!g||motion.matches){g?.removeAttribute("opacity");births.delete(key)}}
   if(births.size||replayAt||fit!==desired||[...works.values()].some(a=>a.terminal||!motion.matches))invalidate();
  }
+ resize();render(snapshot,true);
  const observer=typeof ResizeObserver==="function"?new ResizeObserver(resize):null;
  if(observer)observer.observe(svg);else window.addEventListener("resize",resize);
- resize();render(snapshot,true);
  function visibility(){if(document.hidden){cancelAnimationFrame(raf);raf=0;for(const key of births.keys())items.get(key)?.removeAttribute("opacity");births.clear();clearActivity()}else{last=performance.now();invalidate()}}
  document.addEventListener("visibilitychange",visibility);
  svg.addEventListener("wheel",e=>{e.preventDefault();zoom=clamp(zoom*Math.exp(-e.deltaY*.001),.35,8);invalidate()},{passive:false});
