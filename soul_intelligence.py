@@ -370,7 +370,7 @@ def search(db,query):
     selected=[x for x in matches if x["number"]<=13 or ev.readable(db,x["number"])][:5]
     return "Локальный поиск по словам и тематическим синонимам:\n"+"\n\n".join(f"Глава {x['number']} — {x['title']}\n{x['story']}" for x in selected) if selected else "Доступных совпадений не найдено."
 
-def graph(db,existing=()):
+def graph(db,existing=(),volume=None):
     nodes=[];edges=[];seen=set()
     def node(key,label,kind,**extra):
         if key not in seen:
@@ -384,10 +384,16 @@ def graph(db,existing=()):
     for key,_ in BRAINS:
         if key!="coordinator":edge("brain:"+key,"brain:coordinator","lit_module")
     try:
-        data=list(rows(db,True))
+        if volume is None:data=list(rows(db,True))
+        else:
+            low,high=(1,13) if volume==1 else (14+(volume-2)*12,25+(volume-2)*12)
+            data=[]
+            for n,raw,h in db.execute("SELECT number,payload,checksum FROM lit_index WHERE number BETWEEN ? AND ? ORDER BY number",(low,high)):
+                if o.digest(raw)!=h:raise ValueError("damaged index")
+                if n<=13 or ev.readable(db,n):data.extend((n,f) for f in json.loads(raw)["records"])
     except ValueError:return nodes,edges
     actors,relations=registry(data)
-    known={norm(n["content"]):n["key"] for n in existing if n.get("kind") in ("character","infinite_character","evolution_subject","destiny_character")}
+    known={norm(n.get("content",n.get("label",""))):n["key"] for n in existing if n.get("kind") in ("character","infinite_character","evolution_subject","destiny_character")}
     known_keys={n["key"] for n in existing}
     latest=sorted(actors.values(),key=lambda x:x["last"],reverse=True)[:100]
     for a in latest:
