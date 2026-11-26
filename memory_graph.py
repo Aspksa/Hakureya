@@ -78,6 +78,8 @@ def snapshot(db, limit=5000):
             if pair:
                 arc,num=pair
                 n.update(sector=arc,book=soul_omega.volume(num),chapter_slot=num-1 if num<=13 else (num-14)%12)
+            elif n["key"] in tuple(f"realm:{i}" for i in range(1,10)):
+                n.update(destiny_topic=n["key"],destiny_slot=-1)
             elif n["key"].startswith("era:") and n["key"][4:] in soul_omega.ARCS:
                 n.update(sector=n["key"][4:],book=0,chapter_slot=0)
             elif n["key"].startswith("segment:"):

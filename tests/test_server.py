@@ -195,3 +195,15 @@ class ServerTest(unittest.TestCase):
             self.request("config",{"key":"test-key","model":"test-model","consent":True})
             self.assertIn("Ожидает развития Тени",self.request("chat",{"content":"Продолжи историю хранительниц"})["reply"])
             remote.assert_not_called()
+
+
+    def test_destiny_local_plan(self):
+        with patch.object(server,"urlopen") as remote:
+            reply=self.request("chat",{"content":"Новые герои"})["reply"]
+            self.assertIn("Иори",reply)
+            self.assertIn("Орум",reply)
+            self.assertIn("0/70",self.request("chat",{"content":"За пределами девяти небес"})["reply"])
+            self.assertIn("80.",self.request("chat",{"content":"План судьбы"})["reply"])
+            self.request("config",{"key":"test-key","model":"test-model","consent":True})
+            self.assertIn("Ожидает завершения",self.request("chat",{"content":"Продолжи судьбу"})["reply"])
+            remote.assert_not_called()

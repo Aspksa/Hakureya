@@ -18,7 +18,8 @@ export function layout(snapshot){
  const nodes=[{key:"root",group:-1,x:0,y:0,r:3.6,label:"hakureya"}],edges=[],byKey=new Map([[ "root",nodes[0] ]]);
  const count=categories.map(()=>0),radius=categories.map(()=>.035),valid=(Array.isArray(snapshot.records)?snapshot.records:[]).filter(n=>Number.isInteger(n.group)&&n.group>=0&&n.group<categories.length&&typeof n.key==="string");
  const occupied=categories.map(()=>new Set());
- const bio=[],heart=[],shadow=[],guardians=[];
+ const bio=[],heart=[],shadow=[],guardians=[],destiny=[];
+ const destinyTopics=["love","power","guardians","court","worlds","cast","growth",...["iori","lian","kaen","meixiu","jun","renho","setsuna","nari","kagari","orum"].map(k=>"actor:"+k),...Array.from({length:9},(_,i)=>"realm:"+(i+1))];
  const guardianActors=["reika","seirana","mikage","tokihana","akatsuki","shiori","yumeka","meirin","amatsuka"];
  const shadowTopics=["court","visits","suitors","threat","mask","power"];
  const heartTopics=["meeting","tenderness","trust","memory","letters","adventure"];
@@ -34,13 +35,15 @@ export function layout(snapshot){
   const heartNode=g===4&&(n.heart_topic==="root"||heartTopics.includes(n.heart_topic))&&Number.isSafeInteger(n.heart_slot)&&n.heart_slot>=-1;
   const shadowNode=g===4&&(n.shadow_topic==="root"||shadowTopics.includes(n.shadow_topic))&&Number.isSafeInteger(n.shadow_slot)&&n.shadow_slot>=-1&&n.shadow_slot<=1000000;
   const guardianNode=g===4&&(n.guardian_actor==="root"||guardianActors.includes(n.guardian_actor))&&Number.isSafeInteger(n.guardian_slot)&&n.guardian_slot>=-1&&n.guardian_slot<=1000000;
-  if(!nested&&!heartNode&&!shadowNode&&!guardianNode)radius[g]=Math.max(radius[g],Math.hypot(p.x,p.y)+.035);
-  const r=n.kind==="guardian_root"?4.2:n.kind==="guardian_character"?3.1:n.kind==="guardian_memory"?1.8:n.kind==="shadow_root"?4.2:n.kind==="shadow_topic"?3.1:n.kind==="shadow_event"?1.8:n.kind==="heart_root"?4.2:n.kind==="heart_topic"?3.1:n.kind==="heart_moment"?1.8:n.kind==="epoch"?3.6:n.kind==="book_segment"?3:n.kind==="fictional_chapter"?2.7:n.kind==="draft"?2.1:n.kind==="theme"?1.7:1.5;
+  const destinyNode=g===4&&(n.destiny_topic==="root"||destinyTopics.includes(n.destiny_topic))&&Number.isSafeInteger(n.destiny_slot)&&n.destiny_slot>=-1&&n.destiny_slot<=1000000;
+  if(!nested&&!heartNode&&!shadowNode&&!guardianNode&&!destinyNode)radius[g]=Math.max(radius[g],Math.hypot(p.x,p.y)+.035);
+  const r=n.kind==="destiny_root"?4.2:n.kind==="destiny_topic"||n.kind==="destiny_character"||n.kind==="realm"?3.1:n.kind==="destiny_fact"||n.kind==="destiny_event"?1.8:n.kind==="guardian_root"?4.2:n.kind==="guardian_character"?3.1:n.kind==="guardian_memory"?1.8:n.kind==="shadow_root"?4.2:n.kind==="shadow_topic"?3.1:n.kind==="shadow_event"?1.8:n.kind==="heart_root"?4.2:n.kind==="heart_topic"?3.1:n.kind==="heart_moment"?1.8:n.kind==="epoch"?3.6:n.kind==="book_segment"?3:n.kind==="fictional_chapter"?2.7:n.kind==="draft"?2.1:n.kind==="theme"?1.7:1.5;
   const item={...n,slot,x:p.x,y:p.y,r};nodes.push(item);byKey.set(item.key,item);
   if(nested)bio.push(item);
   if(heartNode)heart.push(item);
   if(shadowNode)shadow.push(item);
   if(guardianNode)guardians.push(item);
+  if(destinyNode)destiny.push(item);
   edges.push({a:"hub:"+g,b:item.key,kind:"category"});
  }
  // Four epoch galaxies surround the permanent biography hub. Each volume occupies a hex cell;
@@ -83,6 +86,17 @@ export function layout(snapshot){
   const max=Math.max(...ext),ring=(2*max+.06)/(2*Math.sin(Math.PI/9)),area=ring+max+.045;
   const distance=radius[4]+area+.10,cx=-distance/Math.SQRT2,cy=distance/Math.SQRT2;
   for(const n of guardians){const i=guardianActors.indexOf(n.guardian_actor),angle=-Math.PI/2+i*2*Math.PI/9;
+   n.x+=cx+(i>=0?Math.cos(angle)*ring:0);n.y+=cy+(i>=0?Math.sin(angle)*ring:0)}
+  radius[4]=Math.max(radius[4],distance+area);
+ }
+ // Destiny topics and introduced character groups have independent envelopes.
+ if(destiny.length){
+  const ext=destinyTopics.map(()=>.045);
+  for(const n of destiny){const i=destinyTopics.indexOf(n.destiny_topic);if(i<0||n.destiny_slot<0){n.x=0;n.y=0;continue}
+   const p=cell(n.destiny_slot);n.x=p.x;n.y=p.y;ext[i]=Math.max(ext[i],Math.hypot(p.x,p.y)+.045)}
+  const max=Math.max(...ext),ring=(2*max+.06)/(2*Math.sin(Math.PI/destinyTopics.length)),area=ring+max+.045;
+  const distance=radius[4]+area+.10,cx=-distance/Math.SQRT2,cy=-distance/Math.SQRT2;
+  for(const n of destiny){const i=destinyTopics.indexOf(n.destiny_topic),angle=-Math.PI/2+i*2*Math.PI/destinyTopics.length;
    n.x+=cx+(i>=0?Math.cos(angle)*ring:0);n.y+=cy+(i>=0?Math.sin(angle)*ring:0)}
   radius[4]=Math.max(radius[4],distance+area);
  }
