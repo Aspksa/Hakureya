@@ -8,6 +8,7 @@ import memory_graph
 import soul_core
 import soul_chronicle
 import soul_saga
+import soul_omega
 import graph_activity
 import time, re
 import base64, binascii
@@ -54,7 +55,7 @@ def generate_chronicle(background=False, arc=None):
             soul_chronicle.collect(db)
             reservation=soul_chronicle.reserve(db,allow_story=True)
             traits=soul_chronicle.profile(db)
-            plan=soul_saga.plan(db,arc) if reservation else None
+            plan=soul_omega.enrich_plan(db,soul_saga.plan(db,arc)) if reservation else None
             rows=soul_saga.reading_rows(db) if reservation else []
             same=[p for p in rows if p["arc"]==plan["arc"]] if plan else []
             previous=[{"number":p["number"],"title":p["title"],"story":p["story"][:1800],"tags":p["tags"]} for p in same[-2:]]
@@ -84,8 +85,9 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
                 return "Настройки изменились; черновик отброшен."
             soul_chronicle.finish(db,reservation,value,plan)
             pending=soul_chronicle.latest_pending(db)
+            editorial=soul_omega.metadata(db,pending["id"])
         graph_activity.update(activity,"done",f"draft:{pending['id']}" if pending else "hub:4")
-        return "Черновик создан. "+soul_saga.ARC_LABELS[plan["arc"]]+".\n\n"+pending["title"]+"\n\n"+pending["story"]+"\n\nлетопись: принять "+str(pending["id"])+" / летопись: отклонить "+str(pending["id"])
+        return "Черновик создан. "+soul_saga.ARC_LABELS[plan["arc"]]+".\n\n"+pending["title"]+"\n\n"+pending["story"]+"\n\nОценка редактора (эвристика): "+str(editorial["score"])+"/100. "+", ".join(editorial["warnings"])+"\n\nлетопись: принять "+str(pending["id"])+" / летопись: отклонить "+str(pending["id"])
     except (URLError,TimeoutError,ValueError,KeyError,IndexError,TypeError,OSError,sqlite3.Error):
         with LOCK, closing(connect()) as db, db:
             soul_chronicle.fail(db,reservation)
@@ -98,17 +100,45 @@ def chronicle_command(content):
     q=aliases.get(q,q)
     read_match=re.fullmatch(r"(?:летопись: читать|прочитай главу|читать главу) ([1-9][0-9]{0,8})",q)
     create_match=re.fullmatch(r"летопись: создать(?: (прошлое|встреча|любовь|будущее))?",q)
+    omega_read=re.fullmatch(r"летопись: (том|дневник героини) ([1-9][0-9]{0,8})",q)
+    omega_search=re.fullmatch(r"летопись: (поиск|персонаж) (.{2,200})",q)
+    omega_commands=("летопись: книги","летопись: продолжить чтение","летопись: план","летопись: загадки","летопись: качество","летопись: дневник героини","летопись: хронология")
     decision=re.fullmatch(r"летопись: (принять|отклонить) ([1-9][0-9]{0,8})",q)
-    if q not in soul_chronicle.COMMANDS and not decision and not read_match and not create_match and q not in ("летопись: главы","летопись: содержание","летопись: последняя"):
+    if q not in soul_chronicle.COMMANDS and not decision and not read_match and not create_match and not omega_read and not omega_search and q not in omega_commands and q not in ("летопись: главы","летопись: содержание","летопись: последняя"):
         return None
     if create_match:
         with LOCK, closing(connect()) as db, db:
             soul_chronicle.control(db,"manual_request")
         return generate_chronicle(arc=soul_saga.ALIASES.get(create_match[1]))
     with LOCK, closing(connect()) as db, db:
-        if read_match: return soul_saga.read(db,int(read_match[1]))
+        if read_match or q=="летопись: продолжить чтение":
+            n=int(read_match[1]) if read_match else soul_omega.bookmark(db)
+            result=soul_saga.read(db,n)
+            if result.startswith(("Художественный канон","Художественная глава")): soul_omega.mark(db,n)
+            return result
+        if omega_read:
+            n=int(omega_read[2])
+            return soul_omega.book(db,n) if omega_read[1]=="том" else soul_omega.diary(db,n)
+        if omega_search:
+            term=omega_search[2]
+            if omega_search[1]=="персонаж": return soul_omega.character(db,term)
+            rows=soul_omega.search(db,term,12)
+            return "Найденные главы (по словам):\n"+"\n".join(f"{p['number']}. {p['title']}" for p in rows) if rows else "Ничего не найдено."
+        if q=="летопись: книги": return soul_omega.books(db)
+        if q=="летопись: дневник героини": return soul_omega.diary(db)
+        if q=="летопись: качество": return soul_omega.quality(db)
+        if q=="летопись: план":
+            return "Предварительный план (не канон):\n"+"\n".join(f"{i}. {soul_saga.ARC_LABELS[p['arc']]} — {p['beat']}" for i,p in enumerate(soul_omega.roadmap(db),1))
+        if q=="летопись: загадки":
+            return "Загадки художественного мира:\n"+"\n".join(f"{v['question']} — глава {v['opened']}; "+(f"раскрыта в главе {v['closed']}" if v['closed'] else "открыта") for v in soul_omega.mysteries(db).values())
+        if q=="летопись: хронология":
+            return "Художественные эпохи (главы в порядке публикации внутри эпохи):\n"+"\n\n".join(soul_omega.ERA[a]+":\n"+"\n".join(f"{n}. {t}" for n,t in db.execute("SELECT number,title FROM omega_index WHERE arc=? ORDER BY number",(a,))) for a in soul_omega.ARCS)
         if q=="летопись: содержание": return soul_saga.contents(db)
-        if q=="летопись: последняя": return soul_saga.read(db)
+        if q=="летопись: последняя":
+            n=db.execute("SELECT MAX(number) FROM omega_index").fetchone()[0] or 13
+            result=soul_saga.read(db,n)
+            if result.startswith(("Художественный канон","Художественная глава")): soul_omega.mark(db,n)
+            return result
         if q=="летопись: включить сон":
             if not CONFIG["key"]:
                 return "Сначала подключите Cloud.ru. Сон не включён."
