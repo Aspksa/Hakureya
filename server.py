@@ -60,10 +60,11 @@ def connect():
         with INIT_LOCK:
             path=str(DB.resolve())
             # A recreated/test database must be initialized even at a reused path.
-            if path not in INITIALIZED or not db.execute("SELECT 1 FROM sqlite_master WHERE name='lit_index'").fetchone():
+            if path not in INITIALIZED or not db.execute("SELECT 1 FROM sqlite_master WHERE name='reader_coverage'").fetchone():
                 db.execute("CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, role TEXT NOT NULL, content TEXT NOT NULL, created TEXT DEFAULT CURRENT_TIMESTAMP)")
                 memory_graph.init(db)
                 soul_core.init(db)
+                soul_intelligence.refresh(db)
                 db.commit()
                 INITIALIZED.add(path)
         return db
@@ -580,10 +581,9 @@ def chronicle_worker(stop):
             with LOCK, closing(connect()) as db:
                 backed_up=db.execute("SELECT 1 FROM living_backups WHERE day=date('now')").fetchone()
             if not backed_up:
-                with LOCK:
-                    filename=soul_living.backup(DB,DB.parent/"backups")
-                    with closing(connect()) as db, db:
-                        db.execute("INSERT OR IGNORE INTO living_backups VALUES(date('now'),?)",(filename,))
+                filename=soul_living.backup(DB,DB.parent/"backups")
+                with LOCK, closing(connect()) as db, db:
+                    db.execute("INSERT OR IGNORE INTO living_backups VALUES(date('now'),?)",(filename,))
             if enabled:
                 generate_chronicle(background=True)
         except (sqlite3.Error,ValueError,OSError,KeyError,TypeError,IndexError,AttributeError) as error:
