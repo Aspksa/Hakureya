@@ -23,7 +23,7 @@ async function refreshActivity(){
   activityActive=data.active.length>0;
   live?.setActivity(data);
   const revision=data.session+":"+data.revision;
-  if(revision!==activityRevision){activityRevision=revision;void refreshGraph()}
+  if(revision!==activityRevision){activityRevision=revision;if(!activityActive||selectedVolume===null)void refreshGraph()}
  }catch{activityRevision="";activityActive=false;live?.clearActivity()}finally{activityBusy=false}
 }
 function scheduleActivity(){clearTimeout(activityTimer);if(document.hidden)return;activityTimer=window.setTimeout(async()=>{await refreshActivity();scheduleActivity()},activityActive||busy?400:1200)}
@@ -33,7 +33,13 @@ function syncGraphViewport(){const stage=$("stage");stage.classList.toggle("chat
 function toggle(open=chat.hidden){chat.hidden=!open;syncGraphViewport();avatar.setAttribute("aria-expanded",String(open));avatar.setAttribute("aria-label",open?"Свернуть чат":"Открыть чат Hakureya");if(open){if(!book.hidden){$("book-scroll").focus();scheduleReflow()}else prompt.focus()}else avatar.focus()}
 avatar.onclick=()=>toggle();$("close").onclick=()=>toggle(false);avatar.oncontextmenu=e=>{e.preventDefault();menu.hidden=!menu.hidden};document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(!menu.hidden)menu.hidden=true;else if(!chat.hidden&&!config.open)toggle(false)}});document.addEventListener("click",e=>{if(!menu.contains(e.target as Node)&&!avatar.contains(e.target as Node))menu.hidden=true});
 function message(role:string,content:string){const p=document.createElement("p");p.className="message "+role;p.textContent=content;$("messages").append(p);p.scrollIntoView({block:"end"});return p}
-async function api(path:string,data?:unknown){const response=await fetch("/api/"+path,data===undefined?{}:{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});const value=await response.json();if(!response.ok)throw Error(value.error||"Ошибка сервера");return value}
+async function api(path:string,data?:unknown){
+ const controller=new AbortController(),timeout=window.setTimeout(()=>controller.abort(),path==="chat"?130000:15000);
+ try{
+  const response=await fetch("/api/"+path,{...(data===undefined?{}:{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)}),signal:controller.signal});
+  const value=await response.json();if(!response.ok)throw Error(value.error||"Ошибка сервера");return value;
+ }catch(e){if(controller.signal.aborted)throw Error("Истекло время ожидания. Запрос мог завершиться на сервере; проверьте историю.");throw e}finally{clearTimeout(timeout)}
+}
 async function init(){try{const data=await api("history");for(const m of data.messages)message(m.role,m.content);$("status").textContent=data.connected?"Cloud.ru подключён":"Локальный режим · Cloud.ru не подключён";const page=await api("reader");if(page.reader&&!busy)showBook(page.reader)}catch{$("status").textContent="Сервер недоступен"}}
 const cloudModel=$("model") as HTMLInputElement,cloudKey=$("key") as HTMLInputElement;
 const modelList=$("model-list") as HTMLSelectElement,modelListLabel=$("model-list-label");
@@ -232,14 +238,14 @@ async function readerPresence(){
   if(incoming.hash!==novelDoc.hash){
    const anchor=novelPages[novelIndex]?.start??incoming.offset;
    novelDoc=incoming;layoutKey="";reflowNovel(anchor);
-  }else if(incoming.latest!==novelDoc.latest){
+  }else if(incoming.latest!==novelDoc.latest||incoming.volume_count!==novelDoc.volume_count){
    novelDoc=incoming;renderNovelPage();
   }
  }catch{}finally{presenceBusy=false}
 }
 if(typeof ResizeObserver==="function"){const observer=new ResizeObserver(scheduleReflow);observer.observe(scroll)}
 else window.addEventListener("resize",scheduleReflow);
-setInterval(()=>void readerPresence(),35000);
+setInterval(()=>void readerPresence(),10000);
 $("book-prev").onclick=()=>void turn("back");$("book-next").onclick=()=>void turn("next");$("book-exit").onclick=()=>void turn("pause");
 $("book-smaller").onclick=()=>{font=Math.max(16,font-1);readerStyle()};
 $("book-larger").onclick=()=>{font=Math.min(32,font+1);readerStyle()};

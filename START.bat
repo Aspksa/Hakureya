@@ -7,7 +7,11 @@ set "PY=python"
 where py >nul 2>&1
 if not errorlevel 1 set "PY=py -3"
 %PY% --version
-if errorlevel 1 goto fail
+if errorlevel 1 (
+  set "PY=python"
+  python --version
+  if errorlevel 1 goto fail
+)
 %PY% build_stamp.py
 if not errorlevel 1 goto run
 where npm.cmd >nul 2>&1
@@ -21,10 +25,11 @@ if errorlevel 1 goto fail
 %PY% build_stamp.py --write
 if errorlevel 1 goto fail
 :run
-%PY% server.py
+if /i "%~1"=="--check" exit /b 0
+%PY% server.py %*
 if errorlevel 1 goto fail
 exit /b 0
 :fail
-echo Hakureya could not start. Check Python 3 and Node.js installation.
-pause
+echo Hakureya could not start. Check Python 3, Node.js and data\hakureya.log.
+if /i not "%~1"=="--check" pause
 exit /b 1

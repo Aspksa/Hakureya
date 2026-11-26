@@ -45,6 +45,9 @@ def init(db):
     db.execute("CREATE INDEX IF NOT EXISTS lit_kind ON lit_entries(kind,number)")
     db.execute("CREATE INDEX IF NOT EXISTS lit_object ON lit_entries(object,number)")
     db.execute("CREATE TABLE IF NOT EXISTS lit_runs(day TEXT PRIMARY KEY, selected TEXT NOT NULL, context_bytes INTEGER NOT NULL, recalled TEXT NOT NULL)")
+    db.execute("CREATE TABLE IF NOT EXISTS lit_maintenance(id INTEGER PRIMARY KEY CHECK(id=1), cursor INTEGER NOT NULL)")
+    db.execute("INSERT OR IGNORE INTO lit_maintenance VALUES(1,0)")
+    db.execute("CREATE TABLE IF NOT EXISTS lit_rejections(draft_id INTEGER PRIMARY KEY, reason TEXT NOT NULL)")
 
 def extra(db,did):
     row=db.execute("SELECT payload,source_hash,checksum FROM lit_extra WHERE draft_id=?",(did,)).fetchone()
@@ -87,6 +90,14 @@ def save(db,did,story,raw,plan):
     source=db.execute("SELECT checksum FROM chronicle_drafts WHERE id=?",(did,)).fetchone()[0]
     payload=o.dump(data)
     db.execute("INSERT INTO lit_extra VALUES(?,?,?,?)",(did,payload,source,o.digest(o.dump([payload,source]))))
+
+def save_optional(db,did,story,raw,plan):
+    try:save(db,did,story,raw,plan)
+    except (ValueError,TypeError,KeyError):
+        # The optional ungrounded fields are discarded, not the valid manuscript.
+        db.execute("INSERT OR REPLACE INTO lit_rejections VALUES(?,?)",(did,"Дополнительные литературные сведения не прошли проверку"))
+        m=o.metadata(db,did)
+        if m:db.execute("UPDATE omega_meta SET warnings=?,score=? WHERE draft_id=?",(o.dump(m["warnings"]+["Отклонены дополнительные литературные сведения"]),max(0,m["score"]-12),did))
 
 def validate_approval(db,did):
     facts=extra(db,did)
@@ -159,7 +170,7 @@ def collect_chapter(db,n,story,did):
     if ip:
         for f in ip["facts"]:add(f["kind"],f["key"],f["detail"],f["evidence"],cause=f["cause"])
     for f in extra(db,did):
-        if f["kind"] not in {"world","place","artifact","law","prophecy","interpretation","event","clue","secret","consequence"}:
+        if f["kind"] in {"character","biography","trait","habit","fear","goal","voice","age",*RELATIONS}:
             mention(f["subject"],f["quote"])
         if f["kind"] in RELATIONS:mention(f["object"],f["quote"])
         add(f["kind"],f["subject"],f["value"],f["quote"],f["object"],f["cause"])
@@ -198,6 +209,14 @@ def refresh(db,force=False,limit=None):
         if limit is not None and count>=limit:break
         if index_one(db,*row):count+=1
     return count
+
+def sweep(db,limit=20):
+    """Check older derived records incrementally, repairing only from verified sources."""
+    cursor=db.execute("SELECT cursor FROM lit_maintenance WHERE id=1").fetchone()[0]
+    batch=db.execute("SELECT number,arc,title,story,checksum,draft_id FROM omega_index WHERE number>? ORDER BY number LIMIT ?",(cursor,max(1,min(100,limit)))).fetchall()
+    repaired=sum(index_one(db,*row) for row in batch)
+    db.execute("UPDATE lit_maintenance SET cursor=? WHERE id=1",(batch[-1][0] if batch else 0,))
+    return repaired
 
 def rows(db,visible=False):
     for n,raw,h in db.execute("SELECT number,payload,checksum FROM lit_index ORDER BY number"):
@@ -289,9 +308,18 @@ def prepare(db,plan):
     brain("twist",{"causes":[{"chapter":n,"cause":f["cause"],"value":f["value"][:100]} for n,f in recent if f["cause"] is not None][-2:],"guide":"Поворот должен опираться на улику, а не отменять прежние события."})
     # Coordinator selects an explicit capped set, without cutting JSON in the middle.
     budget=4200;selected={}
-    for k,v in result.items():
-        candidate={**selected,k:v}
-        if len(o.dump(candidate).encode("utf-8"))<=budget:selected[k]=v
+    # Every pass contributes a compact portion before any module gets its full payload.
+    order=("plot","magic","time","memory","characters","relations","editor","analytics","twist")
+    for k in order:
+        v=result[k]
+        if isinstance(v,dict):
+            compact={name:(value[:1] if isinstance(value,list) else value[:180] if isinstance(value,str) else value) for name,value in v.items()}
+        else:compact=v[:1]
+        candidate={**selected,k:compact}
+        if len(o.dump(candidate).encode("utf-8"))<=budget:selected[k]=compact
+    for k in order:
+        candidate={**selected,k:result[k]}
+        if len(o.dump(candidate).encode("utf-8"))<=budget:selected[k]=result[k]
     brain("coordinator",{"included":list(selected),"bytes":len(o.dump(selected).encode("utf-8"))})
     plan["intelligence"]={"context":selected,"completed":completed,"bytes":result["coordinator"]["bytes"],"recalled":[x["number"] for x in selected.get("memory",[])]}
     return plan
@@ -338,11 +366,11 @@ def relations_text(db):
 
 def search(db,query):
     refresh(db)
-    matches=ge.recall(db,query,10)
+    matches=ge.recall(db,query,50)
     selected=[x for x in matches if x["number"]<=13 or ev.readable(db,x["number"])][:5]
     return "Локальный поиск по словам и тематическим синонимам:\n"+"\n\n".join(f"Глава {x['number']} — {x['title']}\n{x['story']}" for x in selected) if selected else "Доступных совпадений не найдено."
 
-def graph(db,existing=()):
+def graph(db,existing=(),volume=None):
     nodes=[];edges=[];seen=set()
     def node(key,label,kind,**extra):
         if key not in seen:
@@ -356,18 +384,24 @@ def graph(db,existing=()):
     for key,_ in BRAINS:
         if key!="coordinator":edge("brain:"+key,"brain:coordinator","lit_module")
     try:
-        refresh(db)
-        data=list(rows(db,True))
+        if volume is None:data=list(rows(db,True))
+        else:
+            low,high=(1,13) if volume==1 else (14+(volume-2)*12,25+(volume-2)*12)
+            data=[]
+            for n,raw,h in db.execute("SELECT number,payload,checksum FROM lit_index WHERE number BETWEEN ? AND ? ORDER BY number",(low,high)):
+                if o.digest(raw)!=h:raise ValueError("damaged index")
+                if n<=13 or ev.readable(db,n):data.extend((n,f) for f in json.loads(raw)["records"])
     except ValueError:return nodes,edges
     actors,relations=registry(data)
-    known={norm(n["content"]):n["key"] for n in existing if n.get("kind") in ("character","infinite_character","evolution_subject","destiny_character")}
+    known={norm(n.get("content",n.get("label",""))):n["key"] for n in existing if n.get("kind") in ("character","infinite_character","evolution_subject","destiny_character")}
+    known_keys={n["key"] for n in existing}
     latest=sorted(actors.values(),key=lambda x:x["last"],reverse=True)[:100]
     for a in latest:
         if a["id"].startswith("lit:actor:") and norm(a["name"]) in known:a["id"]=known[norm(a["name"])]
     # Reuse exact canonical/guardian/known Omega or Evolution actor keys when present.
     for a in latest:
         k=a["id"]
-        if k.startswith("lit:actor:"):node(k,a["name"],"lit_character",infinite_group=k)
+        if k not in known_keys:node(k,a["name"],"lit_character",infinite_group=k)
         edge("brain:characters",k,"lit_character")
     allowed={norm(a["name"]):a["id"] for a in latest}
     for n,f in data[-180:]:
@@ -412,7 +446,7 @@ def dossier(db,name):
     a=actors.get(key)
     if not a:return "Нет подтверждённых записей об этом имени."
     facts=[(n,f) for n,f in data if norm(f["subject"])==key or (f["object"] and norm(f["object"])==key)]
-    return f"{a['name']} · ID {identifier(name)}\nПервое свидетельство: {a['first']}; последнее: {a['last']}; появлений: {a['count']}.\n"+"\n\n".join(f"Глава {n} · {f['kind']}: {f['value']} «{f['quote']}»" for n,f in facts[-25:])
+    return f"{a['name']} · ID {a['id']}\nПервое свидетельство: {a['first']}; последнее: {a['last']}; появлений: {a['count']}.\n"+"\n\n".join(f"Глава {n} · {f['kind']}: {f['value']} «{f['quote']}»" for n,f in facts[-25:])
 
 def possible_duplicates(db):
     refresh(db);actors,_=registry(list(rows(db,True)));names=sorted(actors)

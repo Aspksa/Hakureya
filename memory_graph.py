@@ -34,7 +34,41 @@ def assign_slots(db,records):
 def tokens(s):
     return set(WORD.findall(s.lower())) - STOP
 
+def reconcile_actors(records,edges):
+    """Resolve duplicate visual representations of exact known names, not fuzzy identities."""
+    import soul_intelligence as li
+    import soul_destiny as de
+    known={li.norm(name):"destiny:actor:"+key for key,name,_ in de.CAST}
+    present={n["key"] for n in records}
+    alias={}
+    for n in records:
+        k=n["key"]
+        if not k.startswith(("actor:","lit:actor:","infinite:character:")):continue
+        name=li.norm(n["content"])
+        target=li.actor_key(name)
+        if target.startswith("lit:actor:"):
+            named=known.get(name)
+            target=named if named in present else target
+        # The canonical key stays the same even if the earlier Omega layer leaves the viewport.
+        alias[k]=target
+    result={}
+    for n in records:
+        k=n["key"];target=alias.get(k,k)
+        if target!=k:
+            n={**n,"key":target}
+            if target.startswith("lit:actor:"):
+                n["kind"]="lit_character";n["infinite_group"]=target
+        group=n.get("infinite_group")
+        if group in alias:n={**n,"infinite_group":alias[group]}
+        if target not in result or k==target:result[target]=n
+    links=[]
+    for e in edges:
+        a,b=alias.get(e["a"],e["a"]),alias.get(e["b"],e["b"])
+        if a!=b:links.append({**e,"a":a,"b":b})
+    return list(result.values()),links
+
 def snapshot(db, limit=5000):
+    limit=max(14,min(5000,int(limit)))
     rows = db.execute("SELECT id,role,content,created FROM messages ORDER BY id DESC LIMIT ?",(limit,)).fetchall()
     notes = db.execute("SELECT id,kind,content,created FROM memory_notes ORDER BY id DESC LIMIT ?",(limit,)).fetchall()
     records = [{"key":f"m:{i}","group":0 if r=="user" else 2,"content":c,"created":t,"order":i} for i,r,c,t in reversed(rows) if r in ("user","assistant") and not (r=="assistant" and c=="Сообщение сохранено локально. Для ответа подключите Cloud.ru через меню аватара.")]
@@ -44,8 +78,23 @@ def snapshot(db, limit=5000):
     permanent,biography_edges,pending=soul_chronicle.constellation(db,limit) if db.execute("SELECT 1 FROM sqlite_master WHERE name='chronicle_diary'").fetchone() else ([],[],None)
     records.sort(key=lambda n:(n["created"] or "",n["key"][0],n["order"]))
     # Preserve the original canon and a real pending draft even under memory pressure.
+    # Deduplicate before allocating slots. Service/canon hubs take priority over decorative detail.
+    permanent,biography_edges=reconcile_actors(permanent,biography_edges)
+    unique={n["key"]:n for n in permanent}
+    permanent=list(unique.values())
+    def priority(n):
+        k=n["key"];kind=n.get("kind","")
+        if k.startswith("canon:"):return 0
+        if k.startswith("brain:") or k=="lit:db":return 1
+        if k.startswith(("character:","guardian:","era:","arc:")) or kind.endswith("_root"):return 2
+        if kind in ("book","book_segment","novel_epoch"):return 3
+        return 4
+    total_permanent=len(permanent)
+    permanent=sorted(permanent,key=priority)[:max(0,limit-int(pending is not None))]
     budget=max(0,limit-len(permanent)-int(pending is not None))
-    records=permanent+(records[-budget:] if budget else [])+([pending] if pending else [])
+    keys={n["key"] for n in permanent}
+    candidates=[n for n in records if n["key"] not in keys]
+    records=permanent+(candidates[-budget:] if budget else [])+([pending] if pending else [])
     edges=[]
     index={}
     last=None
@@ -92,6 +141,10 @@ def snapshot(db, limit=5000):
     for e in edges:
         dedup[(e["a"],e["b"],e["kind"])]=e
     edges=list(dedup.values())
+    # Preserve structural links before lexical edges, with a hard cap.
+    edges.sort(key=lambda e:e["kind"]=="keywords")
+    omitted_edges=max(0,len(edges)-10000)
+    edges=edges[:10000]
     for n in records:
         n["label"]=" ".join(n["content"].split())[:54]
         del n["content"]
@@ -99,7 +152,7 @@ def snapshot(db, limit=5000):
     total=db.execute("SELECT COUNT(*) FROM messages WHERE role='user' OR (role='assistant' AND content != ?)",("Сообщение сохранено локально. Для ответа подключите Cloud.ru через меню аватара.",)).fetchone()[0]+db.execute("SELECT COUNT(*) FROM memory_notes").fetchone()[0]
     if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='chronicle_diary'").fetchone():
         total+=db.execute("SELECT COUNT(*) FROM chronicle_diary").fetchone()[0]+db.execute("SELECT COUNT(*) FROM chronicle_drafts WHERE status='approved'").fetchone()[0]
-    total+=len(permanent)+int(pending is not None)
+    total+=total_permanent+int(pending is not None)
     publication=None
     if db.execute("SELECT 1 FROM sqlite_master WHERE name='omega_index'").fetchone():
         last=db.execute("SELECT number,arc,draft_id FROM omega_index WHERE draft_id IS NOT NULL ORDER BY number DESC LIMIT 1").fetchone()
@@ -108,7 +161,7 @@ def snapshot(db, limit=5000):
             import soul_evolution
             publication={"number":n,"key":f"c:{did}","volume":v,"segment":f"segment:{arc}:{v}","details":soul_evolution.readable(db,n),
                 "first":(n-14)%12==0,"complete":(n-14)%12==11,"epoch":1+(v-1)//8}
-    return {"records":records,"edges":edges,"total":total,"limited":total>len(records),"publication":publication}
+    return {"records":records,"edges":edges,"total":total,"limited":total>len(records),"publication":publication,"omitted_edges":omitted_edges}
 
 def add_note(db,kind,content):
     if type(kind) is not int or kind not in (1,3) or not isinstance(content,str) or not content.strip() or len(content)>12000:

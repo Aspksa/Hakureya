@@ -27,13 +27,20 @@ import soul_infinite
 import soul_intelligence
 import graph_activity
 import writer_activity
+import instance_guard
 import time, re
+import logging
+from logging.handlers import RotatingFileHandler
 import base64, binascii
 
 ROOT = Path(__file__).resolve().parent
 DB = ROOT / "data" / "hakureya.sqlite3"
 API = "https://foundation-models.api.cloud.ru/v1/chat/completions"
 LOCK = threading.Lock()
+INIT_LOCK = threading.Lock()
+INITIALIZED = set()
+LOG = logging.getLogger('hakureya')
+CHAT_GATE = threading.Lock()
 CONFIG = {"key": "", "model": ""}
 CHRONICLE = {"enabled": False, "last_activity": time.monotonic(), "epoch": 0, "reader_seen": -1e9}
 
@@ -50,11 +57,29 @@ def normalize_cloud_key(value):
 def connect():
     DB.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(DB, timeout=10)
-    db.execute("CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, role TEXT NOT NULL, content TEXT NOT NULL, created TEXT DEFAULT CURRENT_TIMESTAMP)")
-    memory_graph.init(db)
-    soul_core.init(db)
-    db.commit()
-    return db
+    try:
+        with INIT_LOCK:
+            path=str(DB.resolve())
+            # A recreated/test database must be initialized even at a reused path.
+            if path not in INITIALIZED or not db.execute("SELECT 1 FROM sqlite_master WHERE name='reader_coverage'").fetchone():
+                db.execute("CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, role TEXT NOT NULL, content TEXT NOT NULL, created TEXT DEFAULT CURRENT_TIMESTAMP)")
+                memory_graph.init(db)
+                soul_core.init(db)
+                # An invalid derived record must not make the diagnostics or reader unavailable.
+                db.execute("SAVEPOINT initial_index")
+                try:
+                    soul_intelligence.refresh(db)
+                    db.execute("RELEASE initial_index")
+                except (ValueError,TypeError,KeyError,IndexError) as error:
+                    db.execute("ROLLBACK TO initial_index");db.execute("RELEASE initial_index")
+                    LOG.warning("initial literary index failure: %s",type(error).__name__)
+                db.commit()
+                INITIALIZED.add(path)
+        return db
+    except BaseException:
+        db.close()
+        raise
+
 
 def history(limit=200):
     with closing(connect()) as db:
@@ -423,7 +448,9 @@ def chronicle_command(content):
         return generate_chronicle(arc=soul_saga.ALIASES.get(create_match[1]),alternative=create_match[1]=="варианты",shadow=create_match[1]=="сагу",guardians=create_match[1]=="хранительниц",destiny=create_match[1]=="судьбу")
     with LOCK, closing(connect()) as db, db:
         if q=="летопись: аудит":
-            issues=soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)+soul_evolution.audit(db)+soul_immortal.audit(db)
+            issues=soul_genesis.audit(db)+soul_heart.audit(db)+soul_shadow.audit(db)+soul_guardians.audit(db)+soul_destiny.audit(db)+soul_living.audit(db)+soul_evolution.audit(db)+soul_immortal.audit(db)+soul_novel.audit(db)+soul_infinite.audit(db)
+            index_status=soul_intelligence.audit_text(db)
+            if index_status!="целостность подтверждена":issues.append("Литературный индекс: "+index_status)
             return "Проверка целостности (не семантическая проверка): "+("\n"+"\n".join(issues) if issues else "нарушений не найдено.")
         if (destiny_read or q in destiny_commands or guardian_profile or q in guardian_commands or q in simple_commands or heart_read or q in heart_commands or romance_start or romance_read or q in romance_commands or genesis_read or genesis_arc or q in genesis_commands or omega_read or omega_search or q in omega_commands or read_match or q in ("летопись: содержание","летопись: последняя","летопись: главы")) and not soul_chronicle.canon_ok(db):
             return "Целостность исходной летописи нарушена; чтение заблокировано."
@@ -558,18 +585,20 @@ def chronicle_worker(stop):
                         soul_novel.forecast(db)
                         soul_infinite.refresh_forecast(db)
                         soul_intelligence.refresh(db)
+                        repaired=soul_intelligence.sweep(db)
+                        if repaired:LOG.info("repaired derived literary records: %d",repaired)
                 enabled=CHRONICLE["enabled"] or soul_living.mode(db)!="off"
             with LOCK, closing(connect()) as db:
                 backed_up=db.execute("SELECT 1 FROM living_backups WHERE day=date('now')").fetchone()
             if not backed_up:
-                with LOCK:
-                    filename=soul_living.backup(DB,DB.parent/"backups")
-                    with closing(connect()) as db, db:
-                        db.execute("INSERT OR IGNORE INTO living_backups VALUES(date('now'),?)",(filename,))
+                filename=soul_living.backup(DB,DB.parent/"backups")
+                with LOCK, closing(connect()) as db, db:
+                    db.execute("INSERT OR IGNORE INTO living_backups VALUES(date('now'),?)",(filename,))
             if enabled:
                 generate_chronicle(background=True)
-        except (sqlite3.Error,ValueError,OSError):
-            # Keep foreground server available; no secret or prompt logging.
+        except (sqlite3.Error,ValueError,OSError,KeyError,TypeError,IndexError,AttributeError) as error:
+            # Never include arbitrary model text, secrets or exception payloads.
+            LOG.warning("worker failure: %s",type(error).__name__)
             continue
 
 class Handler(SimpleHTTPRequestHandler):
@@ -616,9 +645,13 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.respond(soul_immortal.volume_graph(db,int(volume_match[1])))
             except (ValueError,TypeError,KeyError):return self.respond({"error":"Том недоступен или повреждён"},400)
         if self.path == "/api/graph":
-            with closing(connect()) as db, db:
-                data=memory_graph.snapshot(db)
-            return self.respond(data)
+            try:
+                with LOCK, closing(connect()) as db, db:
+                    data=memory_graph.snapshot(db)
+                return self.respond(data)
+            except (sqlite3.Error,ValueError,KeyError,TypeError) as error:
+                LOG.warning("graph failure: %s",type(error).__name__)
+                return self.respond({"error":"Граф временно недоступен; проверьте литературную базу."},503)
         if self.path.split("?",1)[0] == "/api/avatar":
             path = ROOT / "data" / "avatar.png"
             if not path.is_file():
@@ -716,7 +749,7 @@ class Handler(SimpleHTTPRequestHandler):
                     with closing(connect()) as db, db:
                         soul_core.record_model(db,model)
                     CONFIG.update(key=key, model=model)
-                    CHRONICLE.update(enabled=False,epoch=CHRONICLE["epoch"]+1)
+                    CHRONICLE.update(enabled=False,epoch=CHRONICLE["epoch"]+1,config_epoch=CHRONICLE.get("config_epoch",0)+1)
                 return self.respond({"connected":True})
             if self.path != "/api/chat":
                 return self.respond({"error":"Не найдено"},404)
@@ -730,31 +763,42 @@ class Handler(SimpleHTTPRequestHandler):
                 with LOCK, closing(connect()) as db:
                     reader=soul_reader.view(db) if command.startswith("Глава ") and " · Страница " in command.split("\n",1)[0] else None
                 return self.respond({"reply":command,"connected":bool(CONFIG["key"]),"reader":reader})
-            with LOCK:
-                user_id=store("user",content.strip())
-                if not CONFIG["key"]:
-                    reply = "Сообщение сохранено локально. Для ответа подключите Cloud.ru через меню аватара."
-                    return self.respond({"reply":reply,"connected":False})
-                with closing(connect()) as db:
-                    persona = soul_core.system_prompt(db, CONFIG["model"], content.strip())
-                payload = {"model":CONFIG["model"],"messages":[{"role":"system","content":persona}]+history(24),"max_tokens":1200,"stream":False}
-                req = Request(API, data=json.dumps(payload).encode(), headers={"Authorization":"Bearer "+CONFIG["key"],"Content-Type":"application/json"}, method="POST")
+            if not CHAT_GATE.acquire(blocking=False):
+                return self.respond({"error":"Другой запрос чата уже выполняется."},409)
+            try:
+                with LOCK:
+                    user_id=store("user",content.strip())
+                    key,model,epoch=CONFIG["key"],CONFIG["model"],CHRONICLE.get("config_epoch",0)
+                    if not key:
+                        return self.respond({"reply":"Сообщение сохранено локально. Для ответа подключите Cloud.ru через меню аватара.","connected":False})
+                    with closing(connect()) as db:
+                        persona=soul_core.system_prompt(db,model,content.strip())
+                    payload={"model":model,"messages":[{"role":"system","content":persona}]+history(24),"max_tokens":1200,"stream":False}
+                req=Request(API,data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
                 with graph_activity.track("chat",f"m:{user_id}") as activity:
                     try:
                         graph_activity.update(activity,"waiting")
                         with urlopen(req,timeout=60) as res:
-                            body = json.loads(res.read(4_000_000))
+                            body=json.loads(res.read(4_000_000))
                         graph_activity.update(activity,"received")
-                        reply = body["choices"][0]["message"]["content"]
-                        if not isinstance(reply,str) or not reply.strip():
-                            raise ValueError("empty response")
-                    except (URLError, TimeoutError, ValueError, KeyError, IndexError, TypeError, OSError):
+                        reply=body["choices"][0]["message"]["content"]
+                        if not isinstance(reply,str) or not reply.strip():raise ValueError("empty response")
+                    except (URLError,TimeoutError,ValueError,KeyError,IndexError,TypeError,OSError,HTTPException):
                         graph_activity.update(activity,"error")
                         return self.respond({"error":"Cloud.ru не вернул ответ. Сообщение сохранено; проверьте модель и ключ."},502)
-                    answer_id=store("assistant",reply)
+                    with LOCK:
+                        if CHRONICLE.get("config_epoch",0)!=epoch:
+                            graph_activity.update(activity,"discarded")
+                            return self.respond({"error":"Настройки изменились; ответ отброшен."},409)
+                        answer_id=store("assistant",reply)
+                        CHRONICLE["last_activity"]=time.monotonic()
                     graph_activity.update(activity,"done",f"m:{answer_id}")
-                    CHRONICLE["last_activity"]=time.monotonic()
                     return self.respond({"reply":reply,"connected":True})
+            finally:
+                CHAT_GATE.release()
+        except sqlite3.Error as error:
+            LOG.warning("database request failure: %s",type(error).__name__)
+            return self.respond({"error":"База данных временно недоступна."},503)
         except (ValueError, UnicodeError, TypeError, binascii.Error) as e:
             return self.respond({"error":"Некорректные данные запроса"},400)
 
@@ -765,6 +809,21 @@ def main():
     args = parser.parse_args()
     if not (ROOT / "dist" / "index.html").is_file():
         raise SystemExit("Frontend not built: npm install && npm run build")
+    try:
+        with instance_guard.exclusive(DB):
+            handler=RotatingFileHandler(DB.parent/"hakureya.log",maxBytes=1_000_000,backupCount=3,encoding="utf-8")
+            handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+            LOG.addHandler(handler);LOG.setLevel(logging.INFO)
+            try:
+                LOG.info("server startup")
+                serve(args)
+            finally:
+                LOG.info("server shutdown")
+                LOG.removeHandler(handler);handler.close()
+    except RuntimeError as error:
+        raise SystemExit(str(error))
+
+def serve(args):
     with closing(connect()) as db, db:
         soul_chronicle.recover(db)
         soul_chronicle.collect(db)
