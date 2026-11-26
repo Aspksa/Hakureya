@@ -1,7 +1,7 @@
 import {layout,palette,detailLevel,cameraFrame} from "./memory-layout.mjs";
 import {flowPaths,pointOn,activityEvents,stageLabels,publicationLinks} from "./activity-flow.mjs";
 import {rng,clamp} from "./geometry.mjs";
-type Publication={number:number,key:string,volume:number,segment:string,first:boolean,complete:boolean,epoch:number};
+type Publication={number:number,key:string,volume:number,segment:string,first:boolean,complete:boolean,epoch:number,details?:boolean};
 type Snapshot={records:any[],edges:any[],total:number,limited:boolean,volume?:number,publication?:Publication|null};
 type Work={id:string,kind:string,source:string,target:string,stage:string,sources?:string[],events?:{seq:number,stage:string,target:string}[],seq?:number};
 type Activity={session:string,revision:number,active:Work[],recent:Work[]};
@@ -132,11 +132,11 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   desired=baseFit();if(initial||firstSnapshot||scopeChanged||motion.matches)fit=desired;
   if(!graph.byKey.has(active))active="";
   replayAt=0;shown=graph.nodes.length;place();applyDetail();updateGlyphs();
-  if(isNewPublication&&publication&&!motion.matches&&!paused&&!document.hidden){for(const [i,link] of publicationLinks(publication,graph).entries())birthTrails.set("birth:"+publication.number+":"+i,{...link,at:now});while(birthTrails.size>10)birthTrails.delete(birthTrails.keys().next().value!);pulse(publication.key,"#ffe2a0",now);births.set(publication.key,now);if(publication.first){pulse(publication.segment,"#e7c46d",now);pulse("book:"+publication.volume,"#e7c46d",now);if((publication.volume-1)%8===0)pulse("novel:epoch:"+publication.epoch,"#c0a9e8",now)}if(publication.complete)pulse(publication.segment,"#fff3cb",now);if(!readerOpen&&!active&&!drag&&now>manualUntil&&zoom===1&&graph.byKey.has(publication.key)){const n=graph.byKey.get(publication.key),target=1.35,k=target*desired;focusMotion={start:now,fromZoom:zoom,toZoom:target,fromX:panX,fromY:panY,toX:-(n.x-camera.cx)*s*k,toY:-(n.y-camera.cy)*s*k}}}
+  if(isNewPublication&&publication&&!motion.matches&&!paused&&!document.hidden){for(const [i,link] of publicationLinks(publication,graph).entries())birthTrails.set("birth:"+publication.number+":"+i,{...link,at:now});while(birthTrails.size>10)birthTrails.delete(birthTrails.keys().next().value!);pulse(publication.key,"#ffe2a0",now);births.set(publication.key,now);if(publication.first){for(const key of [publication.segment,"book:"+publication.volume])if(graph.byKey.has(key)){births.set(key,now);pulse(key,"#e7c46d",now)}if((publication.volume-1)%8===0){const key="novel:epoch:"+publication.epoch;if(graph.byKey.has(key)){births.set(key,now);pulse(key,"#c0a9e8",now)}}}if(publication.complete)pulse(publication.segment,"#fff3cb",now);if(!readerOpen&&!active&&!drag&&now>manualUntil&&zoom===1&&graph.byKey.has(publication.key)){const n=graph.byKey.get(publication.key),target=1.35,k=target*desired;focusMotion={start:now,fromZoom:zoom,toZoom:target,fromX:panX,fromY:panY,toX:-(n.x-camera.cx)*s*k,toY:-(n.y-camera.cy)*s*k}}}
   if(wasReceived&&!scopeChanged&&!paused&&!motion.matches){for(const n of next.records){if(n.key.startsWith("draft:")&&!oldKeys.has(n.key)){births.set(n.key,now);pulse(n.key,"#e8c6ed",now)}}}
   status();invalidate();
  }
- function clearActivity(){works.clear();stages.clear();for(const p of particles.values())p.group.remove();particles.clear();for(const ring of highlighted.values())ring.remove();highlighted.clear();status();invalidate()}
+ function clearActivity(){works.clear();stages.clear();birthTrails.clear();for(const p of particles.values())p.group.remove();particles.clear();for(const ring of highlighted.values())ring.remove();highlighted.clear();status();invalidate()}
  function setActivity(next:Activity){
   if(next.session!==session){clearActivity();seen.clear();session=next.session}
   if(paused||document.hidden)return;
