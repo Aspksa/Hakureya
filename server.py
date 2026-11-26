@@ -483,6 +483,12 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == "/api/chronicle":
             with closing(connect()) as db:
                 return self.respond({"status":soul_chronicle.status(db),"graph":soul_chronicle.biography_graph(db)})
+        volume_match=re.fullmatch(r"/api/graph/volume/([1-9][0-9]{0,5})",self.path)
+        if volume_match:
+            try:
+                with closing(connect()) as db:
+                    return self.respond(soul_immortal.volume_graph(db,int(volume_match[1])))
+            except (ValueError,TypeError,KeyError):return self.respond({"error":"Том недоступен или повреждён"},400)
         if self.path == "/api/graph":
             with closing(connect()) as db, db:
                 data=memory_graph.snapshot(db)
@@ -523,8 +529,9 @@ class Handler(SimpleHTTPRequestHandler):
                 raise ValueError("Некорректный JSON")
             if self.path == "/api/reader":
                 action=data.get("action")
-                if action not in ("resume","next","back","pause","start"):raise ValueError("Недопустимое действие чтения")
+                if not isinstance(action,str) or action not in ("resume","next","back","pause","start"):raise ValueError("Недопустимое действие чтения")
                 with LOCK, closing(connect()) as db, db:
+                    CHRONICLE["last_activity"]=time.monotonic()
                     reply=soul_reader.move(db,action)
                     return self.respond({"reply":reply,"reader":soul_reader.view(db)})
             if self.path == "/api/avatar":
