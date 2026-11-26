@@ -5,6 +5,7 @@ from urllib.error import URLError
 import argparse, json, sqlite3, threading, webbrowser, os
 from contextlib import closing
 import memory_graph
+import soul_core
 import base64, binascii
 
 ROOT = Path(__file__).resolve().parent
@@ -12,13 +13,14 @@ DB = ROOT / "data" / "hakureya.sqlite3"
 API = "https://foundation-models.api.cloud.ru/v1/chat/completions"
 LOCK = threading.Lock()
 CONFIG = {"key": "", "model": ""}
-PERSONA = "Ты Hakureya, белоснежная императрица кицунэ. Отвечай по-русски, точно, спокойно и уважительно. Не выдумывай факты. Помогай пользователю решать задачи."
+
 
 def connect():
     DB.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(DB, timeout=10)
     db.execute("CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, role TEXT NOT NULL, content TEXT NOT NULL, created TEXT DEFAULT CURRENT_TIMESTAMP)")
     memory_graph.init(db)
+    soul_core.init(db)
     db.commit()
     return db
 
@@ -29,7 +31,13 @@ def history(limit=200):
 
 def store(role, content):
     with closing(connect()) as db, db:
-        db.execute("INSERT INTO messages(role,content) VALUES(?,?)", (role,content))
+        cursor = db.execute("INSERT INTO messages(role,content) VALUES(?,?)", (role,content))
+        message_id = cursor.lastrowid
+        if role == "user":
+            soul_core.observe_user(db,message_id,content)
+        elif role == "assistant":
+            soul_core.review_response(db,message_id,content)
+        return message_id
 
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
@@ -120,6 +128,8 @@ class Handler(SimpleHTTPRequestHandler):
                 if data.get("consent") is not True or not isinstance(key,str) or not isinstance(model,str) or not key.strip() or not model.strip() or len(key)>4096 or len(model)>200 or any(ord(c)<32 or ord(c)>126 for c in key):
                     raise ValueError("Укажите ключ, модель и подтвердите разрешение")
                 with LOCK:
+                    with closing(connect()) as db, db:
+                        soul_core.record_model(db,model.strip())
                     CONFIG.update(key=key.strip(), model=model.strip())
                 return self.respond({"connected":True})
             if self.path != "/api/chat":
@@ -132,7 +142,9 @@ class Handler(SimpleHTTPRequestHandler):
                 if not CONFIG["key"]:
                     reply = "Сообщение сохранено локально. Для ответа подключите Cloud.ru через меню аватара."
                     return self.respond({"reply":reply,"connected":False})
-                payload = {"model":CONFIG["model"],"messages":[{"role":"system","content":PERSONA}]+history(24),"max_tokens":1200,"stream":False}
+                with closing(connect()) as db:
+                    persona = soul_core.system_prompt(db, CONFIG["model"])
+                payload = {"model":CONFIG["model"],"messages":[{"role":"system","content":persona}]+history(24),"max_tokens":1200,"stream":False}
                 req = Request(API, data=json.dumps(payload).encode(), headers={"Authorization":"Bearer "+CONFIG["key"],"Content-Type":"application/json"}, method="POST")
                 try:
                     with urlopen(req,timeout=60) as res:
