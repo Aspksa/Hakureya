@@ -24,7 +24,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
  const stages=new Map<string,{seq:number,queue:Work[],started:number,current:Work,terminal:boolean}>();
  const highlighted=new Map<string,SVGCircleElement>();
  const orbitEls=new Map<string,{circle:SVGCircleElement,node:any,r:number}>();
- let lastLabelFrame=0;
+ let lastLabelFrame=0,lastCameraSignature="";
  let recentChapterKeys=new Set<string>();
  const births=new Map<string,number>();
  const glyphs=new Map<string,SVGGElement>(),labels=new Map<string,SVGTextElement>(),labelWidths=new Map<string,number>();
@@ -220,7 +220,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   if(focusMotion){const f=focusMotion,t=motion.matches?1:Math.min(1,(now-f.start)/360),e=1-Math.pow(1-t,3);zoom=f.fromZoom+(f.toZoom-f.fromZoom)*e;panX=f.fromX+(f.toX-f.fromX)*e;panY=f.fromY+(f.toY-f.fromY)*e;if(t===1)focusMotion=null}
   if(autoReturnAt&&now>=autoReturnAt){autoReturnAt=0;if(!readerOpen&&!active&&!drag&&now>manualUntil)focusNode("root")}
   const cameraOrigin=origin();world.setAttribute("transform","translate("+cameraOrigin.x+" "+cameraOrigin.y+") scale("+cameraOrigin.k+")");
-  applyDetail();if(now-lastLabelFrame>80||fit!==desired||focusMotion){updateGlyphs();lastLabelFrame=now}
+  applyDetail();const signature=[cameraOrigin.x,cameraOrigin.y,cameraOrigin.k].join(":");if(signature!==lastCameraSignature||now-lastLabelFrame>80){updateGlyphs();lastCameraSignature=signature;lastLabelFrame=now}
   drawActivity(now);
   for(const [key,start] of births){const t=Math.min(1,(now-start)/1000);const g=items.get(key);if(g)g.setAttribute("opacity",String(.08+.92*t));if(t===1||!g||motion.matches){g?.removeAttribute("opacity");births.delete(key)}}
   if(births.size||waves.size||birthTrails.size||autoReturnAt||replayAt||focusMotion||fit!==desired||[...stages.values()].some(a=>a.terminal||a.queue.length||!motion.matches))invalidate();
