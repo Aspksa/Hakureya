@@ -370,3 +370,18 @@ class ServerTest(unittest.TestCase):
             self.assertIn("не установлен",self.request("chat",{"content":"Досье персонажа Герой"})["reply"])
             self.assertIn("Хакурэя",self.request("chat",{"content":"Энциклопедия романа"})["reply"])
             remote.assert_not_called()
+
+
+    def test_chat_network_does_not_block_local_reader(self):
+        self.request("config",{"key":"test-key","model":"test-model","consent":True})
+        fake=MagicMock()
+        fake.__enter__.return_value.read.return_value=json.dumps({"choices":[{"message":{"content":"Ответ"}}]}).encode()
+        def remote(*args,**kwargs):
+            self.assertEqual(self.request("history")["messages"][-1]["content"],"Вопрос")
+            self.assertIsNone(self.request("reader")["reader"])
+            with self.assertRaises(HTTPError) as err:
+                self.request("chat",{"content":"Другой запрос"})
+            self.assertEqual(err.exception.code,409)
+            return fake
+        with patch.object(server,"urlopen",side_effect=remote):
+            self.assertEqual(self.request("chat",{"content":"Вопрос"})["reply"],"Ответ")
