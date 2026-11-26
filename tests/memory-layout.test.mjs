@@ -36,3 +36,21 @@ test("actual stages yield distinct transport paths, no synthetic activity",()=>{
  assert.equal(flowPaths({...req,stage:"error"},graph)[0].color,"#ed657d");
  assert.deepEqual(flowPaths({...req,stage:"idle"},graph),[]);
 });
+
+import {detailLevel} from '../web/memory-layout.mjs';
+test("nested epoch and book geometry produces distinct stable cells",()=>{
+ const records=[];
+ for(const sector of ["past","meeting","love","future"]){
+  records.push({key:"era:"+sector,group:4,sector,book:0,chapter_slot:0,kind:"epoch"});
+  for(let book=1;book<=8;book++){
+   records.push({key:"segment:"+sector+":"+book,group:4,sector,book,chapter_slot:-1,kind:"book_segment"});
+   for(let i=0;i<12;i++)records.push({key:sector+":"+book+":"+i,group:4,sector,book,chapter_slot:i,kind:"fictional_chapter"});
+  }
+ }
+ const g=layout({records,edges:[]});
+ const pos=g.nodes.map(n=>n.x.toFixed(8)+":"+n.y.toFixed(8));
+ assert.equal(new Set(pos).size,pos.length);
+ const a=g.byKey.get("love:2:0"),b=g.byKey.get("segment:love:2");
+ assert.ok(Math.abs(Math.hypot(a.x-b.x,a.y-b.y)-.026)<1e-8);
+ assert.equal(detailLevel(1000,1),0);assert.equal(detailLevel(1000,1.5),1);assert.equal(detailLevel(1000,3),2);
+});
