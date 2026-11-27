@@ -4,6 +4,7 @@ The source of truth remains the approved manuscript. Plans are not events.
 No new model calls, no user-chat data, no synthetic character facts.
 """
 import re
+import math
 from collections import Counter
 import soul_omega as o
 import soul_evolution as ev
@@ -72,11 +73,11 @@ def init(db):
     db.execute("""CREATE TRIGGER IF NOT EXISTS universe_dirty_renumber AFTER UPDATE OF number ON omega_index
         BEGIN INSERT OR IGNORE INTO universe_dirty VALUES(OLD.number); END""")
 
-def verified_source(db,n,arc,title,story,checksum,did):
+def verified_source(db,n,arc,title,story,checksum,did,canon_checked=False):
     import soul_chronicle as ch
     import soul_saga
     import soul_lore
-    if not ch.canon_ok(db):raise ValueError("canon integrity")
+    if not canon_checked and not ch.canon_ok(db):raise ValueError("canon integrity")
     if n<=13:
         _,expected_title,expected_story=soul_saga.canonical_chapters()[n-1]
         expected_arc="past" if n<=4 else "meeting" if n<=8 else "love" if n<=11 else "future"
@@ -146,51 +147,79 @@ def split(story):
             yield start,end,title,story[start:end]
             start=end
 
-def refresh(db,force=False):
+def refresh(db,force=False,limit=None,chapter=None):
+    """Durable dirty queue; bounded background batches and atomic per-source repair."""
+    if force and (limit is not None or chapter is not None):raise ValueError("partial forced rebuild")
     changed=0
-    where="" if force else " WHERE number IN (SELECT chapter FROM universe_dirty) OR number NOT IN (SELECT chapter FROM universe_sources)"
-    rows=db.execute("SELECT number,arc,title,story,checksum,draft_id FROM omega_index"+where+" ORDER BY number").fetchall()
+    sql="SELECT number,arc,title,story,checksum,draft_id FROM omega_index"
+    args=[]
+    if chapter is not None:
+        sql+=" WHERE number=?";args.append(chapter)
+    elif not force:
+        sql+=" WHERE number IN (SELECT chapter FROM universe_dirty) OR number NOT IN (SELECT chapter FROM universe_sources)"
+    sql+=" ORDER BY number"
+    if limit is not None:
+        sql+=" LIMIT ?";args.append(max(1,min(100,limit)))
+    rows=db.execute(sql,args).fetchall()
+    if rows:
+        import soul_chronicle as ch
+        if not ch.canon_ok(db):raise ValueError("canon integrity")
     for n,arc,title,story,source,did in rows:
-        verified_source(db,n,arc,title,story,source,did)
+        verified_source(db,n,arc,title,story,source,did,canon_checked=True)
         digest=o.digest(o.dump([VERSION,title,story,source]))
         old=db.execute("SELECT digest FROM universe_sources WHERE chapter=?",(n,)).fetchone()
-        if not force and old==(digest,):continue
-        db.execute("DELETE FROM universe_terms WHERE chapter=?",(n,))
-        db.execute("DELETE FROM universe_scenes WHERE chapter=?",(n,))
-        for seq,(a,b,heading,body) in enumerate(split(story),1):
-            db.execute("INSERT INTO universe_scenes VALUES(?,?,?,?,?,?)",(n,seq,a,b,heading or title,body))
-            terms=term_weights(body,heading,title)
-            db.executemany("INSERT INTO universe_terms VALUES(?,?,?,?)",[(t,n,seq,w) for t,w in terms.items()])
-        db.execute("INSERT OR REPLACE INTO universe_sources VALUES(?,?)",(n,digest))
+        dirty=db.execute("SELECT 1 FROM universe_dirty WHERE chapter=?",(n,)).fetchone()
+        if not force and not dirty and old==(digest,):continue
+        db.execute("SAVEPOINT universe_source")
+        try:
+            db.execute("DELETE FROM universe_terms WHERE chapter=?",(n,))
+            db.execute("DELETE FROM universe_scenes WHERE chapter=?",(n,))
+            for seq,(a,b,heading,body) in enumerate(split(story),1):
+                db.execute("INSERT INTO universe_scenes VALUES(?,?,?,?,?,?)",(n,seq,a,b,heading or title,body))
+                terms=term_weights(body,heading,title)
+                db.executemany("INSERT INTO universe_terms VALUES(?,?,?,?)",[(t,n,seq,w) for t,w in terms.items()])
+            db.execute("INSERT OR REPLACE INTO universe_sources VALUES(?,?)",(n,digest))
+            db.execute("DELETE FROM universe_dirty WHERE chapter=?",(n,))
+            db.execute("RELEASE universe_source")
+        except BaseException:
+            db.execute("ROLLBACK TO universe_source");db.execute("RELEASE universe_source");raise
         changed+=1
-    for table in ("universe_terms","universe_scenes","universe_sources"):
+    for table in ("universe_terms","universe_scenes","universe_sources","universe_dirty"):
         db.execute("DELETE FROM "+table+" WHERE chapter NOT IN (SELECT number FROM omega_index)")
-    db.execute("DELETE FROM universe_dirty")
     return changed
 
 def search(db,query,limit=6,visible=True,arc=None):
+    """Shared lexical scene retrieval: rare terms, inflection prefixes, concepts and phrase reranking."""
     refresh(db)
     import soul_genesis as ge
     terms=sorted(o.tokens(query),key=lambda t:(-len(t),t))[:12]
     prefixes={t[:max(4,len(t)-2)] for t in terms if len(t)>=4}
     for k,related in ge.CONCEPTS.items():
         if any(t.startswith(k[:4]) for t in terms):prefixes.update(related)
+    total=max(1,db.execute("SELECT COUNT(*) FROM universe_scenes").fetchone()[0])
     scores=Counter()
     for prefix in sorted(prefixes)[:32]:
-        for n,s,w in db.execute("SELECT chapter,seq,SUM(weight) FROM universe_terms WHERE term>=? AND term<? GROUP BY chapter,seq",(prefix,prefix+"\U0010ffff")):
-            scores[n,s]+=min(w,4)
+        hits=db.execute("SELECT chapter,seq,SUM(weight) FROM universe_terms WHERE term>=? AND term<? GROUP BY chapter,seq",(prefix,prefix+"\U0010ffff")).fetchall()
+        idf=math.log(1+(total-len(hits)+.5)/(len(hits)+.5))
+        for n,s,w in hits:scores[n,s]+=idf*w/(w+1.5)
     for t in terms:
-        for n,s,w in db.execute("SELECT chapter,seq,weight FROM universe_terms WHERE term=?",(t,)):
-            scores[n,s]+=2*min(w,4)
-    out=[]
+        hits=db.execute("SELECT chapter,seq,weight FROM universe_terms WHERE term=?",(t,)).fetchall()
+        idf=math.log(1+(total-len(hits)+.5)/(len(hits)+.5))
+        for n,s,w in hits:scores[n,s]+=2*idf*w/(w+1.5)
+    # Scope BEFORE the bounded rerank so unrelated arcs cannot crowd out eligible hits.
+    candidates=[];phrase=o.normalized(query)
     for (n,s),score in sorted(scores.items(),key=lambda x:(-x[1],-x[0][0],x[0][1])):
         if visible and n>13 and not ev.readable(db,n):continue
-        row=db.execute("SELECT i.arc,s.title,s.body,s.start,s.end,i.story FROM universe_scenes s JOIN omega_index i ON i.number=s.chapter WHERE s.chapter=? AND s.seq=?",(n,s)).fetchone()
+        row=db.execute("SELECT i.arc,s.title,s.body,s.start,s.end,i.story,i.checksum,i.draft_id,i.title FROM universe_scenes s JOIN omega_index i ON i.number=s.chapter WHERE s.chapter=? AND s.seq=?",(n,s)).fetchone()
         if not row or (arc and row[0]!=arc):continue
         if not 0<=row[3]<row[4]<=len(row[5]) or row[5][row[3]:row[4]]!=row[2]:raise ValueError("scene source mismatch")
-        out.append(dict(chapter=n,scene=s,title=row[1],text=row[2],start=row[3],end=row[4],score=score))
-        if len(out)>=limit:break
-    return out
+        verified_source(db,n,row[0],row[8],row[5],row[6],row[7])
+        body=o.normalized(row[2])
+        coverage=sum(t in body for t in terms)/max(1,len(terms))
+        rank=score*(1+coverage)+(2.0 if len(phrase)>=6 and phrase in body else 0)
+        candidates.append(dict(chapter=n,scene=s,title=row[1],text=row[2],start=row[3],end=row[4],score=round(rank,6)))
+        if len(candidates)>=max(40,limit*5):break
+    return sorted(candidates,key=lambda x:(-x["score"],-x["chapter"],x["scene"]))[:limit]
 
 def focused_excerpt(body,query,limit=450):
     if len(body)<=limit:return body

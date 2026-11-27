@@ -98,10 +98,11 @@ def refresh(db):
     db.execute("DELETE FROM intellect_sources WHERE chapter NOT IN (SELECT number FROM lit_index)")
     return changed
 
-def rows(db,actor=None,kind=None,public=True,limit=120):
+def rows(db,actor=None,kind=None,public=True,limit=120,arc=None):
     sql="""SELECT e.id,e.chapter,COALESCE(a.identity_id,e.actor),e.payload,e.checksum
            FROM intellect_evidence e LEFT JOIN intellect_assignments a ON a.evidence_id=e.id WHERE 1=1"""
     args=[]
+    if arc is not None:sql+=" AND e.chapter IN (SELECT number FROM omega_index WHERE arc=?)";args.append(arc)
     if actor is not None:sql+=" AND COALESCE(a.identity_id,e.actor)=?";args.append(actor)
     if kind is not None:sql+=" AND e.kind=?";args.append(kind)
     if public and ev.settings(db)[1]:
@@ -170,8 +171,7 @@ def prepare(db,plan):
     theme=plan.get("universe") or {}
     query=" ".join(str(x) for x in (theme.get("title",""),theme.get("lens","")[:160],plan.get("guide","")[:180]))
     refs=candidates(db,query,False,None if plan["arc"]=="future" else plan["arc"],4)
-    latest=rows(db,public=False,limit=100)
-    if plan["arc"]!="future":latest=[x for x in latest if x["arc"]==plan["arc"]]
+    latest=rows(db,public=False,limit=100,arc=None if plan["arc"]=="future" else plan["arc"])
     relevant=[]
     for f in latest:
         if f["kind"] in PROFILE|THREADS|STABLE|{"artifact","event","consequence"}:

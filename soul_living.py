@@ -195,13 +195,14 @@ def eligible(db,did):
         if dynasty["target"] and not dynasty["step"]:
             import soul_novel
             part=soul_novel.record(db,did)
-            if not part or part["part"]>=12:return False
+            if not part:return False
             rows=soul_novel.published_group(db,part["start"])
             raw,check=db.execute("SELECT payload,checksum FROM chronicle_drafts WHERE id=?",(did,)).fetchone()
             text=c.unpack(raw,check)["story"]
             import re
-            words=sum(len(re.findall(r"\b\w+\b",r["story"])) for r in rows)+len(re.findall(r"\b\w+\b",text))
-            if words>=part["target"] or o.volume(part["start"]+part["part"])!=o.volume(part["start"]):return False
+            # Current candidate counts toward the logical chapter, not the old 12-part volume.
+            progress=soul_novel.progress(rows+[{"number":part["start"]+part["part"]-1,"story":text,**part}])
+            if progress["closed"]:return False
     if db.execute("SELECT 1 FROM lit_rejections WHERE draft_id=?",(did,)).fetchone() or c.review_warnings(db,did):return False
     import soul_intellect
     soul_intellect.refresh(db)

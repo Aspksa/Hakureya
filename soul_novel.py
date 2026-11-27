@@ -105,7 +105,7 @@ def enrich(db,plan):
     last_volume=o.volume(p["previous_number"])
     for v in range(max(1,last_volume-4),last_volume):
         low,high=(1,13) if v==1 else (14+(v-2)*12,25+(v-2)*12)
-        row=db.execute("SELECT number,title,story,draft_id FROM omega_index WHERE number BETWEEN ? AND ? ORDER BY number DESC LIMIT 1",(low,high)).fetchone()
+        row=db.execute("SELECT number,title,story,draft_id FROM omega_index WHERE number BETWEEN ? AND ? AND (?=\'future\' OR arc=?) ORDER BY number DESC LIMIT 1",(low,high,plan["arc"],plan["arc"])).fetchone()
         if row:
             n,title,story,did=row;m=o.metadata(db,did) if did else None
             earlier.append({"volume":v,"chapter":n,"title":title,"ending":story[-500:],"events":m["data"]["events"][:2] if m else []})

@@ -38,6 +38,10 @@ import soul_director
 import soul_dynasty
 import soul_universe
 import soul_intellect
+import soul_narrative
+import soul_embeddings
+import soul_semantic
+from uuid import uuid4
 import soul_atlas
 import soul_export
 import graph_activity
@@ -142,6 +146,7 @@ def connect():
                 db.execute("SAVEPOINT initial_index")
                 try:
                     soul_intelligence.refresh(db)
+                    soul_narrative.refresh(db,limit=soul_narrative.BATCH)
                     db.execute("RELEASE initial_index")
                 except (ValueError,TypeError,KeyError,IndexError) as error:
                     db.execute("ROLLBACK TO initial_index");db.execute("RELEASE initial_index")
@@ -258,6 +263,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                         return "Несогласованные сюжетные планы; платный запрос не отправлен."
                     try:
                         soul_intellect.prepare(db,plan)
+                        soul_narrative.prepare(db,plan)
                         soul_intelligence.prepare(db,plan)
                     except (ValueError,TypeError,KeyError,IndexError):
                         db.execute("DELETE FROM writer_job_attempt WHERE day=?",(reservation[0],))
@@ -267,11 +273,11 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
             previous=[]
             if plan:
                 previous=[{"number":n,"title":t,"story":s[-2200:]} for n,t,s in reversed(db.execute("SELECT number,title,story FROM omega_index WHERE arc=? AND number>13 ORDER BY number DESC LIMIT 2",(plan["arc"],)).fetchall())]
-                previous.append({"published_titles":[t for t, in db.execute("SELECT title FROM omega_index ORDER BY number DESC LIMIT 12")]})
+                previous.append({"published_titles":[t for t, in db.execute("SELECT title FROM omega_index WHERE (?=\'future\' OR arc=?) ORDER BY number DESC LIMIT 12",(plan["arc"],plan["arc"]))]})
             writer=cloud_writer.selected(db)
             if reservation:
                 model=writer or CONFIG["model"]
-                plan["approved_directions"]=soul_proposals.directions(db)
+                plan["approved_directions"]=soul_proposals.directions(db,plan.get("guide","")+" "+plan.get("universe",{}).get("title","")) if plan["arc"]=="future" else []
                 messages=soul_chronicle.prompt(reservation,traits,previous,plan)
                 if len(json.dumps(messages,ensure_ascii=False).encode("utf-8"))>soul_universe.MAX_CONTEXT_BYTES:
                     db.execute("DELETE FROM writer_job_attempt WHERE day=?",(reservation[0],))
@@ -288,6 +294,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                 soul_intelligence.record_run(db,reservation[0],plan)
                 soul_universe.record(db,reservation[0],plan)
                 soul_intellect.record_run(db,reservation[0],plan)
+                soul_narrative.record(db,reservation[0],plan)
                 visual_sources=writer_activity.context_keys(db,plan,previous)
         if not reservation:
             if once:
@@ -486,6 +493,34 @@ def chronicle_command(content):
     scene_query=re.fullmatch(r"поиск сцены (.{2,180})",q)
     actor_query=re.fullmatch(r"история персонажа (.{2,80})",q)
     timeline_query=re.fullmatch(r"хронология вселенной ([1-9][0-9]{0,5})",q)
+    if q=="очередь замыслов":
+        with LOCK, closing(connect()) as db:
+            return soul_proposals.queue_text(db)
+    executed=re.fullmatch(r"замысел исполнен ([1-9][0-9]{0,8})\s*\|\s*([1-9][0-9]{0,6})\s*\|\s*(.{12,500})",content.strip(),re.I|re.S)
+    if executed:
+        with LOCK, closing(connect()) as db, db:
+            try:
+                soul_proposals.mark_executed(db,int(executed[1]),int(executed[2]),executed[3].strip())
+                return "Исполнение замысла отмечено автором. Цитата связана с опубликованной частью; канон не изменён."
+            except (ValueError,TypeError,KeyError,sqlite3.Error):return "Не подтверждён утверждённый замысел или точная цитата из опубликованной части."
+    if q in ("литературная память","проверить литературную память","восстановить литературную память","источники писателя") or re.fullmatch(r"содержание (главы|тома) [1-9][0-9]{0,6}",q):
+        with LOCK, closing(connect()) as db, db:
+            if not soul_chronicle.canon_ok(db):return "Целостность канона нарушена."
+            db.execute("SAVEPOINT narrative_command")
+            try:
+                if q=="литературная память":
+                    soul_narrative.refresh(db,limit=soul_narrative.BATCH);result=soul_narrative.report(db)
+                elif q=="проверить литературную память":result=soul_narrative.audit(db)
+                elif q=="восстановить литературную память":result=f"Восстановлено записей памяти: {soul_narrative.repair(db)}. Текст романа не изменён."
+                elif q=="источники писателя":
+                    data=soul_narrative.last_run(db)
+                    result=("Источники последнего контекста (доступные части): "+", ".join(f"{r['chapter']}:{r['scene']}" for r in data["refs"]) if data else "Писатель ещё не использовал общую память.")
+                else:
+                    _,kind,n=q.split();result=soul_narrative.summary(db,int(n),"chapter" if kind=="главы" else "volume")
+                db.execute("RELEASE narrative_command");return result
+            except (ValueError,TypeError,KeyError,IndexError,sqlite3.Error):
+                db.execute("ROLLBACK TO narrative_command");db.execute("RELEASE narrative_command")
+                return "Литературная память недоступна или требует восстановления. Платный запрос не отправлен."
     if q in ("проверить 10 мозгов","сеть мозгов","диагностика мозгов"):
         with LOCK, closing(connect()) as db, db:
             if not soul_chronicle.canon_ok(db):return "Целостность канона нарушена."
@@ -493,6 +528,7 @@ def chronicle_command(content):
                 # Real dry-run with the current publication index, no quota reservation or paid request.
                 plan=soul_saga.plan(db,"future")
                 soul_intellect.prepare(db,plan)
+                soul_narrative.prepare(db,plan)
                 soul_intelligence.prepare(db,plan)
                 trace=plan["intelligence"]["network"]
                 soul_network.record_diagnostic(db,trace)
@@ -878,7 +914,8 @@ def chronicle_worker(stop):
                         soul_infinite.refresh_forecast(db)
                         soul_intelligence.refresh(db)
                         soul_intellect.refresh(db)
-                        repaired=soul_intelligence.sweep(db)
+                        soul_narrative.refresh(db,limit=soul_narrative.BATCH)
+                        repaired=soul_intelligence.sweep(db)+soul_narrative.sweep(db)
                         if repaired:LOG.info("repaired derived literary records: %d",repaired)
                 writer_volume.reconcile_job(db)
                 enabled=CHRONICLE["enabled"] or soul_living.mode(db)!="off"
@@ -947,8 +984,15 @@ class Handler(SimpleHTTPRequestHandler):
             try:
                 with LOCK, closing(connect()) as db, db:
                     if not soul_chronicle.canon_ok(db):return self.respond({"error":"Канон повреждён"},409)
-                    return self.respond(soul_universe.overview(db,int(universe_match[1] or 1)))
+                    result=soul_universe.overview(db,int(universe_match[1] or 1))
+                    result["narrative"]=soul_narrative.status(db)
+                    return self.respond(result)
             except (ValueError,TypeError,KeyError,sqlite3.Error):return self.respond({"error":"Индекс недоступен"},503)
+        if self.path == "/api/narrative/semantic":
+            try:
+                with LOCK, closing(connect()) as db:
+                    return self.respond(soul_semantic.snapshot(db))
+            except (ValueError,TypeError,KeyError,sqlite3.Error):return self.respond({"error":"Сведения требуют восстановления."},409)
         if self.path == "/api/writer":
             with LOCK, closing(connect()) as db:
                 return self.respond(writer_status(db))
@@ -1042,6 +1086,99 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.respond({"error":"Некорректная диагностика"},400)
                 diagnostics.emit("client.failed",kind=kind,route=diagnostics.route("/api/"+route),status=status,source="web/app.ts")
                 return self.respond({"ok":True})
+            if self.path == "/api/narrative/semantic":
+                action=data.get("action")
+                if action=="decide":
+                    with LOCK, closing(connect()) as db, db:
+                        if not soul_semantic.decide(db,data.get("chapter"),data.get("scene"),data.get("revision"),data.get("approve")):
+                            return self.respond({"error":"Сведения изменились или уже обработаны."},409)
+                        return self.respond(soul_semantic.snapshot(db))
+                if action!="analyze" or data.get("consent") is not True:
+                    return self.respond({"error":"Подтвердите отдельный платный анализ опубликованной сцены."},400)
+                if not CHAT_GATE.acquire(blocking=False):
+                    return self.respond({"error":"Другой запрос уже выполняется."},409)
+                try:
+                    with LOCK, closing(connect()) as db, db:
+                        if not soul_chronicle.canon_ok(db):return self.respond({"error":"Канон повреждён."},409)
+                        if db.execute("SELECT 1 FROM narrative_analysis WHERE status='pending'").fetchone():
+                            return self.respond({"error":"Сначала проверьте ожидающий анализ сцены."},409)
+                        item=soul_semantic.next_scene(db)
+                        if not item:return self.respond(soul_semantic.snapshot(db))
+                        key,model,epoch=CONFIG["key"],cloud_writer.selected(db) or CONFIG["model"],CHRONICLE.get("config_epoch",0)
+                        if not key or not model:return self.respond({"error":"Подключите Cloud.ru в настройках."},400)
+                        messages=soul_semantic.messages(item)
+                        day=writer_volume.today()+"#semantic-"+uuid4().hex
+                        allowed,cost=soul_evolution.budget_check(db,model,messages,soul_semantic.OUTPUT_TOKENS,day)
+                        if not allowed:return self.respond({"error":"Проверьте бюджет и тарифы модели писателя."},409)
+                        soul_evolution.reserve_cost(db,day,model,cost)
+                    req=Request(API,data=json.dumps({"model":model,"messages":messages,"max_tokens":soul_semantic.OUTPUT_TOKENS,"stream":False}).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
+                    with urlopen(req,timeout=60) as res:raw=res.read(1000001)
+                    if len(raw)>1000000:raise ValueError("semantic response too large")
+                    response=json.loads(raw)
+                    with LOCK, closing(connect()) as db, db:
+                        soul_evolution.settle_cost(db,day,response)
+                        if CHRONICLE.get("config_epoch",0)!=epoch:
+                            return self.respond({"error":"Подключение изменилось; анализ не сохранён."},409)
+                        soul_semantic.save(db,item,response["choices"][0]["message"]["content"])
+                        result=soul_semantic.snapshot(db)
+                    diagnostics.emit("narrative.semantic_completed",chapter=item["chapter"],scene=item["scene"])
+                    return self.respond(result)
+                except (URLError,TimeoutError,HTTPException,OSError,ValueError,TypeError,KeyError,IndexError,sqlite3.Error) as error:
+                    diagnostics.failure("narrative.semantic_failed",error)
+                    return self.respond({"error":"Анализ сцены не завершён или не подтверждены цитаты. Автоматического повтора нет."},502)
+                finally:
+                    CHAT_GATE.release()
+            if self.path == "/api/narrative/embeddings":
+                action=data.get("action")
+                query=data.get("query","")
+                if action not in ("index","search") or data.get("consent") is not True:
+                    return self.respond({"error":"Подтвердите отдельный запрос эмбеддингов Cloud.ru."},400)
+                if action=="search" and (not isinstance(query,str) or not 2<=len(query.strip())<=500):
+                    return self.respond({"error":"Введите поисковый запрос от 2 до 500 знаков."},400)
+                if not CHAT_GATE.acquire(blocking=False):
+                    return self.respond({"error":"Другой запрос уже выполняется."},409)
+                try:
+                    with LOCK, closing(connect()) as db, db:
+                        if not soul_chronicle.canon_ok(db):return self.respond({"error":"Канон повреждён."},409)
+                        key,epoch=CONFIG["key"],CHRONICLE.get("config_epoch",0)
+                        if action=="index":
+                            items=soul_embeddings.missing(db)
+                            if not items:return self.respond({"status":soul_embeddings.status(db),"added":0})
+                            inputs=[x["body"] for x in items]
+                        else:
+                            query=query.strip()
+                            vector=soul_embeddings.cached_query(db,query)
+                            if vector is not None:
+                                hits=soul_embeddings.hybrid(db,query,vector,public=True,limit=6)
+                                return self.respond({"status":soul_embeddings.status(db),"hits":hits,"cached":True})
+                            if not soul_embeddings.status(db)["indexed"]:
+                                return self.respond({"error":"Сначала создайте векторный индекс сцен."},409)
+                            inputs=[query]
+                        if not key:return self.respond({"error":"Подключите Cloud.ru в настройках."},400)
+                        if data.get("budget") is not None:soul_embeddings.configure(db,data["budget"])
+                        cost_id=soul_embeddings.reserve(db,inputs)
+                        if cost_id is None:return self.respond({"error":"Укажите отдельный тариф и лимит эмбеддингов либо увеличьте остаток бюджета."},409)
+                    req=Request(soul_embeddings.ENDPOINT,data=json.dumps({"model":soul_embeddings.MODEL,"input":inputs},ensure_ascii=False).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
+                    with urlopen(req,timeout=60) as res:raw=res.read(1000001)
+                    if len(raw)>1000000:raise ValueError("embedding response too large")
+                    response=json.loads(raw)
+                    with LOCK, closing(connect()) as db, db:
+                        soul_embeddings.settle(db,cost_id,response)
+                        if CHRONICLE.get("config_epoch",0)!=epoch:
+                            return self.respond({"error":"Подключение изменилось; результат не сохранён."},409)
+                        if action=="index":
+                            soul_embeddings.store(db,items,response)
+                            result={"status":soul_embeddings.status(db),"added":len(items)}
+                        else:
+                            vector=soul_embeddings.save_query(db,query,response)
+                            result={"status":soul_embeddings.status(db),"hits":soul_embeddings.hybrid(db,query,vector,public=True,limit=6),"cached":False}
+                    diagnostics.emit("narrative.embedding_completed",action=action,count=len(inputs))
+                    return self.respond(result)
+                except (URLError,TimeoutError,HTTPException,OSError,ValueError,TypeError,KeyError,IndexError,sqlite3.Error) as error:
+                    diagnostics.failure("narrative.embedding_failed",error)
+                    return self.respond({"error":"Векторный запрос не завершён. Автоматического повтора нет; проверьте журнал."},502)
+                finally:
+                    CHAT_GATE.release()
             if self.path == "/api/proposals/decision":
                 ident,revision,approve=data.get("id"),data.get("revision"),data.get("approve")
                 with LOCK, closing(connect()) as db, db:

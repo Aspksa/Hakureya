@@ -60,9 +60,9 @@ def extra(db,did):
     if not parent or source!=parent[0] or h!=o.digest(o.dump([raw,source])):raise ValueError("literary intelligence source changed")
     return json.loads(raw)
 
-def validate(db,story,raw):
+def validate(db,story,raw,limit=2):
     if raw is None:return []
-    if not isinstance(raw,list) or len(raw)>2:raise ValueError("literary facts limit")
+    if not isinstance(raw,list) or len(raw)>limit:raise ValueError("literary facts limit")
     result=[];seen=set()
     for f in raw:
         if not isinstance(f,dict) or set(f)!={"kind","subject","object","value","quote","cause"} or f["kind"] not in KINDS:
@@ -119,6 +119,12 @@ def collect_chapter(db,n,story,did):
         seen.add(key);records.append(dict(kind=kind,subject=subject,object=obj,value=value,quote=quote,cause=cause))
     def mention(name,quote):
         if isinstance(name,str) and name.strip() and o.normalized(name) in o.normalized(quote):add("character",name,name,quote)
+    def reviewed(f):
+        if f["kind"] in {"character","biography","trait","habit","fear","goal","voice","age","identity","origin","belief","intention","emotion","diary","knowledge_transfer","world_time",*RELATIONS}:mention(f["subject"],f["quote"])
+        if f["kind"] in RELATIONS or f["kind"]=="knowledge_transfer":mention(f["object"],f["quote"])
+        add(f["kind"],f["subject"],f["value"],f["quote"],f["object"],f["cause"])
+    import soul_semantic
+    for f in soul_semantic.accepted(db,n):reviewed(f)
     if did is None:
         # Canonical roles are represented separately in the graph. Only actual exact-name mentions are indexed.
         for name in ("Хакурэя","Герой"):
@@ -329,8 +335,10 @@ def prepare(db,plan):
     terms.extend(x["name"] for x in inputs["characters"]["recent"])
     terms.extend(x["value"] for x in inputs["plot"]["open"])
     terms.extend(x["subject"]+" "+x["value"] for x in inputs["magic"]["limits"])
-    recall=ge.recall(db," ".join(terms),3,None if inputs["time"]["arc"]=="future" else inputs["time"]["arc"])
-    refs={x["number"]:{"number":x["number"],"story":x["story"][:220]} for x in recall if x["number"]<=inputs["time"]["scope_last"]}
+    if "narrative" in plan:
+        recall=[{"number":r["chapter"],"story":r["quote"]} for r in plan["narrative"]["recall"]+plan["narrative"]["current"][-2:]]
+    else:recall=ge.recall(db," ".join(terms),3,None if inputs["time"]["arc"]=="future" else inputs["time"]["arc"])
+    refs={x["number"]:{"number":x["number"],"story":x["story"][:220]} for x in recall if x["number"]<=inputs["time"]["scope_last"] and (scope is None or x["number"] in scope)}
     # Prefer the exact scene excerpts retrieved by Intelligence 7 where available.
     for r in plan.get("intellect7",{}).get("refs",[]):
         n=r["chapter"]
