@@ -39,6 +39,7 @@ import soul_dynasty
 import soul_universe
 import soul_intellect
 import soul_narrative
+import soul_embeddings
 import soul_atlas
 import soul_export
 import graph_activity
@@ -971,7 +972,9 @@ class Handler(SimpleHTTPRequestHandler):
             try:
                 with LOCK, closing(connect()) as db, db:
                     if not soul_chronicle.canon_ok(db):return self.respond({"error":"Канон повреждён"},409)
-                    return self.respond(soul_universe.overview(db,int(universe_match[1] or 1)))
+                    result=soul_universe.overview(db,int(universe_match[1] or 1))
+                    result["narrative"]=soul_narrative.status(db)
+                    return self.respond(result)
             except (ValueError,TypeError,KeyError,sqlite3.Error):return self.respond({"error":"Индекс недоступен"},503)
         if self.path == "/api/writer":
             with LOCK, closing(connect()) as db:
@@ -1066,6 +1069,57 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.respond({"error":"Некорректная диагностика"},400)
                 diagnostics.emit("client.failed",kind=kind,route=diagnostics.route("/api/"+route),status=status,source="web/app.ts")
                 return self.respond({"ok":True})
+            if self.path == "/api/narrative/embeddings":
+                action=data.get("action")
+                query=data.get("query","")
+                if action not in ("index","search") or data.get("consent") is not True:
+                    return self.respond({"error":"Подтвердите отдельный запрос эмбеддингов Cloud.ru."},400)
+                if action=="search" and (not isinstance(query,str) or not 2<=len(query.strip())<=500):
+                    return self.respond({"error":"Введите поисковый запрос от 2 до 500 знаков."},400)
+                if not CHAT_GATE.acquire(blocking=False):
+                    return self.respond({"error":"Другой запрос уже выполняется."},409)
+                try:
+                    with LOCK, closing(connect()) as db, db:
+                        if not soul_chronicle.canon_ok(db):return self.respond({"error":"Канон повреждён."},409)
+                        key,epoch=CONFIG["key"],CHRONICLE.get("config_epoch",0)
+                        if action=="index":
+                            items=soul_embeddings.missing(db)
+                            if not items:return self.respond({"status":soul_embeddings.status(db),"added":0})
+                            inputs=[x["body"] for x in items]
+                        else:
+                            query=query.strip()
+                            vector=soul_embeddings.cached_query(db,query)
+                            if vector is not None:
+                                hits=soul_embeddings.hybrid(db,query,vector,public=True,limit=6)
+                                return self.respond({"status":soul_embeddings.status(db),"hits":hits,"cached":True})
+                            if not soul_embeddings.status(db)["indexed"]:
+                                return self.respond({"error":"Сначала создайте векторный индекс сцен."},409)
+                            inputs=[query]
+                        if not key:return self.respond({"error":"Подключите Cloud.ru в настройках."},400)
+                        # Existing writer budget is separate. Refuse rather than bypass a configured
+                        # monetary ceiling for a different model. No automatic charge or retry.
+                        if db.execute("SELECT 1 FROM evolution_budget WHERE id=1").fetchone():
+                            return self.respond({"error":"Настроен бюджет писателя для другой модели. Векторные запросы заблокированы до настройки отдельного бюджета."},409)
+                    req=Request(soul_embeddings.ENDPOINT,data=json.dumps({"model":soul_embeddings.MODEL,"input":inputs},ensure_ascii=False).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
+                    with urlopen(req,timeout=60) as res:raw=res.read(1000001)
+                    if len(raw)>1000000:raise ValueError("embedding response too large")
+                    response=json.loads(raw)
+                    with LOCK, closing(connect()) as db, db:
+                        if CHRONICLE.get("config_epoch",0)!=epoch:
+                            return self.respond({"error":"Подключение изменилось; результат не сохранён."},409)
+                        if action=="index":
+                            soul_embeddings.store(db,items,response)
+                            result={"status":soul_embeddings.status(db),"added":len(items)}
+                        else:
+                            vector=soul_embeddings.save_query(db,query,response)
+                            result={"status":soul_embeddings.status(db),"hits":soul_embeddings.hybrid(db,query,vector,public=True,limit=6),"cached":False}
+                    diagnostics.emit("narrative.embedding_completed",action=action,count=len(inputs))
+                    return self.respond(result)
+                except (URLError,TimeoutError,HTTPException,OSError,ValueError,TypeError,KeyError,IndexError,sqlite3.Error) as error:
+                    diagnostics.failure("narrative.embedding_failed",error)
+                    return self.respond({"error":"Векторный запрос не завершён. Автоматического повтора нет; проверьте журнал."},502)
+                finally:
+                    CHAT_GATE.release()
             if self.path == "/api/proposals/decision":
                 ident,revision,approve=data.get("id"),data.get("revision"),data.get("approve")
                 with LOCK, closing(connect()) as db, db:
