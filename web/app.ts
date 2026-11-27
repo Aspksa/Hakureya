@@ -266,12 +266,13 @@ draftDialog.onclose=()=>{draftRequest++;draftBusy=false;currentDraft=null;setDra
 refreshDraft.onclick=()=>void loadDraft();
 approveDraft.onclick=()=>void decideDraft(true);rejectDraft.onclick=()=>void decideDraft(false);
 $("quick-draft").onclick=()=>void openDraft();
-function quickRead(){
- if(busy||!historyReady){$("status").textContent="Дождитесь окончания запроса или загрузки истории.";return}
+async function quickRead(){
+ if(busy||reading||!historyReady){$("status").textContent="Дождитесь окончания запроса или загрузки истории.";return}
  if(!book.hidden){$("book-scroll").focus();return}
- const value="Читать книгу";
- if(prompt.value.trim()&&prompt.value!==value&&!window.confirm("Заменить текущий текст и открыть книгу?"))return;
- prompt.value=value;syncComposer();($("composer") as HTMLFormElement).requestSubmit();
+ busy=true;reading=true;syncComposer();$("status").textContent="Открываю книгу…";
+ try{const result=await api("reader",{action:"resume"});if(result.reader){$("status").textContent="";showBook(result.reader)}else $("status").textContent=result.reply||"Книга недоступна."}
+ catch(e){$("status").textContent=String(e)}
+ finally{busy=false;reading=false;syncComposer()}
 }
 $("quick-read").onclick=quickRead;
 
