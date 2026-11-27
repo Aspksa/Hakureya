@@ -267,3 +267,26 @@ def adjacent(db,direction):
         pos=len(prev["text"])
         position(db,prev["hash"],pos,pos)
     return reply
+
+
+def contents(db,page=1,query=""):
+    """Read-only paginated contents: one entry per logical chapter."""
+    import soul_chronicle
+    if not soul_chronicle.canon_ok(db):raise ValueError("canon integrity")
+    if type(page) is not int or not 1<=page<=1000000 or not isinstance(query,str) or len(query)>120:
+        raise ValueError("invalid contents query")
+    query=query.strip().casefold()
+    # SQLite lower() is ASCII-only, so use Python casefold for Cyrillic titles.
+    sql="""SELECT i.number,i.title FROM omega_index i
+        LEFT JOIN novel_parts p ON p.draft_id=i.draft_id
+        WHERE p.part IS NULL OR p.part=1 ORDER BY i.number"""
+    items=[(n,t) for n,t in db.execute(sql) if not query or query in t.casefold() or query==str(n)]
+    size=30;pages=max(1,(len(items)+size-1)//size);page=min(page,pages)
+    current=bookmark(db)
+    if current:
+        import soul_novel
+        group=soul_novel.group_for(db,current[0])
+        active_chapter=group[0]["number"] if group else current[0]
+    else:active_chapter=None
+    return {"page":page,"pages":pages,"total":len(items),"current":active_chapter,
+        "items":[{"chapter":n,"title":t,"volume":soul_omega.volume(n)} for n,t in items[(page-1)*size:page*size]]}
