@@ -106,3 +106,22 @@ class WriterVolumeTest(unittest.TestCase):
         c.fail(self.db,b)
         self.assertEqual(v.job(self.db)["state"],"error")
         self.assertEqual(soul_living.mode(self.db),"off")
+
+
+    def test_resume_preserves_progress_and_counts_reused_diary_once(self):
+        import soul_living
+        from test_chronicle import draft
+        v.start_job(self.db,5,"test-model")
+        soul_living.set_mode(self.db,"auto")
+        a=c.reserve(self.db,allow_story=True)
+        c.fail(self.db,a)
+        v.resume_job(self.db,"test-model")
+        v.reconcile_job(self.db)
+        self.assertTrue(v.active_job(self.db))
+        self.assertEqual(v.job(self.db)["attempts"],1)
+        b=c.reserve(self.db,allow_story=True)
+        c.finish(self.db,b,draft())
+        p=c.latest_pending(self.db)
+        self.assertTrue(c.decide(self.db,p["id"],True))
+        self.assertEqual(v.job(self.db)["chars"],len(p["story"]))
+        self.assertEqual(v.job(self.db)["attempts"],2)
