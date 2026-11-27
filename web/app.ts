@@ -69,12 +69,20 @@ avatar.onclick=()=>toggle();$("close").onclick=()=>toggle(false);avatar.oncontex
 function toggleMenu(){menu.hidden=!menu.hidden;$("chat-menu").setAttribute("aria-expanded",String(!menu.hidden));if(!menu.hidden){menu.classList.toggle("from-chat",!chat.hidden);(menu.querySelector("button") as HTMLButtonElement|null)?.focus()}}
 $("chat-menu").onclick=toggleMenu;document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(config.open||writerDialog.open||commandDialog.open||universeDialog.open||note.open)return;if(cinema){setCinema(false);return}if(!menu.hidden)menu.hidden=true;else if(!chat.hidden&&!config.open&&!writerDialog.open&&!commandDialog.open&&!universeDialog.open&&!note.open)toggle(false)}});document.addEventListener("click",e=>{if(!menu.contains(e.target as Node)&&!avatar.contains(e.target as Node)&&!$("chat-menu").contains(e.target as Node))menu.hidden=true;if(menu.hidden)$("chat-menu").setAttribute("aria-expanded","false")});
 function message(role:string,content:string,force=false){const box=$("messages"),follow=force||box.scrollHeight-box.scrollTop-box.clientHeight<80;const p=document.createElement("p");p.className="message "+role;p.textContent=content;box.append(p);if(follow)box.scrollTop=box.scrollHeight;return p}
+let lastDiagnostic=0;
+function reportClientFailure(path:string,kind:string,status:number){
+ const now=Date.now();if(now-lastDiagnostic<1000)return;lastDiagnostic=now;
+ // Local, best effort, never send messages, request bodies, credentials or raw errors.
+ void fetch("/api/diagnostics",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({route:path.split("/")[0].split("?")[0],kind,status}),keepalive:true}).catch(()=>{});
+}
 async function api(path:string,data?:unknown){
  const controller=new AbortController(),timeout=window.setTimeout(()=>controller.abort(),path==="chat"?420000:15000);
+ let status=0;
  try{
   const response=await fetch("/api/"+path,{...(data===undefined?{}:{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)}),signal:controller.signal});
+  status=response.status;
   const value=await response.json();if(!response.ok)throw Error(value.error||"Ошибка сервера");return value;
- }catch(e){if(controller.signal.aborted)throw Error("Истекло время ожидания. Не отправляйте запрос повторно: он мог завершиться на сервере. Проверьте историю и панель писателя.");throw e}finally{clearTimeout(timeout)}
+ }catch(e){reportClientFailure(path,controller.signal.aborted?"timeout":status>=400?"http":status?"response":"network",status);if(controller.signal.aborted)throw Error("Истекло время ожидания. Не отправляйте запрос повторно: он мог завершиться на сервере. Проверьте историю и панель писателя.");throw e}finally{clearTimeout(timeout)}
 }
 const sendButton=$("chat-send") as HTMLButtonElement;
 function syncComposer(){sendButton.disabled=busy||!historyReady||!prompt.value.trim();$("composer").setAttribute("aria-busy",String(busy))}
