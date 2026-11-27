@@ -68,7 +68,7 @@ function setCinema(value:boolean){cinema=value;$("stellar-cinema").setAttribute(
 $("stellar-cinema").onclick=()=>setCinema(!cinema);
 avatar.onclick=()=>toggle();$("close").onclick=()=>toggle(false);avatar.oncontextmenu=e=>{e.preventDefault();toggleMenu()};
 function toggleMenu(){menu.hidden=!menu.hidden;$("chat-menu").setAttribute("aria-expanded",String(!menu.hidden));if(!menu.hidden){menu.classList.toggle("from-chat",!chat.hidden);(menu.querySelector("button") as HTMLButtonElement|null)?.focus()}}
-$("chat-menu").onclick=toggleMenu;document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(config.open||writerDialog.open||commandDialog.open||universeDialog.open||note.open||draftDialog.open)return;if(cinema){setCinema(false);return}if(!menu.hidden)menu.hidden=true;else if(!chat.hidden&&!config.open&&!writerDialog.open&&!commandDialog.open&&!universeDialog.open&&!note.open)toggle(false)}});document.addEventListener("click",e=>{if(!menu.contains(e.target as Node)&&!avatar.contains(e.target as Node)&&!$("chat-menu").contains(e.target as Node))menu.hidden=true;if(menu.hidden)$("chat-menu").setAttribute("aria-expanded","false")});
+$("chat-menu").onclick=toggleMenu;document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(config.open||writerDialog.open||commandDialog.open||universeDialog.open||note.open||draftDialog.open||proposalDialog.open)return;if(cinema){setCinema(false);return}if(!menu.hidden)menu.hidden=true;else if(!chat.hidden&&!config.open&&!writerDialog.open&&!commandDialog.open&&!universeDialog.open&&!note.open)toggle(false)}});document.addEventListener("click",e=>{if(!menu.contains(e.target as Node)&&!avatar.contains(e.target as Node)&&!$("chat-menu").contains(e.target as Node))menu.hidden=true;if(menu.hidden)$("chat-menu").setAttribute("aria-expanded","false")});
 function message(role:string,content:string,force=false){const box=$("messages"),follow=force||box.scrollHeight-box.scrollTop-box.clientHeight<80;const p=document.createElement("p");p.className="message "+role;p.textContent=content;box.append(p);if(follow)box.scrollTop=box.scrollHeight;return p}
 let lastDiagnostic=0;
 function reportClientFailure(path:string,kind:string,status:number){
@@ -77,7 +77,7 @@ function reportClientFailure(path:string,kind:string,status:number){
  void fetch("/api/diagnostics",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({route:path.split("/")[0].split("?")[0],kind,status}),keepalive:true}).catch(()=>{});
 }
 async function api(path:string,data?:unknown){
- const controller=new AbortController(),timeout=window.setTimeout(()=>controller.abort(),path==="chat"?420000:15000);
+ const controller=new AbortController(),timeout=window.setTimeout(()=>controller.abort(),path==="chat"?420000:path==="proposals/generate"?130000:15000);
  let status=0;
  try{
   const response=await fetch("/api/"+path,{...(data===undefined?{}:{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)}),signal:controller.signal});
@@ -147,6 +147,74 @@ $("command-writer").onclick=()=>{commandDialog.close();$("writer-open").click()}
 $("command-cloud").onclick=()=>{commandDialog.close();$("settings").click()};
 $("command-universe").onclick=()=>{commandDialog.close();$("universe-open").click()};
 $("command-network").onclick=()=>{commandDialog.close();toggle(false);if(!networkView)$("network-open").click()};
+const proposalDialog=$("proposal-dialog") as HTMLDialogElement;
+const proposalIdea=$("proposal-idea") as HTMLTextAreaElement,proposalKind=$("proposal-kind") as HTMLSelectElement,proposalConsent=$("proposal-consent") as HTMLInputElement;
+const proposalGenerate=$("proposal-generate") as HTMLButtonElement,proposalApprove=$("proposal-approve") as HTMLButtonElement,proposalReject=$("proposal-reject") as HTMLButtonElement;
+let proposalBusy=false,proposalCurrent:any=null,proposalSequence=0;
+function proposalButtons(){
+ proposalGenerate.disabled=proposalBusy||!!proposalCurrent||!proposalIdea.value.trim()||!proposalConsent.checked;
+ proposalApprove.disabled=proposalReject.disabled=proposalBusy||!proposalCurrent;
+ ($("proposal-refresh") as HTMLButtonElement).disabled=proposalBusy;
+}
+function renderProposals(data:any,notice=""){
+ proposalCurrent=data.pending||null;
+ $("proposal-badge").hidden=!proposalCurrent;
+ $("proposal-create").hidden=!!proposalCurrent;$("proposal-review").hidden=!proposalCurrent;
+ $("proposal-status").textContent=notice||(proposalCurrent?"Предложение ожидает решения.":"Утверждено замыслов: "+(data.approved||0)+".");
+ if(proposalCurrent){
+  const p=proposalCurrent;
+  $("proposal-kind-label").textContent=p.kind==="character"?"Новый персонаж":"Развитие сюжета";
+  $("proposal-title").textContent=p.title;$("proposal-original").textContent=p.idea;$("proposal-description").textContent=p.description;$("proposal-impact").textContent=p.impact;$("proposal-risks").textContent=p.risks;
+ }
+ const list=$("proposal-history-list");list.replaceChildren();
+ for(const p of data.recent||[]){const item=document.createElement("li");item.textContent=p.title+" · "+(p.status==="approved"?"Утверждён":"Отклонён");list.append(item)}
+ if(!list.children.length){const item=document.createElement("li");item.textContent="Решений пока нет.";list.append(item)}
+ proposalButtons();
+}
+async function loadProposals(){
+ if(proposalBusy)return;
+ const seq=++proposalSequence;proposalBusy=true;proposalCurrent=null;proposalButtons();
+ $("proposal-create").hidden=true;$("proposal-review").hidden=true;$("proposal-status").textContent="Загрузка…";
+ try{const data=await api("proposals");if(seq===proposalSequence&&proposalDialog.open)renderProposals(data)}
+ catch(e){if(seq===proposalSequence)$("proposal-status").textContent=String(e)}
+ finally{if(seq===proposalSequence){proposalBusy=false;proposalButtons()}}
+}
+function openProposals(kind?:string,idea?:string){
+ if(proposalDialog.open)return;
+ menu.hidden=true;proposalConsent.checked=false;
+ if(kind)proposalKind.value=kind;if(idea!==undefined)proposalIdea.value=idea.slice(0,2000);
+ proposalDialog.showModal();void loadProposals();
+}
+function creativeIntent(input:string){
+ const t=input.trim().toLocaleLowerCase("ru");
+ if(!/^(?:хочу|давай|добавь|придумай|разработай|предлагаю|введи|пусть)(?:\s|$)/u.test(t))return null;
+ if(/персонаж|персонал|нов(?:ый|ую|ого|ая)\s+геро|нов(?:ая|ую)\s+хранительниц/u.test(t))return "character";
+ if(/сюжет|поворот\s+истории|развити[ея]\s+истории/u.test(t))return "plot";
+ return null;
+}
+proposalIdea.oninput=proposalButtons;proposalConsent.onchange=proposalButtons;
+$("proposal-close").onclick=()=>{if(!proposalBusy)proposalDialog.close()};
+proposalDialog.oncancel=e=>{if(proposalBusy)e.preventDefault()};
+proposalDialog.onclose=()=>{proposalSequence++;proposalBusy=false;proposalCurrent=null;proposalButtons()};
+$("proposal-refresh").onclick=()=>void loadProposals();
+proposalGenerate.onclick=async()=>{
+ if(proposalGenerate.disabled)return;
+ const seq=++proposalSequence;proposalBusy=true;proposalButtons();$("proposal-status").textContent="Хакурэя разрабатывает предложение…";
+ try{const result=await api("proposals/generate",{kind:proposalKind.value,idea:proposalIdea.value.trim(),consent:proposalConsent.checked});if(seq!==proposalSequence||!proposalDialog.open)return;proposalIdea.value="";renderProposals(result)}
+ catch(e){if(seq===proposalSequence)$("proposal-status").textContent=String(e)+" Перед новой попыткой обновите список."}
+ finally{if(seq===proposalSequence){proposalConsent.checked=false;proposalBusy=false;proposalButtons()}}
+};
+async function decideProposal(approve:boolean){
+ const item=proposalCurrent;if(!item||proposalBusy)return;
+ if(!window.confirm(approve?"Утвердить этот замысел для будущих глав?":"Отклонить предложение?"))return;
+ const seq=++proposalSequence;proposalBusy=true;proposalButtons();
+ try{const result=await api("proposals/decision",{id:item.id,revision:item.revision,approve});if(seq===proposalSequence&&proposalDialog.open)renderProposals(result,approve?"Замысел утверждён. Писатель сможет учесть его в будущих главах.":"Предложение отклонено.")}
+ catch(e){if(seq===proposalSequence){proposalCurrent=null;$("proposal-status").textContent=String(e)+" Обновите список."}}
+ finally{if(seq===proposalSequence){proposalBusy=false;proposalButtons()}}
+}
+proposalApprove.onclick=()=>void decideProposal(true);proposalReject.onclick=()=>void decideProposal(false);
+$("quick-proposals").onclick=()=>openProposals();
+$("command-proposals").onclick=()=>{commandDialog.close();openProposals()};
 const draftDialog=$("draft-dialog") as HTMLDialogElement;
 const approveDraft=$("draft-approve") as HTMLButtonElement,rejectDraft=$("draft-reject") as HTMLButtonElement,refreshDraft=$("draft-refresh") as HTMLButtonElement;
 type ReviewDraft={id:number;revision:string;title:string;story:string;warnings:string[]};
@@ -343,7 +411,7 @@ $("config-form").onsubmit=async e=>{
   if(session===configSession)setConfigPending(false);
  }
 };
-$("composer").onsubmit=async e=>{e.preventDefault();const content=prompt.value.trim();if(!content||busy||!historyReady)return;busy=true;prompt.value="";syncComposer();message("user",content,true);$("status").textContent="Обработка запроса…";try{const result=await api("chat",{content});if(result.reader)showBook(result.reader);else message("assistant",result.reply);$("status").textContent=result.connected?"Cloud.ru · ответ получен":"Локальный режим · сообщение сохранено"}catch(e){message("error",String(e));$("status").textContent="Ошибка запроса"}finally{busy=false;syncComposer();void refreshGraph();if(!chat.hidden&&!config.open&&!writerDialog.open&&!commandDialog.open&&!universeDialog.open&&!note.open&&!draftDialog.open){if(book.hidden){if(!prompt.value.trim())prompt.focus()}else $("book-scroll").focus()}}};
+$("composer").onsubmit=async e=>{e.preventDefault();const content=prompt.value.trim();if(!content||busy||!historyReady)return;const intent=creativeIntent(content);if(intent&&content.length<=2000){openProposals(intent,content);return}busy=true;prompt.value="";syncComposer();message("user",content,true);$("status").textContent="Обработка запроса…";try{const result=await api("chat",{content});if(result.reader)showBook(result.reader);else message("assistant",result.reply);$("status").textContent=result.connected?"Cloud.ru · ответ получен":"Локальный режим · сообщение сохранено"}catch(e){message("error",String(e));$("status").textContent="Ошибка запроса"}finally{busy=false;syncComposer();void refreshGraph();if(!chat.hidden&&!config.open&&!writerDialog.open&&!commandDialog.open&&!universeDialog.open&&!note.open&&!draftDialog.open&&!proposalDialog.open){if(book.hidden){if(!prompt.value.trim())prompt.focus()}else $("book-scroll").focus()}}};
 
 const image=$("avatar-image") as HTMLImageElement;
 function useAvatar(){image.src="/api/avatar?"+Date.now();image.onerror=()=>{image.onerror=null;image.src="/avatar.svg"}}
@@ -494,7 +562,7 @@ $("book-smaller").onclick=()=>{font=Math.max(16,font-1);readerStyle()};
 $("book-larger").onclick=()=>{font=Math.min(32,font+1);readerStyle()};
 $("book-spacing").onclick=()=>{spacing=spacing>=2.15?1.5:Math.min(2.2,Math.round((spacing+.15)*100)/100);readerStyle()};
 $("book-focus").onclick=()=>{focused=!focused;chat.classList.toggle("book-focus",focused);syncGraphViewport();scheduleReflow();$("book-focus").setAttribute("aria-pressed",String(focused))};
-document.addEventListener("keydown",e=>{if(book.hidden||chat.hidden||config.open||writerDialog.open||commandDialog.open||universeDialog.open||note.open||draftDialog.open||e.altKey||e.ctrlKey||e.metaKey||e.shiftKey||e.repeat||window.getSelection()?.toString())return;if(e.target instanceof HTMLInputElement||e.target instanceof HTMLTextAreaElement||e.target instanceof HTMLButtonElement)return;if(e.key==="ArrowRight"||e.key==="ArrowLeft"){e.preventDefault();void turn(e.key==="ArrowRight"?"next":"back")}});
+document.addEventListener("keydown",e=>{if(book.hidden||chat.hidden||config.open||writerDialog.open||commandDialog.open||universeDialog.open||note.open||draftDialog.open||proposalDialog.open||e.altKey||e.ctrlKey||e.metaKey||e.shiftKey||e.repeat||window.getSelection()?.toString())return;if(e.target instanceof HTMLInputElement||e.target instanceof HTMLTextAreaElement||e.target instanceof HTMLButtonElement)return;if(e.key==="ArrowRight"||e.key==="ArrowLeft"){e.preventDefault();void turn(e.key==="ArrowRight"?"next":"back")}});
 let touch:{x:number,y:number}|null=null;
 scroll.addEventListener("touchstart",e=>{touch=e.touches.length===1?{x:e.touches[0].clientX,y:e.touches[0].clientY}:null},{passive:true});
 scroll.addEventListener("touchcancel",()=>{touch=null},{passive:true});
