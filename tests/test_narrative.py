@@ -60,7 +60,7 @@ class NarrativeTests(unittest.TestCase):
         _,_=self.publish(1,story1)
         self.assertEqual(n.read(self.db,14)["chapter"],14)
         _,_=self.publish(2,story2)
-        _,_=self.publish(3,"Слуга заметил тайный проход под башней. Он не рассказал никому о странном движении за решёткой.",False)
+        _,_=self.publish(3,"Слуга заметил тайный проход под башней. Он не рассказал никому о странном движении за решёткой и поспешил скрыться за дверью.",False)
         plan=novel.enrich(self.db,saga.plan(self.db,"future"))
         packet=n.prepare(self.db,plan)
         self.assertEqual([x["chapter"] for x in packet["current"]],[14,15])
