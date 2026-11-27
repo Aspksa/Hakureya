@@ -28,6 +28,14 @@ class WriterStreamTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             writer_stream.read_response(Response(chunk("unfinished")),lambda *_:None)
 
+    def test_done_without_finish_and_reasoning_only(self):
+        completed=writer_stream.read_response(Response(chunk('{"story":"text"}')+b"data: [DONE]\n\n"),lambda *_:None)
+        self.assertEqual(completed["choices"][0]["finish_reason"],"stop")
+        body=event({"choices":[{"delta":{"reasoning_content":"private"},"finish_reason":"length"}]})+event({"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":4096}})+b"data: [DONE]\n\n"
+        exhausted=writer_stream.read_response(Response(body),lambda *_:None)
+        self.assertEqual(exhausted["choices"][0]["message"]["content"],"")
+        self.assertEqual(exhausted["usage"]["completion_tokens"],4096)
+
     def test_json_fallback_same_response(self):
         result={"choices":[{"message":{"content":"text"}}]}
         self.assertEqual(writer_stream.read_response(Response(json.dumps(result).encode(),"application/json"),lambda *_:self.fail("not streamed")),result)
