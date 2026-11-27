@@ -85,3 +85,25 @@ class ReaderTest(unittest.TestCase):
         self.assertEqual(d["chapter"],1)
         self.assertEqual(d["offset"],len(d["text"]))
         self.assertEqual(self.db.execute("SELECT COUNT(*) FROM chronicle_attempts").fetchone()[0],0)
+
+    def test_contents_is_read_only_and_cyrillic_search(self):
+        r.move(self.db,"chapter",5)
+        old=r.bookmark(self.db)
+        data=r.contents(self.db)
+        self.assertEqual(data["total"],13)
+        self.assertEqual(data["current"],5)
+        title=data["items"][4]["title"]
+        self.assertTrue(any(x["chapter"]==5 for x in r.contents(self.db,query=title.upper())["items"]))
+        self.assertEqual(r.contents(self.db,query="5")["items"][0]["chapter"],5)
+        self.assertEqual(r.bookmark(self.db),old)
+        with self.assertRaises(ValueError):r.contents(self.db,False)
+
+    def test_portable_preferences_persist_without_moving_bookmark(self):
+        r.move(self.db,"chapter",5)
+        old=r.bookmark(self.db)
+        prefs={"font":24,"spacing":2.1,"theme":"sepia","family":"sans","width":"wide"}
+        self.assertEqual(r.save_preferences(self.db,prefs),prefs)
+        with self.assertRaises(ValueError):r.save_preferences(self.db,{**prefs,"font":100})
+        self.db.commit();self.db.close();self.db=self.connect()
+        self.assertEqual(r.view(self.db)["preferences"],prefs)
+        self.assertEqual(r.bookmark(self.db),old)
