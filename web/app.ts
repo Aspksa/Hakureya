@@ -200,7 +200,7 @@ $("proposal-refresh").onclick=()=>void loadProposals();
 proposalGenerate.onclick=async()=>{
  if(proposalGenerate.disabled)return;
  const seq=++proposalSequence;proposalBusy=true;proposalButtons();$("proposal-status").textContent="Хакурэя разрабатывает предложение…";
- try{const result=await api("proposals/generate",{kind:proposalKind.value,idea:proposalIdea.value.trim(),consent:proposalConsent.checked});if(seq!==proposalSequence||!proposalDialog.open)return;proposalIdea.value="";renderProposals(result)}
+ try{const result=await api("proposals/generate",{kind:proposalKind.value,idea:proposalIdea.value.trim(),consent:proposalConsent.checked});if(seq!==proposalSequence||!proposalDialog.open)return;if(prompt.value.trim()===proposalIdea.value.trim()){prompt.value="";syncComposer()}proposalIdea.value="";renderProposals(result)}
  catch(e){if(seq===proposalSequence)$("proposal-status").textContent=String(e)+" Перед новой попыткой обновите список."}
  finally{if(seq===proposalSequence){proposalConsent.checked=false;proposalBusy=false;proposalButtons()}}
 };
