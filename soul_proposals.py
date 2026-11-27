@@ -16,6 +16,9 @@ def init(db):
         created TEXT DEFAULT CURRENT_TIMESTAMP, decided TEXT)""")
     db.execute("CREATE UNIQUE INDEX IF NOT EXISTS literary_proposal_pending ON literary_proposals(status) WHERE status='pending'")
 
+    db.execute("""CREATE TABLE IF NOT EXISTS literary_proposal_execution(
+        proposal_id INTEGER PRIMARY KEY,chapter INTEGER NOT NULL,quote TEXT NOT NULL,source TEXT NOT NULL,checksum TEXT NOT NULL)""")
+
 def normalize(raw):
     value=writer_response.parse(raw)
     out={}
