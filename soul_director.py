@@ -106,12 +106,14 @@ def context(db,plan):
         bool(plan.get("immortal",{}).get("chosen")) or bool(plan.get("infinite",{}).get("selected")) or not inf.ready(db) or bool(inf.remaining(db)))
     continuation=plan.get("novel",{}).get("part",1)>1
     facts,threads,_=inf.ledger(list(inf.published(db)))
-    opened=[t for t in threads.values() if t["closed"] is None]
+    def in_scope(chapter):
+        return plan["arc"]=="future" or db.execute("SELECT arc FROM omega_index WHERE number=?",(chapter,)).fetchone()==(plan["arc"],)
+    opened=[t for t in threads.values() if t["closed"] is None and in_scope(t["chapter"])]
     mature=sorted((t for t in opened if n-t["chapter"]>=t["delay"]),key=lambda t:t["chapter"])
     protected=sorted((t for t in opened if n-t["chapter"]<t["delay"]),key=lambda t:t["chapter"])
-    obligations=[t for t in ev.state(db).values() if t["kind"] in ("promise","conflict","thread") and t["state"]=="open"]
+    obligations=[t for t in ev.state(db).values() if t["kind"] in ("promise","conflict","thread") and t["state"]=="open" and in_scope(t["chapter"])]
     li.refresh(db)
-    data=list(li.rows(db));actors,_=li.registry(data)
+    data=[(n,f) for n,f in li.rows(db) if in_scope(n)];actors,_=li.registry(data)
     forgotten=sorted((a for a in actors.values() if n-a["last"]>=9),key=lambda a:a["last"])
     prefs=dict(db.execute("SELECT theme,weight FROM evolution_preferences"))
     candidates=choose_candidates(n,recent_themes,mature,forgotten,prefs)
@@ -149,7 +151,7 @@ def context(db,plan):
     if mature and chosen["theme"]=="mystery":
         row=db.execute("SELECT number,title,story FROM omega_index WHERE number=?",(mature[0]["chapter"],)).fetchone()
         if row:recall=[{"number":row[0],"title":row[1],"story":row[2][-300:]}]+[x for x in recall if x["number"]!=row[0]]
-    knowledge=[{"chapter":f["chapter"],"subject":f["subject"],"detail":f["detail"][:120],"knows":f["knows"],"quote":f["evidence"][:160]} for f in ev.state(db).values() if f["kind"] in ("secret","knowledge")]
+    knowledge=[{"chapter":f["chapter"],"subject":f["subject"],"detail":f["detail"][:120],"knows":f["knows"],"quote":f["evidence"][:160]} for f in ev.state(db).values() if f["kind"] in ("secret","knowledge") and in_scope(f["chapter"])]
     knowledge.sort(key=lambda x:(not bool(focus and o.normalized(focus) in [o.normalized(v) for v in x["knows"]+[x["subject"]]]),-x["chapter"]))
     # Three volumes of provisional pacing, no future canonical facts.
     forecast=[{"volume":o.volume(n)+i,"start":n if i==0 else 14+(o.volume(n)+i-2)*12,"direction":("последствия текущей линии" if i==0 else "пересечение и развитие" if i==1 else "выбор и новая линия")} for i in range(3)]
