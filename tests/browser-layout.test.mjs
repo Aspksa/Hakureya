@@ -57,6 +57,8 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
      let body="";for await(const chunk of req)body+=chunk;
      const payload=JSON.parse(body);
      if(payload.action==="position")checkpoints.push(payload);
+     if(payload.action==="contents"){res.writeHead(200,{"Content-Type":"application/json"}).end(JSON.stringify({page:1,pages:1,total:1,current:1,items:[{chapter:1,title:"Первая глава",volume:1}]}));return}
+     if(payload.action==="style"){res.writeHead(200,{"Content-Type":"application/json"}).end(JSON.stringify({preferences:payload.preferences}));return}
      res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify(payload.action==="position"?{ok:true}:{reader}));return;
     }
     if(path==="/api/history"&&historyFailure){historyFailure=false;res.writeHead(503,{"Content-Type":"application/json"}).end(JSON.stringify({error:"fixture unavailable"}));return}
@@ -203,6 +205,25 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
    await waitFor(()=>checkpoints.length>before&&checkpoints.at(-1).start>0);
    assert.match(await evaluate("document.querySelector('#book-position').textContent"),/Страница 2 из /);
    assert.ok(await evaluate("document.querySelector('#book-title').hidden"));
+   if(width===1920){
+    await evaluate("document.querySelector('#book-contents').click()");
+    await waitFor(()=>evaluate("document.querySelector('#book-contents-list button')?.textContent.includes('Первая глава')"));
+    assert.equal(await evaluate("document.querySelector('#book-contents-list button').getAttribute('aria-current')"),"true");
+    await evaluate("document.querySelector('#book-contents-list button').click()");
+    assert.equal(await evaluate("document.querySelector('#book-contents-panel').hidden"),true);
+    assert.match(await evaluate("document.querySelector('#book-position').textContent"),/Страница 2 из /);
+    await evaluate("document.querySelector('#book-settings').click();const s=document.querySelector('#book-theme');s.value='sepia';s.dispatchEvent(new Event('change'))");
+    assert.equal(await evaluate("document.querySelector('#chat').dataset.bookTheme"),"sepia");
+    await evaluate("document.querySelector('#book-larger').click()");
+    assert.equal(await evaluate("document.querySelector('#book-font-value').textContent"),"22 px");
+    await evaluate("document.querySelector('#book-reset-style').click();document.querySelector('#book-settings-close').click()");
+    assert.equal(await evaluate("document.querySelector('#chat').dataset.bookTheme"),"night");
+    await delay(250);
+    const jumpBefore=checkpoints.length;
+    await evaluate("(()=>{const s=document.querySelector('#book-jump');s.value='1';s.dispatchEvent(new Event('change'));return true})()");
+    await waitFor(()=>checkpoints.length>jumpBefore&&checkpoints.at(-1).start===0);
+    assert.match(await evaluate("document.querySelector('#book-position').textContent"),/Страница 1 из /);
+   }
    checkpoints.length=0;
    await evaluate("document.querySelector('#settings').click()");
    assert.ok(await evaluate("document.querySelector('#config').open && parseFloat(getComputedStyle(document.querySelector('#key')).fontSize)>=16"));
