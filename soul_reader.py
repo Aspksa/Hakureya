@@ -1,12 +1,14 @@
 """Offline book reader. No generation, no skipped or rewritten source text."""
 import re
 import hashlib
+import json
 import soul_saga
 import soul_omega
 
 PAGE_SIZE=1500
 
 def init(db):
+    db.execute("CREATE TABLE IF NOT EXISTS reader_preferences(id INTEGER PRIMARY KEY CHECK(id=1),payload TEXT NOT NULL)")
     db.execute("""CREATE TABLE IF NOT EXISTS book_reader(
        id INTEGER PRIMARY KEY CHECK(id=1), chapter INTEGER NOT NULL,
        page INTEGER NOT NULL, source_hash TEXT NOT NULL, active INTEGER NOT NULL)""")
@@ -174,6 +176,7 @@ def view(db):
       "can_back":n>1 or p>0,"can_next":n<latest(db) or p+1<len(pages),
       "last_published":n==latest(db) and p+1==len(pages)}
     result["document"]=document(db)
+    result["preferences"]=preferences(db)
     return result
 
 
@@ -290,3 +293,22 @@ def contents(db,page=1,query=""):
     else:active_chapter=None
     return {"page":page,"pages":pages,"total":len(items),"current":active_chapter,
         "items":[{"chapter":n,"title":t,"volume":soul_omega.volume(n)} for n,t in items[(page-1)*size:page*size]]}
+
+
+def preferences(db):
+    row=db.execute("SELECT payload FROM reader_preferences WHERE id=1").fetchone()
+    if not row:return None
+    try:return validate_preferences(json.loads(row[0]))
+    except (ValueError,TypeError,KeyError):return None
+
+def validate_preferences(value):
+    if not isinstance(value,dict) or set(value)!={"font","spacing","theme","family","width"}:raise ValueError("reader style")
+    if type(value["font"]) is not int or not 16<=value["font"]<=32:raise ValueError("reader font")
+    if type(value["spacing"]) not in (int,float) or value["spacing"] not in (1.5,1.8,2.1):raise ValueError("reader spacing")
+    if value["theme"] not in ("night","sepia","paper") or value["family"] not in ("serif","sans") or value["width"] not in ("normal","wide"):raise ValueError("reader appearance")
+    return value
+
+def save_preferences(db,value):
+    value=validate_preferences(value)
+    db.execute("INSERT OR REPLACE INTO reader_preferences VALUES(1,?)",(json.dumps(value,ensure_ascii=False),))
+    return value
