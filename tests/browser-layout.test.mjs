@@ -40,6 +40,8 @@ const brainKeys=["plot","characters","relations","magic","time","memory","editor
 const neural={network:true,total:10,limited:false,records:[{key:"lit:db",label:"SQLite",kind:"lit_database",group:4,slot:0},...brainKeys.map((k,i)=>({key:"brain:"+k,label:k,kind:"lit_brain",group:4,slot:i+1,neural_inputs:i?[brainKeys[i-1]]:[]}))],edges:brainKeys.slice(1).map((k,i)=>({a:"brain:"+brainKeys[i],b:"brain:"+k,kind:"neural_input"}))};
 const prose=Array.from({length:55},(_,i)=>"Абзац "+(i+1)+". Хакурэя подняла глаза и прислушалась к тишине. — Пойдём дальше, — сказала она. Герой улыбнулся.").join("\n\n");
 const checkpoints=[];
+let chatCalls=0,historyFailure=false;
+const inFlightGraphs=new Map();let maxGraphConcurrency=0;
 let activity={session:"test",revision:1,active:[],recent:[]};
 const reader={chapter:1,title:"Первая глава",volume:1,page:1,pages:5,text:"Вечный снег. \n\nХакурэя открыла глаза.",chapter_progress:.2,volume_progress:.03,can_back:false,can_next:true,last_published:false,document:{chapter:1,last_chapter:1,title:"Первая глава",volume:1,text:prose,hash:"fixture",offset:0,segments:[{number:1,start:0,end:Array.from(prose).length,hash:"fixture-part"}],latest:2,volume_count:2,volume_ordinal:1,parts:1,epoch:1}};
 test("real browser: SVG, chat, book and settings at four viewport widths",{skip:!chrome&&"Chrome/Chromium not installed",timeout:120000},async()=>{
@@ -57,6 +59,9 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
      if(payload.action==="position")checkpoints.push(payload);
      res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify(payload.action==="position"?{ok:true}:{reader}));return;
     }
+    if(path==="/api/history"&&historyFailure){historyFailure=false;res.writeHead(503,{"Content-Type":"application/json"}).end(JSON.stringify({error:"fixture unavailable"}));return}
+    if(path==="/api/chat")chatCalls++;
+    if(path==="/api/graph"||path==="/api/graph/network"){inFlightGraphs.set(path,(inFlightGraphs.get(path)||0)+1);maxGraphConcurrency=Math.max(maxGraphConcurrency,[...inFlightGraphs.values()].reduce((a,b)=>a+b,0));await delay(60);inFlightGraphs.set(path,inFlightGraphs.get(path)-1)}
     const data=path==="/api/graph/network"?neural:path==="/api/graph"?graph:path==="/api/history"?{messages:[],connected:false}:path==="/api/reader"?{reader:null}:path==="/api/chat"?{reply:"",reader,connected:false}:activity;
     req.resume();res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify(data));return;
    }
@@ -83,6 +88,7 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
   };
   for(const [width,height] of [[1920,1080],[1366,768],[1280,720],[390,844]]){
    await send("Emulation.setDeviceMetricsOverride",{width,height,deviceScaleFactor:1,mobile:false});
+   historyFailure=width===390;
    await send("Page.navigate",{url:url+"?width="+width});
    await waitFor(()=>evaluate("location.search==='?width="+width+"' && !!document.querySelector('#graph [data-key=\"immortal:root\"]')"));
    await evaluate("document.querySelector('#network-open').click()");
@@ -96,6 +102,8 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
    assert.ok(metrics.diameter>=17.5&&metrics.diameter<=18.5,JSON.stringify(metrics));
    assert.ok(metrics.font>=13&&metrics.font<=16,JSON.stringify(metrics));
    assert.ok(metrics.labels>=1);
+   const collisions=await evaluate("(()=>{const ids=['replay','atlas-open','network-open','stellar-cinema'];const nodes=ids.map(id=>[id,document.getElementById(id).getBoundingClientRect()]);nodes.push(['effects',document.querySelector('.genesis-settings').getBoundingClientRect()]);return nodes.flatMap(([id,a],i)=>nodes.slice(i+1).filter(([,b])=>a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top).map(([other])=>id+' / '+other))})()");
+   assert.deepEqual(collisions,[]);
    assert.equal(await evaluate("document.querySelector('#graph [data-key=\\\"cloud:api\\\"] title').textContent"),"Cloud.ru");
    assert.ok(await evaluate("!!document.querySelector('#stellar-core') && !!document.querySelector('#stellar-chapter')"));
    await evaluate("document.querySelector('#stellar-cinema').click()");
@@ -112,6 +120,12 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
    await evaluate("document.querySelector('#avatar').click()");
    await waitFor(()=>evaluate("!document.querySelector('#chat').hidden"));
    await delay(200);
+   if(width===390){await waitFor(()=>evaluate("!document.querySelector('#chat-retry').hidden"));await evaluate("document.querySelector('#chat-retry').click()");await waitFor(()=>evaluate("document.querySelector('#chat-retry').hidden"))}
+   assert.equal(await evaluate("document.querySelector('#chat-send').disabled"),true);
+   await evaluate("document.querySelector('#chat-menu').click()");
+   assert.equal(await evaluate("document.querySelector('#menu').hidden"),false);
+   await evaluate("document.querySelector('#chat-menu').click()");
+   assert.equal(await evaluate("document.querySelector('#menu').hidden"),true);
    const chat=await evaluate("({width:document.querySelector('#chat').getBoundingClientRect().width,graph:document.querySelector('#graph').clientWidth,font:parseFloat(getComputedStyle(document.querySelector('#messages')).fontSize)})");
    assert.ok(chat.font>=16);
    if(width>=1050){assert.ok(chat.width>=600&&chat.width<=700);assert.ok(Math.abs(chat.width+chat.graph-width)<2)}else assert.equal(chat.width,width);
@@ -124,6 +138,7 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
    assert.equal(await evaluate("document.querySelectorAll('#command-results .command-item').length"),1);
    await evaluate("document.querySelector('#command-results .command-item').click()");
    assert.equal(await evaluate("document.querySelector('#prompt').value"),"Статус развития");
+   assert.equal(await evaluate("document.querySelector('#chat-send').disabled"),false);
    assert.equal(await evaluate("document.querySelector('#command-dialog').open"),false);
    assert.equal(await evaluate("document.querySelector('#messages').children.length"),0);
    await evaluate("document.querySelector('#prompt').value=''");
@@ -132,8 +147,10 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
    assert.equal(await evaluate("document.querySelector('#prompt').value"),"Летопись: читать 5");
    assert.equal(await evaluate("document.querySelector('#prompt').value.slice(document.querySelector('#prompt').selectionStart,document.querySelector('#prompt').selectionEnd)"),"5");
    assert.equal(await evaluate("document.querySelector('#messages').children.length"),0);
-   await evaluate("document.querySelector('#prompt').value='Читать книгу';document.querySelector('#composer').dispatchEvent(new Event('submit',{cancelable:true,bubbles:true}));true");
+   const sentBefore=chatCalls;
+   await evaluate("document.querySelector('#prompt').value='Читать книгу';document.querySelector('#composer').dispatchEvent(new Event('submit',{cancelable:true,bubbles:true}));document.querySelector('#prompt').value='Дубль';document.querySelector('#composer').dispatchEvent(new Event('submit',{cancelable:true,bubbles:true}));true");
    await waitFor(()=>evaluate("!document.querySelector('#book').hidden"));
+   assert.equal(chatCalls,sentBefore+1);
    const book=await evaluate("({font:parseFloat(getComputedStyle(document.querySelector('#book-page')).fontSize),title:parseFloat(getComputedStyle(document.querySelector('#book-title')).fontSize),button:document.querySelector('#book-next').getBoundingClientRect().width})");
    assert.equal(book.font,21);
    assert.ok(book.title>=29);
@@ -152,6 +169,7 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
    assert.ok(await evaluate("document.querySelector('#config').open && parseFloat(getComputedStyle(document.querySelector('#key')).fontSize)>=16"));
    await evaluate("document.querySelector('#config-close').click()");
   }
+  assert.ok(maxGraphConcurrency<=1,"overlapping graph requests: "+maxGraphConcurrency);
  }finally{
   ws?.close();
   if(browser&&browser.exitCode===null){browser.kill();await Promise.race([new Promise(r=>browser.once("exit",r)),delay(2000)])}
