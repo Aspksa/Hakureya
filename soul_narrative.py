@@ -40,7 +40,7 @@ def init(db):
     db.execute("INSERT OR IGNORE INTO narrative_maintenance VALUES(1,0)")
 
 def fingerprint(source):
-    return o.digest(o.dump([VERSION,source]))
+    return str(VERSION)+":"+source
 
 def excerpts(story,spans):
     """Extract representative sentences from each contiguous scene, preserving offsets."""
@@ -88,10 +88,11 @@ def refresh(db,limit=None,chapter=None):
     init(db)
     u.refresh(db,limit=limit,chapter=chapter)
     sql="""SELECT s.chapter,s.digest FROM universe_sources s LEFT JOIN narrative_sources n ON n.chapter=s.chapter
-           WHERE s.chapter NOT IN (SELECT chapter FROM universe_dirty)"""
-    args=[]
+           WHERE s.chapter NOT IN (SELECT chapter FROM universe_dirty) AND (n.digest IS NULL OR n.digest!=?||s.digest)"""
+    args=[str(VERSION)+":"]
     if chapter is not None:sql+=" AND s.chapter=?";args.append(chapter)
     sql+=" ORDER BY s.chapter"
+    if limit is not None:sql+=" LIMIT ?";args.append(max(1,min(100,limit)))
     changed=0
     for n,source in db.execute(sql,args).fetchall():
         old=db.execute("SELECT digest FROM narrative_sources WHERE chapter=?",(n,)).fetchone()
@@ -134,7 +135,7 @@ def status(db):
     expected=13+db.execute("SELECT COUNT(*) FROM saga_arcs a JOIN chronicle_drafts d ON d.id=a.draft_id WHERE a.number IS NOT NULL AND d.status='approved'").fetchone()[0]
     indexed,scenes,chars,signals=db.execute("""SELECT COUNT(*),COALESCE(SUM(n.scenes),0),COALESCE(SUM(n.chars),0),COALESCE(SUM(n.signals),0)
        FROM narrative_sources n JOIN universe_sources s ON s.chapter=n.chapter JOIN omega_index i ON i.number=n.chapter
-       WHERE n.chapter NOT IN (SELECT chapter FROM universe_dirty)""").fetchone()
+       WHERE n.chapter NOT IN (SELECT chapter FROM universe_dirty) AND n.digest=?||s.digest""",(str(VERSION)+":",)).fetchone()
     evidence=db.execute("SELECT COUNT(*) FROM intellect_evidence").fetchone()[0]
     return {"published":expected,"archive":total,"indexed":indexed,"pending":max(0,expected-indexed),
             "scenes":scenes,"chars":chars,"signals":signals,"evidence":evidence,"method":"local_extractive",
