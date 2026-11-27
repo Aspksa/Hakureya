@@ -66,5 +66,8 @@ def read_response(response,on_progress,on_preview=None):
             event=[]
         elif line.startswith("data:"):
             event.append(line[5:].lstrip(" "))
-    if not parts or reason not in ("stop","length"):raise ValueError("incomplete writer stream")
+    # A provider may omit finish_reason but send an explicit [DONE]. The caller
+    # still requires a complete JSON object; EOF without a terminal marker is rejected.
+    if reason is None and finished and parts:reason="stop"
+    if reason not in ("stop","length"):raise ValueError("incomplete writer stream")
     return {"choices":[{"message":{"content":"".join(parts)},"finish_reason":reason}],"usage":usage}

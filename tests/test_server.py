@@ -70,6 +70,54 @@ class ServerTest(unittest.TestCase):
             self.assertIn("завершите текущую главу Династии",self.request("chat",{"content":"летопись: цикл обычная"})["reply"])
             self.assertEqual(remote.call_count,1)
 
+    def test_writer_recovers_fenced_json_and_invalid_optional_metadata(self):
+        from test_dynasty import base
+        self.request("config",{"key":"test-key","model":"test-model","consent":True})
+        data=base()
+        data["literary"]={"events":[{"summary":"Ошибка","evidence":"нет в тексте","characters":[],"cause":None}],"mysteries":[],"diary":""}
+        data["tags"]=["неизвестный тег"]
+        data["dynasty"]={"step":11,"evidence":"Маюри была приговорена к казни."}
+        raw="\x60\x60\x60json\n"+json.dumps(data,ensure_ascii=False)+"\n\x60\x60\x60"
+        fake=MagicMock()
+        fake.__enter__.return_value.read.return_value=json.dumps({"choices":[{"message":{"content":raw},"finish_reason":"stop"}]}).encode()
+        with patch.object(server,"urlopen",return_value=fake) as remote:
+            reply=self.request("chat",{"content":"Продолжи династию"})["reply"]
+            self.assertIn("Черновик создан",reply)
+            self.assertIn("ручная проверка",reply)
+            self.assertIn(data["story"],reply)
+            self.assertEqual(remote.call_count,1)
+        with closing(server.connect()) as db:
+            p=server.soul_chronicle.latest_pending(db)
+            self.assertEqual(p["story"],data["story"])
+            self.assertTrue(server.soul_chronicle.review_warnings(db,p["id"]))
+            self.assertEqual(db.execute("SELECT status FROM chronicle_attempts").fetchone()[0],"draft")
+        self.assertIn("ручная проверка",self.request("chat",{"content":"Покажи черновик"})["reply"])
+
+    def test_resume_failed_writer_job_requires_new_consent(self):
+        self.request("config",{"key":"test-key","model":"test-model","consent":True})
+        self.request("writer",{"mode":"once","target_pages":5,"interval":20,"consent":True})
+        with closing(server.connect()) as db, db:
+            a=server.soul_chronicle.reserve(db,allow_story=True)
+            server.soul_chronicle.fail(db,a)
+        with patch.object(server,"urlopen") as remote:
+            reply=self.request("chat",{"content":"Развивай историю сама"})["reply"]
+            self.assertIn("Продолжить задание",reply)
+            with self.assertRaises(HTTPError):self.request("writer/resume",{"consent":False})
+            state=self.request("writer/resume",{"consent":True})
+            self.assertEqual(state["job"]["state"],"active")
+            self.assertEqual(state["job"]["attempts"],1)
+            self.assertEqual(state["daily_limit"],20)
+            remote.assert_not_called()
+        with closing(server.connect()) as db, db:
+            server.writer_volume.reconcile_job(db)
+            self.assertTrue(server.writer_volume.active_job(db))
+            b=server.soul_chronicle.reserve(db,allow_story=True)
+            self.assertIsNotNone(b)
+            self.assertNotEqual(a[0],b[0])
+            server.soul_chronicle.fail(db,b)
+            self.assertEqual(server.writer_volume.job(db)["state"],"error")
+            self.assertEqual(server.writer_volume.job(db)["attempts"],2)
+
     def test_writer_transport_failure_releases_reservation(self):
         from http.client import IncompleteRead
         self.request("config",{"key":"test-key","model":"test-model","consent":True})

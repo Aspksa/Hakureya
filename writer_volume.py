@@ -17,6 +17,7 @@ def init(db):
         id INTEGER PRIMARY KEY CHECK(id=1), pages INTEGER NOT NULL,
         model TEXT NOT NULL, state TEXT NOT NULL, reason TEXT NOT NULL)""")
     db.execute("CREATE TABLE IF NOT EXISTS writer_job_attempt(day TEXT PRIMARY KEY)")
+    db.execute("CREATE TABLE IF NOT EXISTS writer_job_ack(day TEXT PRIMARY KEY)")
 
 def target(db):
     row=db.execute("SELECT target FROM writer_daily_goal WHERE id=1").fetchone()
@@ -90,7 +91,7 @@ def job(db):
     chars=0
     for raw,check in db.execute("""SELECT d.payload,d.checksum FROM writer_job_attempt j
         JOIN chronicle_attempts a ON a.day=j.day JOIN chronicle_drafts d ON d.diary_id=a.diary_id
-        WHERE d.status='approved'"""):
+        WHERE d.status='approved' AND a.status='draft'"""):
         chars+=len(ch.unpack(raw,check)["story"])
     count=db.execute("SELECT COUNT(*) FROM writer_job_attempt").fetchone()[0]
     return dict(pages=row[0],model=row[1],state=row[2],reason=row[3],chars=chars,attempts=count,limit=MAX_ATTEMPTS)
@@ -101,6 +102,7 @@ def start_job(db,pages,model):
         raise ValueError("existing job, request or pending draft")
     if len(attempts(db,today()))>=MAX_ATTEMPTS:raise ValueError("daily ceiling")
     db.execute("DELETE FROM writer_job_attempt")
+    db.execute("DELETE FROM writer_job_ack")
     db.execute("INSERT OR REPLACE INTO writer_job VALUES(1,?,?,'active','')",(pages,model))
     set_target(db,0)
 
@@ -122,7 +124,7 @@ def reconcile_job(db):
         close_job(db,"done","Разовое задание выполнено. Писатель выключен.")
         return
     if db.execute("""SELECT 1 FROM writer_job_attempt j JOIN chronicle_attempts a ON a.day=j.day
-        WHERE a.status IN ('failed','interrupted')""").fetchone():
+        WHERE a.status IN ('failed','interrupted') AND NOT EXISTS (SELECT 1 FROM writer_job_ack k WHERE k.day=a.day)""").fetchone():
         close_job(db,"error","Задание остановлено после ошибки. Повторный платный запрос не отправлен.")
         return
     if db.execute("""SELECT 1 FROM writer_job_attempt j JOIN chronicle_attempts a ON a.day=j.day
@@ -133,3 +135,19 @@ def reconcile_job(db):
     if db.execute("SELECT 1 FROM chronicle_attempts WHERE status='reserved'").fetchone():return
     if st["attempts"]>=MAX_ATTEMPTS or len(attempts(db,today()))>=MAX_ATTEMPTS:
         close_job(db,"limit","Задание остановлено: достигнут защитный предел запросов.")
+
+
+def resume_job(db,model):
+    st=job(db)
+    if not st or st["state"]!="error":raise ValueError("Нет остановленного задания после ошибки.")
+    if model!=st["model"]:raise ValueError("Модель изменилась. Создайте новое задание.")
+    if st["chars"]>=st["pages"]*PAGE_CHARS or st["attempts"]>=MAX_ATTEMPTS or len(attempts(db,today()))>=MAX_ATTEMPTS:
+        raise ValueError("Цель или защитный предел уже достигнут.")
+    if db.execute("SELECT 1 FROM chronicle_attempts WHERE status='reserved'").fetchone() or db.execute("SELECT 1 FROM chronicle_drafts WHERE status='pending'").fetchone():
+        raise ValueError("Сначала завершите текущую попытку или черновик.")
+    db.execute("""INSERT OR IGNORE INTO writer_job_ack SELECT j.day FROM writer_job_attempt j
+        JOIN chronicle_attempts a ON a.day=j.day WHERE a.status IN ('failed','interrupted')""")
+    db.execute("UPDATE writer_job SET state='active',reason='' WHERE id=1")
+    set_target(db,0)
+    import soul_living
+    soul_living.set_mode(db,"auto")

@@ -202,7 +202,7 @@ def eligible(db,did):
             import re
             words=sum(len(re.findall(r"\b\w+\b",r["story"])) for r in rows)+len(re.findall(r"\b\w+\b",text))
             if words>=part["target"] or o.volume(part["start"]+part["part"])!=o.volume(part["start"]):return False
-    if db.execute("SELECT 1 FROM lit_rejections WHERE draft_id=?",(did,)).fetchone():return False
+    if db.execute("SELECT 1 FROM lit_rejections WHERE draft_id=?",(did,)).fetchone() or c.review_warnings(db,did):return False
     import soul_intellect
     soul_intellect.refresh(db)
     if soul_intellect.draft_concerns(db,did):return False
@@ -212,7 +212,7 @@ def eligible(db,did):
 def publish_if_allowed(db,did):
     import soul_chronicle as c
     try:allowed=eligible(db,did)
-    except (ValueError,TypeError,KeyError,sqlite3.Error):allowed=False
+    except (ValueError,TypeError,KeyError,IndexError,AttributeError,sqlite3.Error):allowed=False
     if not allowed:
         log(db,"manual_review","Черновик оставлен на ручную проверку")
         return False
@@ -269,7 +269,12 @@ def news(db):
     rows=db.execute("SELECT number,title FROM omega_index WHERE number>13 ORDER BY number DESC LIMIT 5").fetchall()
     pending=db.execute("SELECT COUNT(*) FROM chronicle_drafts WHERE status='pending'").fetchone()[0]
     result="Последние утверждённые главы:\n"+"\n".join(f"{n}. {t}" for n,t in rows) if rows else "Новых утверждённых глав пока нет."
-    return result+("\n\nЕсть черновик: «Покажи черновик»." if pending else "")
+    if pending:
+        import soul_chronicle as ch
+        p=ch.latest_pending(db)
+        warnings=ch.review_warnings(db,p["id"]) if p else []
+        result+="\n\nЕсть черновик: «Покажи черновик»."+(("\nТребуется ручная проверка: "+"; ".join(warnings)) if warnings else "")
+    return result
 
 def graph(db):
     nodes=[];edges=[];seen=set()

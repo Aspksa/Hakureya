@@ -22,6 +22,7 @@ import soul_living
 import cloud_writer
 import cloud_vault
 import writer_stream
+import writer_response
 import writer_preview
 import writer_volume
 import soul_evolution
@@ -80,7 +81,8 @@ def writer_status(db):
     cooldown=writer_volume.cooldown(db,idle)
     task=writer_volume.job(db)
     once=bool(task and task["state"]=="active")
-    if task and not once and mode=="off" and not CHRONICLE["enabled"]:reason=task["reason"]
+    if task and not once and task["state"]=="error":reason=task["reason"]+" Для нового запроса подтвердите продолжение задания."
+    elif task and not once and mode=="off" and not CHRONICLE["enabled"]:reason=task["reason"]
     elif not CONFIG["key"]:reason="Cloud.ru не подключён"
     elif mode=="off" and not CHRONICLE["enabled"]:reason="Автоматическое написание выключено"
     elif not soul_chronicle.canon_ok(db):reason="Нарушена целостность канона"
@@ -103,7 +105,7 @@ def writer_status(db):
     return {"budget_settings":{"model":budget_row[0],"input":budget_row[1]/100,"output":budget_row[2]/100,"monthly":budget_row[3]/100} if budget_row else None,"mode":mode,"connected":bool(CONFIG["key"]),"model":cloud_writer.selected(db) or CONFIG["model"],
             "saved_connection":(DB.parent/"cloud.dpapi").is_file(),"can_remember":cloud_vault.supported(),
             "interval":idle//60,"wait_seconds":0 if once else wait,"pending":pending,"job":task,
-            "published":soul_reader.latest(db),"attempt":attempt,
+            "published":soul_reader.latest(db),"attempt":attempt,"resume_available":bool(task and task["state"]=="error" and task["model"]==model and task["attempts"]<writer_volume.MAX_ATTEMPTS and len(attempts)<writer_volume.MAX_ATTEMPTS and not pending and not reserved and CONFIG["key"]),
             "chapter_pages":soul_universe.chapter_pages(db),"target_pages":pages,"published_chars":chars,"page_chars":writer_volume.PAGE_CHARS,"attempts_today":len(attempts),
             "daily_limit":writer_volume.limit(db),"max_tokens":writer_volume.JOB_OUTPUT_LIMIT if once else cloud_writer.LIMIT,"reason":reason,
             "budget":soul_evolution.budget_text(db,day[:7])}
@@ -283,12 +285,17 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                 with closing(connect()) as db, db:
                     if writer_volume.active_job(db) and not db.execute("SELECT 1 FROM chronicle_attempts WHERE status='reserved'").fetchone() and not db.execute("SELECT 1 FROM chronicle_drafts WHERE status='pending'").fetchone():
                         writer_volume.close_job(db,"error","Задание остановлено: литературные данные или лимит не позволяют начать сцену.")
-            return "Есть незавершённая попытка или ожидающий черновик, нарушена целостность канона либо исчерпан дневной лимит."
+            with closing(connect()) as db:
+                status=writer_status(db)
+                if status["pending"]:return "Есть черновик. Используйте «Покажи черновик», затем «Принять главу» или «Отклонить главу»."
+                if status["attempts_today"]>=status["daily_limit"]:return "Лимит текущего режима использован. Для повторного запуска после ошибки откройте «Автономный писатель» и нажмите «Продолжить задание» с согласием на оплату либо начните новое разовое задание. Использованные запросы не обнуляются."
+                return "Написание недоступно: "+status["reason"]+". Проверьте литературные данные и панель писателя."
         key, model, epoch=CONFIG["key"],writer or CONFIG["model"],CHRONICLE["epoch"]
     with graph_activity.track("chronicle",("dynasty:root" if dynasty_lane else "destiny:root" if destiny_plan else "guardians:root" if guardian_plan else "shadow:root" if shadow_plan else (f"d:{reservation[1]}" if reservation[1]>0 else ("heart:root" if plan["arc"]=="love" else "living:root" if plan.get("living") and plan["arc"]=="future" else "arc:"+plan["arc"]))),sources=visual_sources) as activity:
         return execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
 
 def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan):
+    stage="подготовка запроса"
     try:
         intelligence=plan.get("intelligence",{})
         trace=intelligence.get("network")
@@ -305,6 +312,7 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
         payload={"model":model,"messages":soul_chronicle.prompt(reservation,traits,previous,plan),"max_tokens":writer_volume.JOB_OUTPUT_LIMIT if plan.get("writer_job") else cloud_writer.LIMIT,"stream":True,"stream_options":{"include_usage":True}}
         req=Request(API,data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
         graph_activity.update(activity,"waiting")
+        stage="получение ответа Cloud.ru"
         checkpoint=[time.monotonic(),0]
         def preview(raw):
             writer_preview.push(activity,raw)
@@ -326,17 +334,23 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
             writer_preview.clear(activity)
         graph_activity.update(activity,"received","hub:4")
         graph_activity.update(activity,"validating","hub:4")
+        stage="учёт токенов"
         with LOCK, closing(connect()) as db, db:
             cloud_writer.usage(db,reservation[0],model,result)
             soul_evolution.settle_cost(db,reservation[0],result)
+        stage="разбор ответа модели"
         if result["choices"][0].get("finish_reason")=="length":
             with LOCK, closing(connect()) as db, db:
                 soul_universe.save_fragment(db,reservation[0],writer_preview.story_prefix(result["choices"][0]["message"]["content"]),"truncated")
             raise ValueError("incomplete literary response")
-        raw=result["choices"][0]["message"]["content"]
+        if result["choices"][0].get("finish_reason") not in (None,"stop"):raise ValueError("unsupported finish reason")
+        raw=result["choices"][0]["message"].get("content")
+        if raw is None or isinstance(raw,str) and not raw.strip():raise ValueError("empty literary content")
         if not isinstance(raw,str) or len(raw)>24000:
             raise ValueError("invalid draft")
-        try:value=json.loads(raw)
+        try:
+            value=writer_response.parse(raw)
+            value,adaptations=writer_response.normalize(value)
         except ValueError:
             with LOCK, closing(connect()) as db, db:
                 soul_universe.save_fragment(db,reservation[0],writer_preview.story_prefix(raw),"invalid_json")
@@ -347,9 +361,11 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
                 graph_activity.update(activity,"discarded")
                 return "Настройки изменились; черновик отброшен."
             graph_activity.update(activity,"saving","hub:4")
-            soul_chronicle.finish(db,reservation,value,plan)
+            stage="сохранение и проверка черновика"
+            soul_chronicle.finish(db,reservation,value,plan,tolerant=True,warnings=adaptations)
             db.execute("DELETE FROM universe_fragments WHERE attempt=?",(reservation[0],))
             pending=soul_chronicle.latest_pending(db)
+            warnings=soul_chronicle.review_warnings(db,pending["id"])
             editorial=soul_omega.metadata(db,pending["id"])
             scene_report=soul_romance.report(db,pending["id"])
             shadow_saved=soul_shadow.read(db,pending["id"])
@@ -363,6 +379,7 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
                 number=db.execute("SELECT number FROM saga_arcs WHERE draft_id=?",(pending["id"],)).fetchone()[0]
         graph_activity.update(activity,"published" if auto_published else "saved",f"c:{pending['id']}" if auto_published else f"draft:{pending['id']}" if pending else "hub:4")
         if auto_published:return f"Глава {number} опубликована: "+pending["title"]
+        if warnings:return "Черновик создан. Требуется ручная проверка: "+"; ".join(warnings)+"\n\n"+pending["title"]+"\n\n"+pending["story"]+"\n\nПринять главу / Отклонить главу."
         if plan.get("destiny"):
             return "Черновик создан.\n\n"+pending["title"]+"\n\n"+pending["story"]+"\n\n"+("Принять главу / Отклонить главу." if destiny_saved else "Этап ещё не завершён. Принять главу / Отклонить главу.")
         if plan.get("guardians"):
@@ -373,17 +390,18 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
     except (URLError,TimeoutError,ValueError,KeyError,IndexError,TypeError,OSError,sqlite3.Error,HTTPException,AttributeError) as error:
         with LOCK, closing(connect()) as db, db:
             if isinstance(locals().get("value"),dict):soul_universe.save_fragment(db,reservation[0],value.get("story"),"unvalidated")
+            elif isinstance(locals().get("raw"),str):soul_universe.save_fragment(db,reservation[0],writer_preview.story_prefix(raw),"unvalidated")
             soul_chronicle.fail(db,reservation)
             if isinstance(error,HTTPError):detail="Cloud.ru HTTP "+str(error.code)
             elif isinstance(error,(URLError,TimeoutError,HTTPException,OSError)):detail="Обрыв или ошибка соединения с Cloud.ru"
             elif isinstance(error,json.JSONDecodeError):detail="Модель вернула неполный или некорректный JSON"
             elif isinstance(locals().get("result"),dict) and locals()["result"].get("choices") and isinstance(locals()["result"]["choices"][0],dict) and locals()["result"]["choices"][0].get("finish_reason")=="length":detail="Ответ модели достиг предельной длины"
-            else:detail="Ответ не прошёл литературную проверку ("+type(error).__name__+")"
+            else:detail=stage.capitalize()+": "+writer_response.detail(error)
             if plan.get("writer_job"):
                 db.execute("UPDATE writer_job SET reason=? WHERE id=1 AND state='error'",(detail+". Задание остановлено; автоматического повтора нет.",))
             soul_living.log(db,"generation_failed",detail+"; попытка учтена")
         graph_activity.update(activity,"error")
-        return "Черновик не создан: ответ модели не прошёл проверку или запрос завершился ошибкой. Дневная попытка учтена."
+        return "Черновик не создан: "+detail+". Попытка учтена. Проверьте «Восстановить фрагмент»; повтор запускайте явно в панели писателя."
 
 def independent_editor():
     """Explicit request shares the writer's daily quota; no implicit extra model calls."""
@@ -609,13 +627,20 @@ def chronicle_command(content):
             action=living_commands[q]
             if action in ("off","draft","auto"):
                 if action!="off" and not soul_chronicle.canon_ok(db):return "Канон повреждён. Развитие не включено."
+                task=writer_volume.job(db)
+                if action!="off" and task and task["state"]=="error":return "Предыдущее разовое задание остановлено: "+task["reason"]+" Откройте панель писателя, подтвердите оплату и нажмите «Продолжить задание». Прежний прогресс сохранится."
+                if action!="off" and writer_volume.active_job(db):return writer_status_text(db)
                 soul_living.set_mode(db,action)
                 CHRONICLE.update(enabled=False,epoch=CHRONICLE["epoch"]+1)
                 if action=="off":return "Развитие остановлено. Уже начатый запрос может быть платным, его результат не сохранится."
                 return writer_status_text(db)+(" Публикация только после вашего утверждения." if action=="draft" else " Автопубликация только новых фоновых глав, прошедших локальные эвристики; сомнительные остаются черновиками. Это не смысловая гарантия.")
             if action=="status":return writer_status_text(db)
             if not soul_chronicle.canon_ok(db):return "Канон повреждён."
-            if action=="news":return soul_living.news(db)
+            if action=="news":
+                result=soul_living.news(db)
+                task=writer_volume.job(db)
+                if task and task["state"]=="error":result+="\nПоследнее задание остановлено: "+task["reason"]+"\nПроверьте «Восстановить фрагмент»."
+                return result
             if soul_living.audit(db) or soul_shadow.audit(db) or soul_guardians.audit(db) or soul_destiny.audit(db) or soul_evolution.audit(db) or soul_immortal.audit(db) or soul_novel.audit(db) or soul_infinite.audit(db):return "Сюжетные данные повреждены."
             qplan=soul_novel.forecast(db)
             return "План (пересматриваемый прогноз, со спойлерами):\n"+"\n".join(f"{p['number']}. {p['title']}" for p in qplan["items"])
@@ -802,7 +827,9 @@ def chronicle_command(content):
                 return "Черновик повреждён; публикация заблокирована."
             if not p:
                 return "Нет ожидающего черновика."
-            return f"Художественный черновик: {p['title']}\n\n{p['story']}\n\nПринять главу / Отклонить главу. Оценки: летопись: качество."
+            warnings=soul_chronicle.review_warnings(db,p["id"])
+            notice=("\n\nТребуется ручная проверка: "+"; ".join(warnings)) if warnings else ""
+            return f"Художественный черновик: {p['title']}\n\n{p['story']}"+notice+"\n\nПринять главу / Отклонить главу. Оценки: летопись: качество."
         if q=="летопись: главы":
             rows=soul_saga.reading_rows(db)[-5:]
             return "\n\n".join(f"Вымышленная глава №{p['number']}: {p['title']}\n{p['story']}" for p in rows) or "Новых утверждённых глав пока нет."
@@ -961,6 +988,14 @@ class Handler(SimpleHTTPRequestHandler):
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict):
                 raise ValueError("Некорректный JSON")
+            if self.path == "/api/writer/resume":
+                if data.get("consent") is not True:return self.respond({"error":"Подтвердите новый платный запрос."},400)
+                with LOCK, closing(connect()) as db, db:
+                    if not CONFIG["key"] or not soul_chronicle.canon_ok(db):return self.respond({"error":"Проверьте Cloud.ru и целостность канона."},400)
+                    try:writer_volume.resume_job(db,cloud_writer.selected(db) or CONFIG["model"])
+                    except ValueError as error:return self.respond({"error":str(error)},409)
+                    CHRONICLE.update(enabled=False,epoch=CHRONICLE["epoch"]+1,last_activity=0)
+                    return self.respond(writer_status(db))
             if self.path == "/api/writer":
                 mode=data.get("mode")
                 interval=data.get("interval")

@@ -10,8 +10,13 @@ LIMIT=24000
 
 def story_prefix(raw):
     """Read only a top-level 'story' string, tolerating an unfinished JSON response."""
+    if not isinstance(raw,str):return ""
     decoder=json.JSONDecoder()
-    text=raw.lstrip()
+    text=raw.lstrip().lstrip("\ufeff")
+    if text.startswith("```"):
+        newline=text.find("\n")
+        if newline<0 or text[:newline].strip().casefold() not in ("```","```json"):return ""
+        text=text[newline+1:].lstrip()
     if not text.startswith("{"):return ""
     pos=1
     while pos<len(text):
