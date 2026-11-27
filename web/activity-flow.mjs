@@ -21,6 +21,12 @@ export function flowPaths(item,graph){
  if(item.stage.startsWith("brain:")){
   const key=item.stage.slice(6),node=graph.byKey.get(item.stage),db=graph.byKey.get("lit:db"),coordinator=graph.byKey.get("brain:coordinator");
   if(!node||!db||!coordinator)return [];
+  if(Array.isArray(item.inputs)){
+   const routes=item.inputs.map(k=>graph.byKey.get("brain:"+k)).filter(Boolean).map(p=>route([p,node],brainColors[p.key.slice(6)]||"#e8c6ed"));
+   if(!routes.length)routes.push(route([db,node],brainColors[key]||"#e8c6ed"));
+   if(key==="coordinator"&&root)routes.push(route([node,root],brainColors[key]));
+   return routes;
+  }
   return key==="coordinator"?[route([coordinator,root],brainColors[key])]:[route([db,node,coordinator],brainColors[key]||"#e8c6ed")];
  }
  if(item.stage==="request"||item.stage==="context"){
@@ -39,7 +45,7 @@ export function flowPaths(item,graph){
 // Consume real server stages in order, including stages that complete between polling ticks.
 export function activityEvents(item,after=0){
  const events=Array.isArray(item.events)?item.events.filter(e=>Number.isSafeInteger(e.seq)&&e.seq>after&&stageLabels[e.stage]):[];
- return events.slice(-24).map(e=>({...item,stage:e.stage,target:e.target,seq:e.seq}));
+ return events.slice(-24).map(e=>({...item,stage:e.stage,target:e.target,seq:e.seq,inputs:e.inputs,output_bytes:e.output_bytes,included:e.included,duration_ms:e.duration_ms}));
 }
 export function pointOn(points,t){
  if(t<=0)return {x:points[0].x,y:points[0].y};

@@ -14,6 +14,7 @@ import soul_romance as romance
 import soul_heart as heart
 import soul_immortal as im
 import soul_living as living
+import soul_network as net
 
 VERSION=1
 BRAINS=(
@@ -34,6 +35,7 @@ def actor_key(name):
     return identifier(name)
 
 def init(db):
+    net.init(db)
     db.execute("""CREATE TABLE IF NOT EXISTS lit_extra(
        draft_id INTEGER PRIMARY KEY, payload TEXT NOT NULL, source_hash TEXT NOT NULL, checksum TEXT NOT NULL)""")
     db.execute("""CREATE TABLE IF NOT EXISTS lit_index(
@@ -280,56 +282,97 @@ def metrics(db,visible=False):
       "forgotten":sorted(gaps,key=lambda a:a["last"])[:8],"published_per_active_day":round(speed[0]/speed[1],2) if speed[1] else None,"token_days":usage[0],"input_tokens":usage[1],"output_tokens":usage[2]}
 
 def prepare(db,plan):
-    """Ten actual deterministic local passes, one bounded context. No additional model calls."""
+    """Nine connected local analyses and a coordinator with checked data handoffs."""
     refresh(db)
-    data=list(rows(db));actors,relations=registry(data)
+    all_data=list(rows(db))
+    arc=plan["arc"]
     last=db.execute("SELECT COALESCE(MAX(number),13) FROM omega_index").fetchone()[0]
+    # Historical lanes must not inherit future character knowledge.
+    scope={n for n, in db.execute("SELECT number FROM omega_index WHERE arc=?",(arc,))} if arc!="future" else None
+    data=[(n,f) for n,f in all_data if scope is None or n in scope]
+    actors,relations=registry(data)
     recent=data[-120:]
-    facts,threads,_=inf.ledger(list(inf.published(db)))
+    _,threads,_=inf.ledger(list(inf.published(db)),at=(lambda n:n in scope) if scope is not None else None)
     open_lines=[t for t in threads.values() if t["closed"] is None and last+1-t["chapter"]>=t["delay"]]
     theme=plan.get("universe") or plan.get("infinite",{}).get("selected") or plan.get("director") or plan.get("evolution",{}).get("chosen") or {}
-    completed=[];result={};timings={};clock=perf_counter()
-    def brain(name,value):
-        nonlocal clock
-        now=perf_counter();timings[name]=round((now-clock)*1000,3);clock=now
-        result[name]=value;completed.append(name)
-    brain("plot",{"theme":theme.get("theme",plan["arc"]),"open":[{"chapter":t["chapter"],"value":t["value"]} for t in open_lines[:2]],"guide":"Соблюдай обязательный текущий этап, не раскрывай ранние тайны."})
+    network=net.Network()
+    network.begin("plot")
+    network.finish("plot",{"theme":theme.get("theme",arc),"open":[{"chapter":t["chapter"],"value":t["value"][:120]} for t in open_lines[:2]],
+        "guide":"Соблюдай обязательный текущий этап, не раскрывай ранние тайны."})
+    inputs=network.begin("characters")
+    query=norm(" ".join([str(theme.get("title","")),str(theme.get("lens",""))]+[x["value"] for x in inputs["plot"]["open"]]))
     forgotten=sorted((a for a in actors.values() if last-a["last"]>=8),key=lambda a:a["last"])
-    active=sorted(actors.values(),key=lambda a:a["last"],reverse=True)[:3]
-    profiles=[{"chapter":n,"name":f["subject"],"kind":f["kind"],"value":f["value"][:100]} for n,f in recent if f["kind"] in ("biography","goal","voice","trait")][-3:]
-    brain("characters",{"recent":active,"forgotten":forgotten[:2],"profiles":profiles,"guide":"Новый персонаж — отличимое имя, самостоятельная цель, голос, биография и причина появления; проверь существующие имена."})
-    brain("relations",{"recent":sorted(relations.values(),key=lambda x:x["last"],reverse=True)[:3],"guide":"Отношения меняются через события, без внезапного доверия или любви."})
-    brain("magic",{"rules":[label for _,_,label in ge.RULES[:3]],"limits":[{"chapter":n,"subject":f["subject"],"value":f["value"]} for n,f in recent if f["kind"] in ("power","limit","law")][-2:]})
-    brain("time",{"last":last,"volume":o.volume(last),"guide":"Отделяй порядок публикации от времени мира; не придумывай точный возраст или дату."})
-    recall=ge.recall(db,plan.get("guide","")+" "+theme.get("title",""),3,None if plan["arc"]=="future" else plan["arc"])
-    brain("memory",[{"number":x["number"],"story":x["story"][:220]} for x in recall])
+    active=sorted(actors.values(),key=lambda a:(norm(a["name"]) in query,a["last"]),reverse=True)[:3]
+    names={norm(a["name"]) for a in active}
+    profiles=[{"chapter":n,"name":f["subject"],"kind":f["kind"],"value":f["value"][:100]} for n,f in recent if f["kind"] in ("biography","goal","voice","trait") and norm(f["subject"]) in names][-3:]
+    network.finish("characters",{"recent":active,"forgotten":forgotten[:2],"profiles":profiles,
+        "guide":"Новый персонаж — отличимое имя, самостоятельная цель, голос, биография и причина появления; проверь существующие имена."})
+    inputs=network.begin("relations")
+    names={norm(a["name"]) for a in inputs["characters"]["recent"]}
+    rel=sorted(relations.values(),key=lambda x:(int(norm(x["a"]) in names)+int(norm(x["b"]) in names),x["last"]),reverse=True)
+    network.finish("relations",{"recent":rel[:3],"guide":"Отношения меняются через события, без внезапного доверия или любви."+
+        (" Любовная линия требует добровольного выбора." if inputs["plot"]["theme"]=="love" else "")})
+    inputs=network.begin("magic")
+    names={norm(a["name"]) for a in inputs["characters"]["recent"]}
+    limits=[{"chapter":n,"subject":f["subject"],"value":f["value"][:100]} for n,f in recent if f["kind"] in ("power","limit","law")]
+    limits.sort(key=lambda f:(norm(f["subject"]) in names,f["chapter"]),reverse=True)
+    rules=[label for _,_,label in ge.RULES[:(5 if inputs["plot"]["theme"]=="power" else 3)]]
+    network.finish("magic",{"rules":rules,"limits":limits[:2]})
+    inputs=network.begin("time")
+    # Publication number is not fictional time. Retain the source boundary for memory.
+    scoped_last=max(scope,default=0) if scope is not None else last
+    network.finish("time",{"last":last,"volume":o.volume(last),"scope_last":scoped_last,"arc":arc,
+        "limit_sources":[x["chapter"] for x in inputs["magic"]["limits"]],
+        "guide":"Отделяй порядок публикации от времени мира; не придумывай точный возраст или дату."+(" Не раскрывай будущие события." if inputs["plot"]["open"] else "")})
+    inputs=network.begin("memory")
+    terms=[plan.get("guide","")[:180],str(theme.get("title",""))[:180]]
+    terms.extend(x["name"] for x in inputs["characters"]["recent"])
+    terms.extend(x["value"] for x in inputs["plot"]["open"])
+    terms.extend(x["subject"]+" "+x["value"] for x in inputs["magic"]["limits"])
+    recall=ge.recall(db," ".join(terms),3,None if inputs["time"]["arc"]=="future" else inputs["time"]["arc"])
+    refs={x["number"]:{"number":x["number"],"story":x["story"][:220]} for x in recall if x["number"]<=inputs["time"]["scope_last"]}
+    # Prefer the exact scene excerpts retrieved by Intelligence 7 where available.
+    for r in plan.get("intellect7",{}).get("refs",[]):
+        n=r["chapter"]
+        if n<=inputs["time"]["scope_last"] and (scope is None or n in scope):
+            refs[n]={"number":n,"story":r["quote"][:220]}
+    network.finish("memory",list(refs.values())[-3:])
+    inputs=network.begin("editor")
     m=metrics(db)
-    last_story=db.execute("SELECT story FROM omega_index ORDER BY number DESC LIMIT 1").fetchone()
+    if scope is not None:
+        m={**m,"chapters":len(scope),"cross_volume":sum(f["cause"] is not None and f["cause"] in scope and o.volume(f["cause"])!=o.volume(n) for n,f in data),"warnings":0,"originality":None,"profile_gaps":[],"rapid":[]}
+    last_story=db.execute("SELECT story FROM omega_index WHERE number=?",(inputs["time"]["scope_last"],)).fetchone()
     sample=romance.profile("",last_story[0]) if last_story else {}
-    brain("editor",{"warnings":m["warnings"],"originality":m["originality"],"last_scene_words":sample.get("words",0),"guide":"Не повторяй диалог и сцену; действие, выбор и последствия вместо одинаковых эпитетов."})
-    brain("analytics",{"chapters":m["chapters"],"characters":m["characters"],"cross_volume":m["cross_volume"],"profile_gaps":m["profile_gaps"][:2],"rapid_relations":m["rapid"][:1],"guide":"Если уместно, дай второстепенному герою собственную цель и свяжи давнее событие с текущим."})
-    brain("twist",{"causes":[{"chapter":n,"cause":f["cause"],"value":f["value"][:100]} for n,f in recent if f["cause"] is not None][-2:],"guide":"Поворот должен опираться на улику, а не отменять прежние события."})
-    # Coordinator selects an explicit capped set, without cutting JSON in the middle.
-    budget=4200;selected={}
-    # Every pass contributes a compact portion before any module gets its full payload.
-    order=("plot","magic","time","memory","characters","relations","editor","analytics","twist")
-    for k in order:
-        v=result[k]
-        if isinstance(v,dict):
-            compact={name:(value[:1] if isinstance(value,list) else value[:180] if isinstance(value,str) else value) for name,value in v.items()}
-        else:compact=v[:1]
-        candidate={**selected,k:compact}
-        if len(o.dump(candidate).encode("utf-8"))<=budget:selected[k]=compact
-    for k in order:
-        candidate={**selected,k:result[k]}
-        if len(o.dump(candidate).encode("utf-8"))<=budget:selected[k]=result[k]
-    brain("coordinator",{"included":list(selected),"bytes":len(o.dump(selected).encode("utf-8"))})
-    plan["intelligence"]={"context":selected,"completed":completed,"timings_ms":timings,"bytes":result["coordinator"]["bytes"],"recalled":[x["number"] for x in selected.get("memory",[])]}
+    network.finish("editor",{"warnings":m["warnings"],"originality":m["originality"],"last_scene_words":sample.get("words",0),
+        "check_sources":sorted({x["number"] for x in inputs["memory"]}|{x["chapter"] for x in inputs["magic"]["limits"]}),
+        "relation_checks":len(inputs["relations"]["recent"]),
+        "guide":"Не повторяй диалог и сцену; действие, выбор и последствия вместо одинаковых эпитетов."})
+    inputs=network.begin("analytics")
+    names={norm(a["name"]) for a in inputs["characters"]["recent"]}
+    gaps=[x for x in m["profile_gaps"] if norm(x["name"]) in names]
+    rel_names={tuple(sorted((norm(x["a"]),norm(x["b"])))) for x in inputs["relations"]["recent"]}
+    rapid=[x for x in m["rapid"] if tuple(sorted((norm(x["a"]),norm(x["b"])))) in rel_names]
+    network.finish("analytics",{"chapters":m["chapters"],"characters":len(actors),"cross_volume":m["cross_volume"],"profile_gaps":gaps[:2],"rapid_relations":rapid[:1],
+        "editor_sources":inputs["editor"]["check_sources"],"guide":"Если уместно, дай второстепенному герою собственную цель и свяжи давнее событие с текущим."})
+    inputs=network.begin("twist")
+    preferred={x["number"] for x in inputs["memory"]}|set(inputs["analytics"]["editor_sources"])|{x["chapter"] for x in inputs["plot"]["open"]}
+    causes=[{"chapter":n,"cause":f["cause"],"value":f["value"][:100]} for n,f in recent if f["cause"] is not None and f["cause"]<n<=inputs["time"]["scope_last"] and (scope is None or f["cause"] in scope)]
+    causes.sort(key=lambda f:(f["cause"] in preferred,f["chapter"]),reverse=True)
+    network.finish("twist",{"causes":causes[:2],"guide":"Поворот должен опираться на улику, а не отменять прежние события."})
+    inputs=network.begin("coordinator")
+    selected=net.compact(inputs)
+    network.finish("coordinator",{"included":list(selected),"bytes":net.size(selected)})
+    trace=network.trace(selected)
+    net.validate_trace(trace)
+    plan["intelligence"]={"context":selected,"completed":list(net.ORDER),"timings_ms":{e["brain"]:e["duration_ms"] for e in trace["events"]},
+        "bytes":trace["context_bytes"],"recalled":[x["number"] for x in selected["memory"]],"network":trace}
     return plan
 
 def record_run(db,day,plan):
     p=plan.get("intelligence")
-    if p:db.execute("INSERT OR IGNORE INTO lit_runs VALUES(?,?,?,?)",(day,o.dump(list(p["context"])),p["bytes"],o.dump(p["recalled"])))
+    if p:
+        db.execute("INSERT OR IGNORE INTO lit_runs VALUES(?,?,?,?)",(day,o.dump(list(p["context"])),p["bytes"],o.dump(p["recalled"])))
+        if p.get("network"):net.record(db,day,p["network"])
 
 def instruction(plan):
     p=plan.get("intelligence")
@@ -385,8 +428,7 @@ def graph(db,existing=(),volume=None):
     node("lit:db","Литературная память SQLite","lit_database",infinite_group="lit:db")
     for key,label in BRAINS:
         k="brain:"+key;node(k,label,"lit_brain",infinite_group="lit:db");edge("lit:db",k,"lit_module")
-    for key,_ in BRAINS:
-        if key!="coordinator":edge("brain:"+key,"brain:coordinator","lit_module")
+    edges.extend(net.edges())
     try:
         if volume is None:data=list(rows(db,True))
         else:

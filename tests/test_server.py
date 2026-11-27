@@ -30,6 +30,22 @@ class ServerTest(unittest.TestCase):
         h.update(headers or {})
         with urlopen(Request(self.url+path,data=None if data is None else json.dumps(data).encode(),headers=h),timeout=5) as r:
             return json.load(r)
+    def test_local_neural_diagnostic_and_focused_graph(self):
+        with patch.object(server,"urlopen") as remote:
+            before=self.request("graph/network")
+            self.assertTrue(before["network"])
+            self.assertIsNone(before["neural_trace"])
+            reply=self.request("chat",{"content":"Проверить 10 мозгов"})["reply"]
+            self.assertIn("10/10",reply)
+            self.assertIn("31 проверенных зависимостей",reply)
+            graph=self.request("graph/network")
+            self.assertEqual(graph["trace_origin"],"diagnostic")
+            self.assertEqual(len(graph["neural_trace"]["events"]),10)
+            self.assertEqual(len([r for r in graph["records"] if r["kind"]=="lit_brain"]),10)
+            with closing(server.connect()) as db:
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM chronicle_attempts").fetchone()[0],0)
+            remote.assert_not_called()
+
     def test_dynasty_commands_and_single_writer_request(self):
         from test_dynasty import base
         with patch.object(server,"urlopen") as remote:
