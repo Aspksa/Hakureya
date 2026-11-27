@@ -339,11 +339,8 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
             cloud_writer.usage(db,reservation[0],model,result)
             soul_evolution.settle_cost(db,reservation[0],result)
         stage="разбор ответа модели"
-        if result["choices"][0].get("finish_reason")=="length":
-            with LOCK, closing(connect()) as db, db:
-                soul_universe.save_fragment(db,reservation[0],writer_preview.story_prefix(result["choices"][0]["message"]["content"]),"truncated")
-            raise ValueError("incomplete literary response")
-        if result["choices"][0].get("finish_reason") not in (None,"stop"):raise ValueError("unsupported finish reason")
+        finish_reason=result["choices"][0].get("finish_reason")
+        if finish_reason not in (None,"stop","length"):raise ValueError("unsupported finish reason")
         raw=result["choices"][0]["message"].get("content")
         if raw is None or isinstance(raw,str) and not raw.strip():raise ValueError("empty literary content")
         if not isinstance(raw,str) or len(raw)>24000:
@@ -351,9 +348,11 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
         try:
             value=writer_response.parse(raw)
             value,adaptations=writer_response.normalize(value)
+            if finish_reason=="length":adaptations.append("Достигнут лимит токенов, но структура ответа полная. Проверьте завершённость сцены перед утверждением.")
+            if result.get("tail_interrupted"):adaptations.append("Cloud.ru завершил генерацию, но соединение прервалось при получении заключительных данных.")
         except ValueError:
             with LOCK, closing(connect()) as db, db:
-                soul_universe.save_fragment(db,reservation[0],writer_preview.story_prefix(raw),"invalid_json")
+                soul_universe.save_fragment(db,reservation[0],writer_preview.story_prefix(raw),"truncated" if finish_reason=="length" else "invalid_json")
             raise
         with LOCK, closing(connect()) as db, db:
             if CHRONICLE["epoch"]!=epoch:
@@ -395,7 +394,7 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
             if isinstance(error,HTTPError):detail="Cloud.ru HTTP "+str(error.code)
             elif isinstance(error,(URLError,TimeoutError,HTTPException,OSError)):detail="Обрыв или ошибка соединения с Cloud.ru"
             elif isinstance(error,json.JSONDecodeError):detail="Модель вернула неполный или некорректный JSON"
-            elif isinstance(locals().get("result"),dict) and locals()["result"].get("choices") and isinstance(locals()["result"]["choices"][0],dict) and locals()["result"]["choices"][0].get("finish_reason")=="length":detail="Ответ модели достиг предельной длины"
+            elif stage=="разбор ответа модели" and locals().get("finish_reason")=="length":detail="Ответ достиг предельной длины и не прошёл проверку: "+writer_response.detail(error)
             else:detail=stage.capitalize()+": "+writer_response.detail(error)
             if plan.get("writer_job"):
                 db.execute("UPDATE writer_job SET reason=? WHERE id=1 AND state='error'",(detail+". Задание остановлено; автоматического повтора нет.",))

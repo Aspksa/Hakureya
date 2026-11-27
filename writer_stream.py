@@ -1,5 +1,6 @@
 """Bounded OpenAI-compatible writer stream; never expose reasoning or retry a paid call."""
 import json
+from http.client import HTTPException
 from time import monotonic
 
 MAX_WIRE=1_000_000
@@ -20,6 +21,7 @@ def read_response(response,on_progress,on_preview=None):
     reason=None
     usage=None
     finished=False
+    tail_interrupted=False
     event=[]
     def consume(lines):
         nonlocal size,reason,usage,finished,last_content
@@ -50,11 +52,18 @@ def read_response(response,on_progress,on_preview=None):
             if on_preview:on_preview("".join(parts))
         if choice.get("finish_reason") is not None:reason=choice["finish_reason"]
     while not finished:
-        now=monotonic()
-        if now-started>MAX_STREAM_SECONDS or now-last_content>MAX_CONTENT_IDLE_SECONDS:raise TimeoutError("writer stream deadline")
-        raw=response.readline(MAX_WIRE-wire+1)
-        now=monotonic()
-        if now-started>MAX_STREAM_SECONDS or now-last_content>MAX_CONTENT_IDLE_SECONDS:raise TimeoutError("writer stream deadline")
+        try:
+            now=monotonic()
+            if now-started>MAX_STREAM_SECONDS or now-last_content>MAX_CONTENT_IDLE_SECONDS:raise TimeoutError("writer stream deadline")
+            raw=response.readline(MAX_WIRE-wire+1)
+            now=monotonic()
+            if now-started>MAX_STREAM_SECONDS or now-last_content>MAX_CONTENT_IDLE_SECONDS:raise TimeoutError("writer stream deadline")
+        except (HTTPException,OSError):
+            # A terminal choice is authoritative; only optional accounting/transport
+            # framing remains. Never infer completion from an unterminated stream.
+            if reason not in ("stop","length") or event:raise
+            tail_interrupted=True
+            break
         if not raw:
             consume(event)
             break
@@ -70,4 +79,4 @@ def read_response(response,on_progress,on_preview=None):
     # still requires a complete JSON object; EOF without a terminal marker is rejected.
     if reason is None and finished and parts:reason="stop"
     if reason not in ("stop","length"):raise ValueError("incomplete writer stream")
-    return {"choices":[{"message":{"content":"".join(parts)},"finish_reason":reason}],"usage":usage}
+    return {"choices":[{"message":{"content":"".join(parts)},"finish_reason":reason}],"usage":usage,**({"tail_interrupted":True} if tail_interrupted else {})}

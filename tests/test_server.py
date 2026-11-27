@@ -93,6 +93,35 @@ class ServerTest(unittest.TestCase):
             self.assertEqual(db.execute("SELECT status FROM chronicle_attempts").fetchone()[0],"draft")
         self.assertIn("ручная проверка",self.request("chat",{"content":"Покажи черновик"})["reply"])
 
+    def test_writer_complete_json_at_token_limit_needs_manual_review(self):
+        from test_dynasty import base
+        self.request("config",{"key":"test-key","model":"test-model","consent":True})
+        data=base()
+        fake=MagicMock()
+        fake.__enter__.return_value.read.return_value=json.dumps({"choices":[{"message":{"content":json.dumps(data,ensure_ascii=False)},"finish_reason":"length"}]}).encode()
+        with patch.object(server,"urlopen",return_value=fake) as remote:
+            reply=self.request("chat",{"content":"Продолжи династию"})["reply"]
+            self.assertIn("Черновик создан",reply)
+            self.assertIn("ручная проверка",reply)
+            self.assertEqual(remote.call_count,1)
+        with closing(server.connect()) as db:
+            pending=server.soul_chronicle.latest_pending(db)
+            self.assertEqual(pending["story"],data["story"])
+            self.assertTrue(any("лимит токенов" in w for w in server.soul_chronicle.review_warnings(db,pending["id"])))
+
+    def test_writer_incomplete_json_at_token_limit_is_not_a_draft(self):
+        self.request("config",{"key":"test-key","model":"test-model","consent":True})
+        fake=MagicMock()
+        raw='{"story":"Полученный фрагмент'
+        fake.__enter__.return_value.read.return_value=json.dumps({"choices":[{"message":{"content":raw},"finish_reason":"length"}]}).encode()
+        with patch.object(server,"urlopen",return_value=fake) as remote:
+            reply=self.request("chat",{"content":"Продолжи династию"})["reply"]
+            self.assertIn("Черновик не создан",reply)
+            self.assertEqual(remote.call_count,1)
+            with closing(server.connect()) as db:
+                self.assertIsNone(server.soul_chronicle.latest_pending(db))
+            self.assertIn("Полученный фрагмент",self.request("chat",{"content":"Восстановить фрагмент"})["reply"])
+
     def test_resume_failed_writer_job_requires_new_consent(self):
         self.request("config",{"key":"test-key","model":"test-model","consent":True})
         self.request("writer",{"mode":"once","target_pages":5,"interval":20,"consent":True})
