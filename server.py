@@ -944,6 +944,9 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == "/api/writer":
             with LOCK, closing(connect()) as db:
                 return self.respond(writer_status(db))
+        if self.path == "/api/writer/draft/count":
+            with LOCK, closing(connect()) as db:
+                return self.respond({"pending":db.execute("SELECT COUNT(*) FROM chronicle_drafts WHERE status='pending'").fetchone()[0]})
         if self.path == "/api/writer/draft":
             with LOCK, closing(connect()) as db:
                 pending=soul_chronicle.latest_pending(db)
