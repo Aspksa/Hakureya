@@ -78,7 +78,7 @@ function reportClientFailure(path:string,kind:string,status:number){
  void fetch("/api/diagnostics",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({route:path.split("/")[0].split("?")[0],kind,status}),keepalive:true}).catch(()=>{});
 }
 async function api(path:string,data?:unknown){
- const controller=new AbortController(),timeout=window.setTimeout(()=>controller.abort(),path==="chat"?420000:path==="proposals/generate"?130000:15000);
+ const controller=new AbortController(),timeout=window.setTimeout(()=>controller.abort(),path==="chat"?420000:path==="proposals/generate"||path==="narrative/embeddings"?130000:15000);
  let status=0;
  try{
   const response=await fetch("/api/"+path,{...(data===undefined?{}:{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)}),signal:controller.signal});
@@ -302,6 +302,7 @@ async function renderUniverse(){
  try{
   const data=await api("universe/"+universePage);if(serial!==universeSerial||!universeDialog.open)return;
   $("universe-summary").textContent=data.chapters+" частей · "+data.scenes+" сцен · "+data.volumes+" томов · "+Math.round(data.chars/1800)+" усл. А4 · "+data.actors+" персонажей · "+data.pending+" черновиков";
+  renderNarrative(data.narrative);
   $("universe-page").textContent=universePage+" / "+data.pages;
   ($("universe-prev") as HTMLButtonElement).disabled=universePage<=1;($("universe-next") as HTMLButtonElement).disabled=universePage>=data.pages;
   const galaxies=$("universe-galaxies");galaxies.replaceChildren();
@@ -338,6 +339,44 @@ $("universe-search").onclick=()=>universeCommand("Поиск сцены ");
 $("universe-atlas").onclick=()=>universeCommand("Атлас вселенной");
 $("universe-timeline").onclick=()=>universeCommand("Хронология вселенной");
 $("universe-audit").onclick=()=>universeCommand("Проверить индекс сцен");
+let embeddingBusy=false;
+const narrativeRate=$("narrative-rate") as HTMLInputElement,narrativeCap=$("narrative-cap") as HTMLInputElement;
+const vectorIndex=$("narrative-index") as HTMLButtonElement,vectorSearch=$("narrative-search") as HTMLButtonElement;
+function renderVectors(v:any){
+ if(!v)return;
+ $("narrative-vector-status").textContent=v.indexed+" / "+v.total+" сцен · учтено "+((v.budget?.used??0)/100).toFixed(2)+" ₽";
+ if(document.activeElement!==narrativeRate&&!narrativeRate.value&&v.budget?.rate)narrativeRate.value=String(v.budget.rate/100);
+ if(document.activeElement!==narrativeCap&&!narrativeCap.value&&v.budget?.cap)narrativeCap.value=String(v.budget.cap/100);
+}
+function renderNarrative(data:any){
+ if(!data){$("narrative-stats").textContent="Статистика недоступна";return}
+ $("narrative-stats").textContent=data.indexed+" / "+data.published+" частей · в очереди "+data.pending+" · "+data.scenes+" сцен · "+data.evidence+" свидетельств · "+data.signals+" фрагментов с возможными смысловыми признаками. Признаки не являются подтверждёнными фактами.";
+ renderVectors(data.vectors);
+}
+async function embeddingAction(action:"index"|"search"){
+ if(embeddingBusy)return;
+ const query=($("narrative-query") as HTMLInputElement).value.trim();
+ if(action==="search"&&query.length<2){$("narrative-vector-result").textContent="Введите поисковый запрос.";return}
+ const rate=Math.round(Number(narrativeRate.value)*100),cap=Math.round(Number(narrativeCap.value)*100);
+ if(!Number.isSafeInteger(rate)||rate<1||rate>100000000||!Number.isSafeInteger(cap)||cap<1||cap>100000000){$("narrative-vector-result").textContent="Укажите отдельный тариф и лимит.";return}
+ if(!window.confirm(action==="index"?"Отправить до 8 опубликованных сцен в Cloud.ru? Возможна оплата по отдельному бюджету.":"Отправить поисковый запрос в Cloud.ru? Если вектор уже сохранён, повторного запроса не будет."))return;
+ embeddingBusy=true;vectorIndex.disabled=vectorSearch.disabled=true;
+ $("narrative-vector-result").textContent="Обработка…";$("narrative-hits").replaceChildren();
+ try{
+  const result=await api("narrative/embeddings",{action,query,consent:true,budget:{rate,cap}});
+  renderVectors(result.status);
+  $("narrative-vector-result").textContent=action==="index"?"Добавлено векторов: "+result.added:(result.cached?"Использован кэш · ":"")+"Найдено фрагментов: "+(result.hits?.length??0);
+  for(const item of result.hits??[]){const article=document.createElement("article"),title=document.createElement("strong"),body=document.createElement("p");title.textContent="Часть "+item.chapter+" · сцена "+item.scene;body.textContent=item.text;article.append(title,body);$("narrative-hits").append(article)}
+ }catch(e){$("narrative-vector-result").textContent=String(e)+" Автоматического повтора нет."}
+ finally{embeddingBusy=false;vectorIndex.disabled=vectorSearch.disabled=false}
+}
+vectorIndex.onclick=()=>void embeddingAction("index");
+vectorSearch.onclick=()=>void embeddingAction("search");
+$("narrative-audit").onclick=()=>universeCommand("Проверить литературную память");
+$("narrative-repair").onclick=()=>{if(window.confirm("Перестроить локальный индекс из утверждённого текста? Сам роман не изменится."))universeCommand("Восстановить литературную память")};
+$("narrative-sources").onclick=()=>universeCommand("Источники писателя");
+$("narrative-ideas").onclick=()=>universeCommand("Очередь замыслов");
+
 const writerPreviewOpt=$("writer-preview-opt") as HTMLInputElement,writerPreviewText=$("writer-preview-text");
 writerPreviewOpt.onchange=()=>{writerPreviewText.hidden=!writerPreviewOpt.checked;writerPreviewText.textContent="";if(writerPreviewOpt.checked)void refreshActivity()};
 const writerStatus=$("writer-status"),writerSave=$("writer-save") as HTMLButtonElement;
