@@ -61,6 +61,8 @@ ERRORS={
     "writer response too large":"Ответ превышает безопасный предел",
     "writer stream too large":"Поток превышает безопасный предел",
     "invalid draft":"Ответ отсутствует или превышает безопасный предел",
+    "empty literary content":"Модель не вернула художественный текст в поле content; возможно, лимит ушёл на рассуждения",
+    "unsupported finish reason":"Cloud.ru завершил ответ с неподдерживаемой причиной",
     "canon changed":"Изменился исходный канон",
     "no reservation":"Потеряна резервация запроса",
 }
