@@ -38,6 +38,7 @@ import soul_director
 import soul_dynasty
 import soul_universe
 import soul_intellect
+import soul_narrative
 import soul_atlas
 import soul_export
 import graph_activity
@@ -142,6 +143,7 @@ def connect():
                 db.execute("SAVEPOINT initial_index")
                 try:
                     soul_intelligence.refresh(db)
+                    soul_narrative.refresh(db,limit=soul_narrative.BATCH)
                     db.execute("RELEASE initial_index")
                 except (ValueError,TypeError,KeyError,IndexError) as error:
                     db.execute("ROLLBACK TO initial_index");db.execute("RELEASE initial_index")
@@ -258,6 +260,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                         return "Несогласованные сюжетные планы; платный запрос не отправлен."
                     try:
                         soul_intellect.prepare(db,plan)
+                        soul_narrative.prepare(db,plan)
                         soul_intelligence.prepare(db,plan)
                     except (ValueError,TypeError,KeyError,IndexError):
                         db.execute("DELETE FROM writer_job_attempt WHERE day=?",(reservation[0],))
@@ -267,7 +270,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
             previous=[]
             if plan:
                 previous=[{"number":n,"title":t,"story":s[-2200:]} for n,t,s in reversed(db.execute("SELECT number,title,story FROM omega_index WHERE arc=? AND number>13 ORDER BY number DESC LIMIT 2",(plan["arc"],)).fetchall())]
-                previous.append({"published_titles":[t for t, in db.execute("SELECT title FROM omega_index ORDER BY number DESC LIMIT 12")]})
+                previous.append({"published_titles":[t for t, in db.execute("SELECT title FROM omega_index WHERE (?=\'future\' OR arc=?) ORDER BY number DESC LIMIT 12",(plan["arc"],plan["arc"]))]})
             writer=cloud_writer.selected(db)
             if reservation:
                 model=writer or CONFIG["model"]
@@ -288,6 +291,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
                 soul_intelligence.record_run(db,reservation[0],plan)
                 soul_universe.record(db,reservation[0],plan)
                 soul_intellect.record_run(db,reservation[0],plan)
+                soul_narrative.record(db,reservation[0],plan)
                 visual_sources=writer_activity.context_keys(db,plan,previous)
         if not reservation:
             if once:
@@ -486,6 +490,24 @@ def chronicle_command(content):
     scene_query=re.fullmatch(r"поиск сцены (.{2,180})",q)
     actor_query=re.fullmatch(r"история персонажа (.{2,80})",q)
     timeline_query=re.fullmatch(r"хронология вселенной ([1-9][0-9]{0,5})",q)
+    if q in ("литературная память","проверить литературную память","восстановить литературную память","источники писателя") or re.fullmatch(r"содержание (главы|тома) [1-9][0-9]{0,6}",q):
+        with LOCK, closing(connect()) as db, db:
+            if not soul_chronicle.canon_ok(db):return "Целостность канона нарушена."
+            db.execute("SAVEPOINT narrative_command")
+            try:
+                if q=="литературная память":
+                    soul_narrative.refresh(db,limit=soul_narrative.BATCH);result=soul_narrative.report(db)
+                elif q=="проверить литературную память":result=soul_narrative.audit(db)
+                elif q=="восстановить литературную память":result=f"Восстановлено записей памяти: {soul_narrative.repair(db)}. Текст романа не изменён."
+                elif q=="источники писателя":
+                    data=soul_narrative.last_run(db)
+                    result=("Источники последнего контекста (доступные части): "+", ".join(f"{r[\'chapter\']}:{r[\'scene\']}" for r in data["refs"]) if data else "Писатель ещё не использовал общую память.")
+                else:
+                    _,kind,n=q.split();result=soul_narrative.summary(db,int(n),"chapter" if kind=="главы" else "volume")
+                db.execute("RELEASE narrative_command");return result
+            except (ValueError,TypeError,KeyError,IndexError,sqlite3.Error):
+                db.execute("ROLLBACK TO narrative_command");db.execute("RELEASE narrative_command")
+                return "Литературная память недоступна или требует восстановления. Платный запрос не отправлен."
     if q in ("проверить 10 мозгов","сеть мозгов","диагностика мозгов"):
         with LOCK, closing(connect()) as db, db:
             if not soul_chronicle.canon_ok(db):return "Целостность канона нарушена."
@@ -493,6 +515,7 @@ def chronicle_command(content):
                 # Real dry-run with the current publication index, no quota reservation or paid request.
                 plan=soul_saga.plan(db,"future")
                 soul_intellect.prepare(db,plan)
+                soul_narrative.prepare(db,plan)
                 soul_intelligence.prepare(db,plan)
                 trace=plan["intelligence"]["network"]
                 soul_network.record_diagnostic(db,trace)
@@ -878,7 +901,8 @@ def chronicle_worker(stop):
                         soul_infinite.refresh_forecast(db)
                         soul_intelligence.refresh(db)
                         soul_intellect.refresh(db)
-                        repaired=soul_intelligence.sweep(db)
+                        soul_narrative.refresh(db,limit=soul_narrative.BATCH)
+                        repaired=soul_intelligence.sweep(db)+soul_narrative.sweep(db)
                         if repaired:LOG.info("repaired derived literary records: %d",repaired)
                 writer_volume.reconcile_job(db)
                 enabled=CHRONICLE["enabled"] or soul_living.mode(db)!="off"
