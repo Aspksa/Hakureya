@@ -91,7 +91,7 @@ class NovelTest(unittest.TestCase):
         doc=reader.document(self.db)
         self.assertEqual(doc["chapter"],14)
         self.assertEqual(doc["last_chapter"],26)
-        self.assertEqual(doc["text"],"\\n\\n".join(stories))
+        self.assertEqual(doc["text"],"\n\n".join(stories))
         self.assertEqual(doc["assembly"]["target_chars"],36000)
         self.assertEqual(doc["volume_parts"],12)
         self.assertEqual(list(soul_export.chapters(self.db))[-1][2],doc["text"])
