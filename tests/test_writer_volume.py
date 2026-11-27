@@ -113,6 +113,7 @@ class WriterVolumeTest(unittest.TestCase):
         from test_chronicle import draft
         v.start_job(self.db,5,"test-model")
         soul_living.set_mode(self.db,"auto")
+        self.db.execute("INSERT INTO chronicle_diary(first_review,last_review,observations) VALUES(1,5,'{}')")
         a=c.reserve(self.db,allow_story=True)
         c.fail(self.db,a)
         v.resume_job(self.db,"test-model")
@@ -120,6 +121,7 @@ class WriterVolumeTest(unittest.TestCase):
         self.assertTrue(v.active_job(self.db))
         self.assertEqual(v.job(self.db)["attempts"],1)
         b=c.reserve(self.db,allow_story=True)
+        self.assertEqual(a[1],b[1])
         c.finish(self.db,b,draft())
         p=c.latest_pending(self.db)
         self.assertTrue(c.decide(self.db,p["id"],True))
