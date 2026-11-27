@@ -55,5 +55,6 @@ def context_keys(db,plan,previous):
     for item in plan.get("director",{}).get("recall",[]):chapter(item.get("number"))
     for item in plan.get("universe",{}).get("refs",[]):chapter(item.get("chapter"))
     for item in plan.get("intellect7",{}).get("refs",[]):chapter(item.get("chapter"))
+    for item in plan.get("narrative",{}).get("current",[])+plan.get("narrative",{}).get("recall",[]):chapter(item.get("chapter"))
     for n in plan.get("intelligence",{}).get("recalled",[]):chapter(n)
     return keys[:16]
