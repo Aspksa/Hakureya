@@ -51,7 +51,7 @@ async function refreshActivity(){
   if(document.hidden)return;
   activityActive=data.active.length>0;
   void updateDraftCount();
-  if(writerDialog.open&&writerPreviewOpt.checked&&!previewPollBusy){previewPollBusy=true;const session=writerSession;void api("writer/preview").then(st=>{if(session===writerSession&&writerDialog.open&&writerPreviewOpt.checked){const follow=writerPreviewText.scrollHeight-writerPreviewText.scrollTop-writerPreviewText.clientHeight<48;writerPreviewText.textContent=st.active?(st.story||"Ожидание художественного текста…"):(st.story?"Последний полученный фрагмент (не утверждён):\n"+st.story:"Нет поступающего текста");if(follow)writerPreviewText.scrollTop=writerPreviewText.scrollHeight}}).catch(()=>{}).finally(()=>{previewPollBusy=false})}
+  if(writerDialog.open&&writerPreviewOpt.checked&&($("writer-technical").closest("details") as HTMLDetailsElement).open&&!previewPollBusy){previewPollBusy=true;const session=writerSession;void api("writer/preview").then(st=>{if(session===writerSession&&writerDialog.open&&writerPreviewOpt.checked){const follow=writerPreviewText.scrollHeight-writerPreviewText.scrollTop-writerPreviewText.clientHeight<48;writerPreviewText.textContent=st.active?(st.story||"Ожидание художественного текста…"):(st.story?"Последний полученный фрагмент (не утверждён):\n"+st.story:"Нет поступающего текста");if(follow)writerPreviewText.scrollTop=writerPreviewText.scrollHeight}}).catch(()=>{}).finally(()=>{previewPollBusy=false})}
   if(writerDialog.open&&!writerPollBusy){writerPollBusy=true;const session=writerSession;void api("writer").then(st=>{if(session===writerSession&&writerDialog.open&&!writerSave.disabled)renderWriter(st)}).catch(()=>{}).finally(()=>{writerPollBusy=false})}
   live?.setActivity(data);
   const revision=data.session+":"+data.revision;
@@ -142,7 +142,7 @@ commandPlus.onclick=()=>{
  }
  if(commandDialog.open)return;hideMenu();commandSearch.value="";commandCategory.value="@start";renderCommands();commandResults.scrollTop=0;commandDialog.showModal();commandPlus.setAttribute("aria-expanded","true");commandSearch.focus();
 };
-commandDialog.onclose=()=>{commandPlus.setAttribute("aria-expanded","false");if(!chat.hidden&&book.hidden&&!draftDialog.open&&!proposalDialog.open&&!writerDialog.open&&!config.open&&!universeDialog.open&&!note.open)$("chat-menu").focus()};
+commandDialog.onclose=()=>{commandPlus.setAttribute("aria-expanded","false");if(!chat.hidden&&book.hidden&&document.activeElement===document.body&&!draftDialog.open&&!proposalDialog.open&&!writerDialog.open&&!config.open&&!universeDialog.open&&!note.open)$("chat-menu").focus()};
 $("command-close").onclick=()=>commandDialog.close();
 commandSearch.oninput=()=>{renderCommands();commandResults.scrollTop=0};commandCategory.onchange=()=>{renderCommands();commandResults.scrollTop=0};
 const proposalDialog=$("proposal-dialog") as HTMLDialogElement;
