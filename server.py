@@ -40,6 +40,8 @@ import soul_universe
 import soul_intellect
 import soul_narrative
 import soul_embeddings
+import soul_semantic
+from uuid import uuid4
 import soul_atlas
 import soul_export
 import graph_activity
@@ -986,6 +988,11 @@ class Handler(SimpleHTTPRequestHandler):
                     result["narrative"]=soul_narrative.status(db)
                     return self.respond(result)
             except (ValueError,TypeError,KeyError,sqlite3.Error):return self.respond({"error":"Индекс недоступен"},503)
+        if self.path == "/api/narrative/semantic":
+            try:
+                with LOCK, closing(connect()) as db:
+                    return self.respond(soul_semantic.snapshot(db))
+            except (ValueError,TypeError,KeyError,sqlite3.Error):return self.respond({"error":"Сведения требуют восстановления."},409)
         if self.path == "/api/writer":
             with LOCK, closing(connect()) as db:
                 return self.respond(writer_status(db))
@@ -1079,6 +1086,48 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.respond({"error":"Некорректная диагностика"},400)
                 diagnostics.emit("client.failed",kind=kind,route=diagnostics.route("/api/"+route),status=status,source="web/app.ts")
                 return self.respond({"ok":True})
+            if self.path == "/api/narrative/semantic":
+                action=data.get("action")
+                if action=="decide":
+                    with LOCK, closing(connect()) as db, db:
+                        if not soul_semantic.decide(db,data.get("chapter"),data.get("scene"),data.get("revision"),data.get("approve")):
+                            return self.respond({"error":"Сведения изменились или уже обработаны."},409)
+                        return self.respond(soul_semantic.snapshot(db))
+                if action!="analyze" or data.get("consent") is not True:
+                    return self.respond({"error":"Подтвердите отдельный платный анализ опубликованной сцены."},400)
+                if not CHAT_GATE.acquire(blocking=False):
+                    return self.respond({"error":"Другой запрос уже выполняется."},409)
+                try:
+                    with LOCK, closing(connect()) as db, db:
+                        if not soul_chronicle.canon_ok(db):return self.respond({"error":"Канон повреждён."},409)
+                        if db.execute("SELECT 1 FROM narrative_analysis WHERE status='pending'").fetchone():
+                            return self.respond({"error":"Сначала проверьте ожидающий анализ сцены."},409)
+                        item=soul_semantic.next_scene(db)
+                        if not item:return self.respond(soul_semantic.snapshot(db))
+                        key,model,epoch=CONFIG["key"],cloud_writer.selected(db) or CONFIG["model"],CHRONICLE.get("config_epoch",0)
+                        if not key or not model:return self.respond({"error":"Подключите Cloud.ru в настройках."},400)
+                        messages=soul_semantic.messages(item)
+                        day=writer_volume.today()+"#semantic-"+uuid4().hex
+                        allowed,cost=soul_evolution.budget_check(db,model,messages,soul_semantic.OUTPUT_TOKENS,day)
+                        if not allowed:return self.respond({"error":"Проверьте бюджет и тарифы модели писателя."},409)
+                        soul_evolution.reserve_cost(db,day,model,cost)
+                    req=Request(API,data=json.dumps({"model":model,"messages":messages,"max_tokens":soul_semantic.OUTPUT_TOKENS,"stream":False}).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
+                    with urlopen(req,timeout=60) as res:raw=res.read(1000001)
+                    if len(raw)>1000000:raise ValueError("semantic response too large")
+                    response=json.loads(raw)
+                    with LOCK, closing(connect()) as db, db:
+                        soul_evolution.settle_cost(db,day,response)
+                        if CHRONICLE.get("config_epoch",0)!=epoch:
+                            return self.respond({"error":"Подключение изменилось; анализ не сохранён."},409)
+                        soul_semantic.save(db,item,response["choices"][0]["message"]["content"])
+                        result=soul_semantic.snapshot(db)
+                    diagnostics.emit("narrative.semantic_completed",chapter=item["chapter"],scene=item["scene"])
+                    return self.respond(result)
+                except (URLError,TimeoutError,HTTPException,OSError,ValueError,TypeError,KeyError,IndexError,sqlite3.Error) as error:
+                    diagnostics.failure("narrative.semantic_failed",error)
+                    return self.respond({"error":"Анализ сцены не завершён или не подтверждены цитаты. Автоматического повтора нет."},502)
+                finally:
+                    CHAT_GATE.release()
             if self.path == "/api/narrative/embeddings":
                 action=data.get("action")
                 query=data.get("query","")
