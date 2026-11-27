@@ -1299,9 +1299,10 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.respond({"connected":False})
             if self.path == "/api/reader":
                 action=data.get("action")
-                if not isinstance(action,str) or action not in ("resume","next","back","pause","start","advance","retreat","position","presence","contents","chapter"):raise ValueError("Недопустимое действие чтения")
+                if not isinstance(action,str) or action not in ("resume","next","back","pause","start","advance","retreat","position","presence","contents","chapter","style"):raise ValueError("Недопустимое действие чтения")
                 with LOCK, closing(connect()) as db, db:
                     if action=="contents":return self.respond(soul_reader.contents(db,data.get("page",1),data.get("query","")))
+                    if action=="style":return self.respond({"preferences":soul_reader.save_preferences(db,data.get("preferences"))})
                     if action=="chapter" and (type(data.get("chapter")) is not int or not 1<=data["chapter"]<=soul_reader.latest(db)):raise ValueError("Недопустимый номер главы")
                     CHRONICLE["last_activity"]=time.monotonic()
                     if action=="pause":
