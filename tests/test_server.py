@@ -147,6 +147,15 @@ class ServerTest(unittest.TestCase):
             self.assertEqual(server.writer_volume.job(db)["state"],"error")
             self.assertEqual(server.writer_volume.job(db)["attempts"],2)
 
+    def test_local_client_diagnostics_rejects_raw_fields(self):
+        with self.assertLogs("hakureya.diagnostics",level="INFO") as captured:
+            result=self.request("diagnostics",{"route":"chat","kind":"timeout","status":0,"message":"secret-payload"})
+            self.assertTrue(result["ok"])
+        self.assertIn("client.failed"," ".join(captured.output))
+        self.assertNotIn("secret-payload"," ".join(captured.output))
+        with self.assertRaises(HTTPError):
+            self.request("diagnostics",{"route":"chat","kind":"secret-payload","status":0})
+
     def test_writer_transport_failure_releases_reservation(self):
         from http.client import IncompleteRead
         self.request("config",{"key":"test-key","model":"test-model","consent":True})

@@ -4,6 +4,7 @@ from threading import Lock
 from time import monotonic
 from uuid import uuid4
 import re
+import diagnostics
 
 LOCK=Lock()
 ACTIVE={}
@@ -36,6 +37,9 @@ def update(key,stage,target=None,duration_ms=None,inputs=None,output_bytes=None,
         if type(included) is bool:event["included"]=included
         item["events"].append(event)
         item["events"]=item["events"][-24:]
+    diagnostics.emit("graph.transition",activity=diagnostics.identifier(key),stage=stage,
+                     target=diagnostics.identifier(event["target"]),
+                     **{k:event[k] for k in ("duration_ms","inputs","output_bytes","included") if k in event})
 
 def progress(key,chars,chunks):
     """Count only received output content, never model reasoning or text."""
@@ -70,6 +74,7 @@ def track(kind,source="root",sources=()):
         REV+=1
         ACTIVE[key]={"id":key,"kind":kind,"source":safe_key(source),"sources":list(dict.fromkeys(safe_key(s) for s in sources))[:16],
             "_started":monotonic(),"_heartbeat":monotonic(),"target":"root","stage":"request","events":[{"seq":REV,"stage":"request","target":"root"}]}
+    diagnostics.emit("graph.start",activity=key,kind=kind,source=diagnostics.identifier(source))
     try:
         yield key
     except BaseException:
@@ -85,6 +90,7 @@ def track(kind,source="root",sources=()):
             RECENT[key]=(monotonic(),item)
             while len(RECENT)>32:del RECENT[next(iter(RECENT))]
             REV+=1
+        diagnostics.emit("graph.end",activity=key,stage=item["stage"],chars=item.get("response_chars",0),chunks=item.get("chunks",0),prose_chars=item.get("prose_chars",0),elapsed_ms=round((monotonic()-item["_started"])*1000))
 
 def snapshot():
     now=monotonic()
