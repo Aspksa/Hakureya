@@ -188,8 +188,8 @@ function openProposals(kind?:string,idea?:string){
 function creativeIntent(input:string){
  const t=input.trim().toLocaleLowerCase("ru");
  if(!/^(?:хочу|давай|добавь|придумай|разработай|предлагаю|введи|пусть)(?:\s|$)/u.test(t))return null;
- if(/персонаж|персонал|нов(?:ый|ую|ого|ая)\s+геро|нов(?:ая|ую)\s+хранительниц/u.test(t))return "character";
- if(/сюжет|поворот\s+истории|развити[ея]\s+истории/u.test(t))return "plot";
+ if(/персонаж|персонал|нов(?:ый|ую|ого|ая)\s+геро|нов(?:ая|ую)\s+хранительниц/u.test(t)&&/добав|созда|придум|разработ|введ|появ|нов[а-яё]+|предлаг/u.test(t))return "character";
+ if(/сюжет|поворот\s+истории|развити[ея]\s+истории/u.test(t)&&/развит|развив|измен|поворот|продолж|придум|разработ|предлаг|добав/u.test(t))return "plot";
  return null;
 }
 proposalIdea.oninput=proposalButtons;proposalConsent.onchange=proposalButtons;
@@ -223,7 +223,7 @@ function draftBadge(count:number){const badge=$("draft-badge");badge.hidden=coun
 async function updateDraftCount(force=false){
  if(draftCountBusy||(!force&&(chat.hidden||Date.now()-lastDraftCount<5000)))return;
  draftCountBusy=true;lastDraftCount=Date.now();
- try{const st=await api("writer/draft/count");draftBadge(Number(st.pending)||0)}catch{}finally{draftCountBusy=false}
+ try{const st=await api("writer/draft/count");draftBadge(Number(st.pending)||0);$("proposal-badge").hidden=!(Number(st.proposals)>0)}catch{}finally{draftCountBusy=false}
 }
 function setDraftButtons(){approveDraft.disabled=rejectDraft.disabled=draftBusy||!currentDraft;refreshDraft.disabled=draftBusy}
 async function loadDraft(notice=""){
