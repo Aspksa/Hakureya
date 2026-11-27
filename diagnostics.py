@@ -11,7 +11,7 @@ from uuid import uuid4
 LOG = logging.getLogger("hakureya.diagnostics")
 SESSION = uuid4().hex
 SAFE_ID = re.compile(r"[a-zA-Z0-9:_#.-]{1,100}")
-ROUTES = frozenset(("chat","history","graph","writer","config","activity","avatar","universe","notes","reader","chronicle","commands","health","diagnostics","proposals"))
+ROUTES = frozenset(("chat","history","graph","writer","config","activity","avatar","universe","notes","reader","chronicle","commands","health","diagnostics","proposals","narrative"))
 FINISH = frozenset(("stop","length","content_filter","tool_calls","function_call"))
 
 def identifier(value):
