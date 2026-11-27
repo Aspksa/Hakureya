@@ -81,7 +81,8 @@ def writer_status(db):
     cooldown=writer_volume.cooldown(db,idle)
     task=writer_volume.job(db)
     once=bool(task and task["state"]=="active")
-    if task and not once and mode=="off" and not CHRONICLE["enabled"]:reason=task["reason"]
+    if task and not once and task["state"]=="error":reason=task["reason"]+" Для нового запроса подтвердите продолжение задания."
+    elif task and not once and mode=="off" and not CHRONICLE["enabled"]:reason=task["reason"]
     elif not CONFIG["key"]:reason="Cloud.ru не подключён"
     elif mode=="off" and not CHRONICLE["enabled"]:reason="Автоматическое написание выключено"
     elif not soul_chronicle.canon_ok(db):reason="Нарушена целостность канона"
@@ -104,7 +105,7 @@ def writer_status(db):
     return {"budget_settings":{"model":budget_row[0],"input":budget_row[1]/100,"output":budget_row[2]/100,"monthly":budget_row[3]/100} if budget_row else None,"mode":mode,"connected":bool(CONFIG["key"]),"model":cloud_writer.selected(db) or CONFIG["model"],
             "saved_connection":(DB.parent/"cloud.dpapi").is_file(),"can_remember":cloud_vault.supported(),
             "interval":idle//60,"wait_seconds":0 if once else wait,"pending":pending,"job":task,
-            "published":soul_reader.latest(db),"attempt":attempt,
+            "published":soul_reader.latest(db),"attempt":attempt,"resume_available":bool(task and task["state"]=="error" and task["model"]==model and task["attempts"]<writer_volume.MAX_ATTEMPTS and len(attempts)<writer_volume.MAX_ATTEMPTS and not pending and not reserved and CONFIG["key"]),
             "chapter_pages":soul_universe.chapter_pages(db),"target_pages":pages,"published_chars":chars,"page_chars":writer_volume.PAGE_CHARS,"attempts_today":len(attempts),
             "daily_limit":writer_volume.limit(db),"max_tokens":writer_volume.JOB_OUTPUT_LIMIT if once else cloud_writer.LIMIT,"reason":reason,
             "budget":soul_evolution.budget_text(db,day[:7])}
@@ -287,7 +288,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
             with closing(connect()) as db:
                 status=writer_status(db)
                 if status["pending"]:return "Есть черновик. Используйте «Покажи черновик», затем «Принять главу» или «Отклонить главу»."
-                if status["attempts_today"]>=status["daily_limit"]:return "Лимит текущего режима использован. Для повторного запуска после ошибки откройте «Автономный писатель» и явно подтвердите разовое задание. Использованные запросы не обнуляются."
+                if status["attempts_today"]>=status["daily_limit"]:return "Лимит текущего режима использован. Для повторного запуска после ошибки откройте «Автономный писатель» и нажмите «Продолжить задание» с согласием на оплату либо начните новое разовое задание. Использованные запросы не обнуляются."
                 return "Написание недоступно: "+status["reason"]+". Проверьте литературные данные и панель писателя."
         key, model, epoch=CONFIG["key"],writer or CONFIG["model"],CHRONICLE["epoch"]
     with graph_activity.track("chronicle",("dynasty:root" if dynasty_lane else "destiny:root" if destiny_plan else "guardians:root" if guardian_plan else "shadow:root" if shadow_plan else (f"d:{reservation[1]}" if reservation[1]>0 else ("heart:root" if plan["arc"]=="love" else "living:root" if plan.get("living") and plan["arc"]=="future" else "arc:"+plan["arc"]))),sources=visual_sources) as activity:
@@ -619,6 +620,9 @@ def chronicle_command(content):
             action=living_commands[q]
             if action in ("off","draft","auto"):
                 if action!="off" and not soul_chronicle.canon_ok(db):return "Канон повреждён. Развитие не включено."
+                task=writer_volume.job(db)
+                if action!="off" and task and task["state"]=="error":return "Предыдущее разовое задание остановлено: "+task["reason"]+" Откройте панель писателя, подтвердите оплату и нажмите «Продолжить задание». Прежний прогресс сохранится."
+                if action!="off" and writer_volume.active_job(db):return writer_status_text(db)
                 soul_living.set_mode(db,action)
                 CHRONICLE.update(enabled=False,epoch=CHRONICLE["epoch"]+1)
                 if action=="off":return "Развитие остановлено. Уже начатый запрос может быть платным, его результат не сохранится."
@@ -975,6 +979,14 @@ class Handler(SimpleHTTPRequestHandler):
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict):
                 raise ValueError("Некорректный JSON")
+            if self.path == "/api/writer/resume":
+                if data.get("consent") is not True:return self.respond({"error":"Подтвердите новый платный запрос."},400)
+                with LOCK, closing(connect()) as db, db:
+                    if not CONFIG["key"] or not soul_chronicle.canon_ok(db):return self.respond({"error":"Проверьте Cloud.ru и целостность канона."},400)
+                    try:writer_volume.resume_job(db,cloud_writer.selected(db) or CONFIG["model"])
+                    except ValueError as error:return self.respond({"error":str(error)},409)
+                    CHRONICLE.update(enabled=False,epoch=CHRONICLE["epoch"]+1,last_activity=0)
+                    return self.respond(writer_status(db))
             if self.path == "/api/writer":
                 mode=data.get("mode")
                 interval=data.get("interval")
