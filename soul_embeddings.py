@@ -25,6 +25,37 @@ def init(db):
         digest TEXT PRIMARY KEY,vector BLOB NOT NULL,checksum TEXT NOT NULL,
         touched TEXT DEFAULT CURRENT_TIMESTAMP)""")
 
+    db.execute("""CREATE TABLE IF NOT EXISTS narrative_vector_budget(
+        id INTEGER PRIMARY KEY CHECK(id=1), rate INTEGER NOT NULL, cap INTEGER NOT NULL)""")
+    db.execute("""CREATE TABLE IF NOT EXISTS narrative_vector_cost(
+        id INTEGER PRIMARY KEY, created TEXT DEFAULT CURRENT_TIMESTAMP,
+        rate INTEGER NOT NULL, estimate INTEGER NOT NULL, actual INTEGER)""")
+
+def budget(db):
+    row=db.execute("SELECT rate,cap FROM narrative_vector_budget WHERE id=1").fetchone()
+    used=db.execute("SELECT COALESCE(SUM(COALESCE(actual,estimate)),0) FROM narrative_vector_cost WHERE substr(created,1,7)=strftime('%Y-%m','now')").fetchone()[0]
+    return {"rate":row[0],"cap":row[1],"used":used} if row else {"rate":0,"cap":0,"used":used}
+
+def configure(db,data):
+    if not isinstance(data,dict) or any(type(data.get(k)) is not int or not 1<=data[k]<=100_000_000 for k in ("rate","cap")):
+        raise ValueError("embedding budget")
+    db.execute("INSERT OR REPLACE INTO narrative_vector_budget VALUES(1,?,?)",(data["rate"],data["cap"]))
+
+def reserve(db,inputs):
+    b=budget(db)
+    if not b["cap"]:return None
+    size=sum(len(x.encode("utf-8"))+64 for x in inputs)+512
+    estimate=max(1,(size*b["rate"]+999999)//1000000)
+    if b["used"]+estimate>b["cap"]:return None
+    return db.execute("INSERT INTO narrative_vector_cost(rate,estimate) VALUES(?,?)",(b["rate"],estimate)).lastrowid
+
+def settle(db,ident,response):
+    u=response.get("usage")
+    if not isinstance(u,dict):return
+    tokens=u.get("total_tokens",u.get("prompt_tokens"))
+    if type(tokens) is int and 0<=tokens<=100000000:
+        db.execute("UPDATE narrative_vector_cost SET actual=(?*rate+999999)/1000000 WHERE id=?",(tokens,ident))
+
 def pack(values):
     if not isinstance(values,list) or len(values)!=DIM or any(type(x) not in (int,float) or not math.isfinite(x) for x in values):
         raise ValueError("invalid embedding dimensions")
@@ -83,7 +114,7 @@ def status(db):
     indexed=db.execute("""SELECT COUNT(*) FROM narrative_vectors v JOIN universe_sources s ON s.chapter=v.chapter AND s.digest=v.source
        JOIN universe_scenes c ON c.chapter=v.chapter AND c.seq=v.seq WHERE v.model=? AND v.chapter NOT IN (SELECT chapter FROM universe_dirty)""",(MODEL,)).fetchone()[0]
     total=db.execute("SELECT COUNT(*) FROM universe_scenes").fetchone()[0]
-    return {"model":MODEL,"indexed":indexed,"total":total,"batch":BATCH,"auto":False}
+    return {"model":MODEL,"indexed":indexed,"total":total,"batch":BATCH,"auto":False,"budget":budget(db)}
 
 def query_key(query):
     return o.digest(o.dump([MODEL,query]))
