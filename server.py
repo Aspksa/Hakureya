@@ -23,6 +23,8 @@ import cloud_writer
 import cloud_vault
 import writer_stream
 import writer_response
+import soul_proposals
+import soul_lore
 import diagnostics
 import writer_preview
 import writer_volume
@@ -130,6 +132,7 @@ def connect():
             if path not in INITIALIZED or not db.execute("SELECT 1 FROM sqlite_master WHERE name='reader_coverage'").fetchone():
                 db.execute("CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY, role TEXT NOT NULL, content TEXT NOT NULL, created TEXT DEFAULT CURRENT_TIMESTAMP)")
                 memory_graph.init(db)
+                soul_proposals.init(db)
                 soul_core.init(db)
                 # An invalid derived record must not make the diagnostics or reader unavailable.
                 db.execute("SAVEPOINT initial_index")
@@ -264,6 +267,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
             writer=cloud_writer.selected(db)
             if reservation:
                 model=writer or CONFIG["model"]
+                plan["approved_directions"]=soul_proposals.directions(db)
                 messages=soul_chronicle.prompt(reservation,traits,previous,plan)
                 if len(json.dumps(messages,ensure_ascii=False).encode("utf-8"))>soul_universe.MAX_CONTEXT_BYTES:
                     db.execute("DELETE FROM writer_job_attempt WHERE day=?",(reservation[0],))
@@ -944,6 +948,9 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == "/api/writer":
             with LOCK, closing(connect()) as db:
                 return self.respond(writer_status(db))
+        if self.path == "/api/proposals":
+            with LOCK, closing(connect()) as db:
+                return self.respond(soul_proposals.snapshot(db))
         if self.path == "/api/writer/draft/count":
             with LOCK, closing(connect()) as db:
                 return self.respond({"pending":db.execute("SELECT COUNT(*) FROM chronicle_drafts WHERE status='pending'").fetchone()[0]})
@@ -1031,6 +1038,48 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.respond({"error":"Некорректная диагностика"},400)
                 diagnostics.emit("client.failed",kind=kind,route=diagnostics.route("/api/"+route),status=status,source="web/app.ts")
                 return self.respond({"ok":True})
+            if self.path == "/api/proposals/decision":
+                ident,revision,approve=data.get("id"),data.get("revision"),data.get("approve")
+                with LOCK, closing(connect()) as db, db:
+                    if not soul_proposals.decide(db,ident,revision,approve):
+                        return self.respond({"error":"Предложение изменилось или уже обработано. Обновите список."},409)
+                    snapshot=soul_proposals.snapshot(db)
+                diagnostics.emit("proposal.decision",approved=approve,proposal_id=ident)
+                return self.respond(snapshot)
+            if self.path == "/api/proposals/generate":
+                kind,idea=data.get("kind"),data.get("idea")
+                if kind not in soul_proposals.KINDS or not isinstance(idea,str) or not 1<=len(idea.strip())<=2000 or data.get("consent") is not True:
+                    return self.respond({"error":"Укажите замысел и подтвердите один платный запрос Cloud.ru."},400)
+                if not CHAT_GATE.acquire(blocking=False):
+                    return self.respond({"error":"Другой запрос уже выполняется."},409)
+                try:
+                    with LOCK, closing(connect()) as db:
+                        if soul_proposals.pending(db):return self.respond({"error":"Сначала утвердите или отклоните текущее предложение."},409)
+                        key,model,epoch=CONFIG["key"],CONFIG["model"],CHRONICLE.get("config_epoch",0)
+                        if not key or not model:return self.respond({"error":"Подключите Cloud.ru в настройках."},400)
+                        if not soul_chronicle.canon_ok(db):return self.respond({"error":"Канон повреждён."},409)
+                        chapters=[{"title":t,"ending":story[-800:]} for t,story in db.execute("SELECT title,story FROM omega_index ORDER BY number DESC LIMIT 3")]
+                    payload={"model":model,"messages":soul_proposals.messages(kind,idea,soul_lore.SUMMARY,chapters),"max_tokens":1800,"stream":False}
+                    req=Request(API,data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
+                    diagnostics.emit("proposal.request",kind=kind,max_tokens=1800)
+                    try:
+                        with urlopen(req,timeout=60) as res:
+                            raw=res.read(1000001)
+                        if len(raw)>1000000:raise ValueError("proposal response too large")
+                        result=json.loads(raw)
+                        content=result["choices"][0]["message"]["content"]
+                        with LOCK, closing(connect()) as db, db:
+                            if CHRONICLE.get("config_epoch",0)!=epoch:
+                                return self.respond({"error":"Настройки изменились; предложение не сохранено."},409)
+                            ident=soul_proposals.save(db,kind,idea,content)
+                            snapshot=soul_proposals.snapshot(db)
+                        diagnostics.emit("proposal.saved",proposal_id=ident,kind=kind)
+                        return self.respond(snapshot)
+                    except (URLError,TimeoutError,HTTPException,OSError,ValueError,TypeError,KeyError,IndexError,sqlite3.Error) as error:
+                        diagnostics.failure("proposal.failed",error,kind=kind)
+                        return self.respond({"error":"Не удалось создать предложение Cloud.ru. Проверьте журнал. Автоматического повтора нет."},502)
+                finally:
+                    CHAT_GATE.release()
             if self.path == "/api/writer/decision":
                 draft_id=data.get("id")
                 revision=data.get("revision")
