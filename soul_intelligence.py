@@ -329,8 +329,10 @@ def prepare(db,plan):
     terms.extend(x["name"] for x in inputs["characters"]["recent"])
     terms.extend(x["value"] for x in inputs["plot"]["open"])
     terms.extend(x["subject"]+" "+x["value"] for x in inputs["magic"]["limits"])
-    recall=ge.recall(db," ".join(terms),3,None if inputs["time"]["arc"]=="future" else inputs["time"]["arc"])
-    refs={x["number"]:{"number":x["number"],"story":x["story"][:220]} for x in recall if x["number"]<=inputs["time"]["scope_last"]}
+    if "narrative" in plan:
+        recall=[{"number":r["chapter"],"story":r["quote"]} for r in plan["narrative"]["recall"]+plan["narrative"]["current"][-2:]]
+    else:recall=ge.recall(db," ".join(terms),3,None if inputs["time"]["arc"]=="future" else inputs["time"]["arc"])
+    refs={x["number"]:{"number":x["number"],"story":x["story"][:220]} for x in recall if x["number"]<=inputs["time"]["scope_last"] and (scope is None or x["number"] in scope)}
     # Prefer the exact scene excerpts retrieved by Intelligence 7 where available.
     for r in plan.get("intellect7",{}).get("refs",[]):
         n=r["chapter"]
