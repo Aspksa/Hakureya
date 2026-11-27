@@ -219,7 +219,8 @@ def document(db):
       "hash":hashlib.sha256(text.encode("utf-8")).hexdigest(),"offset":segment["start"]+offset,
       "segments":segments,"latest":latest(db),"volume_count":total,
       "volume_ordinal":nums[0] if volume==1 else (nums[0]-14)%12+1,
-      "parts":len(nums),"epoch":1+(volume-1)//8}
+      "parts":len(nums),"epoch":1+(volume-1)//8,"assembly":soul_novel.progress(group) if group else None,
+      "volume_parts":sum(soul_omega.volume(k)==volume for k in nums)}
 
 def position(db,hash_value,start,end):
     """Persist code-point offset, also keep the old chapter/page bookmark compatible."""

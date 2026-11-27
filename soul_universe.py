@@ -56,7 +56,11 @@ def init(db):
         attempt TEXT PRIMARY KEY, payload TEXT NOT NULL, checksum TEXT NOT NULL)""")
     db.execute("""CREATE TABLE IF NOT EXISTS universe_settings(
         id INTEGER PRIMARY KEY CHECK(id=1), chapter_pages INTEGER NOT NULL)""")
-    db.execute("INSERT OR IGNORE INTO universe_settings VALUES(1,0)")
+    db.execute("INSERT OR IGNORE INTO universe_settings VALUES(1,20)")
+    # Migrate the former automatic style once, preserving explicit page selections.
+    db.execute("CREATE TABLE IF NOT EXISTS universe_chapter_default_v2(id INTEGER PRIMARY KEY CHECK(id=1))")
+    if db.execute("INSERT OR IGNORE INTO universe_chapter_default_v2 VALUES(1)").rowcount:
+        db.execute("UPDATE universe_settings SET chapter_pages=20 WHERE chapter_pages=0")
     db.execute("""CREATE TABLE IF NOT EXISTS universe_fragments(attempt TEXT PRIMARY KEY,body TEXT NOT NULL,reason TEXT NOT NULL,checksum TEXT NOT NULL)""")
     db.execute("CREATE INDEX IF NOT EXISTS universe_terms_chapter ON universe_terms(chapter,seq)")
     fresh=not db.execute("SELECT 1 FROM sqlite_master WHERE name='universe_dirty'").fetchone()

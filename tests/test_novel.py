@@ -57,6 +57,56 @@ class NovelTest(unittest.TestCase):
         self.make(1,first)
         with self.assertRaises(ValueError):
             with self.db:self.make(2,first+" Затем она улыбнулась.")
+    def test_long_chapter_default_and_character_goal(self):
+        import soul_universe
+        self.assertEqual(soul_universe.chapter_pages(self.db),20)
+        soul_universe.set_chapter_pages(self.db,5)
+        first=("Хакурэя смотрела на новый сад. "*200)[:4499]+"."
+        second=("Императрица изучала древний архив. "*200)[:4499]+"."
+        _,p=self.make(1,first)
+        self.assertEqual(p["novel"]["target_chars"],9000)
+        self.assertEqual(novel.latest_progress(self.db)["chars"],4500)
+        self.assertFalse(novel.latest_progress(self.db)["reached"])
+        soul_universe.set_chapter_pages(self.db,20)
+        _,p=self.make(2,second)
+        self.assertEqual(p["novel"]["target_chars"],9000)
+        self.assertEqual(p["novel"]["part"],2)
+        self.assertTrue(novel.latest_progress(self.db)["reached"])
+        self.assertEqual(novel.next_group(self.db,"future")["target_chars"],36000)
+        self.assertEqual(novel.next_group(self.db,"future")["part"],1)
+
+    def test_new_long_group_crosses_technical_volume_boundary(self):
+        import soul_export
+        stories=[]
+        for day in range(1,14):
+            story=" ".join("тестслово"+chr(1072+day)+"буква"+chr(1072+i) for i in range(24))+"."
+            stories.append(story)
+            _,p=self.make(day,story)
+            self.assertEqual(p["novel"]["start"],14)
+            self.assertEqual(p["novel"]["part"],day)
+        group=novel.group_for(self.db,26)
+        self.assertEqual(len(group),13)
+        self.assertEqual(novel.audit(self.db),[])
+        reader.move(self.db,"chapter",26)
+        doc=reader.document(self.db)
+        self.assertEqual(doc["chapter"],14)
+        self.assertEqual(doc["last_chapter"],26)
+        self.assertEqual(doc["text"],"\n\n".join(stories))
+        self.assertEqual(doc["assembly"]["target_chars"],36000)
+        self.assertEqual(doc["volume_parts"],12)
+        self.assertEqual(list(soul_export.chapters(self.db))[-1][2],doc["text"])
+        self.assertEqual(novel.next_group(self.db,"future")["part"],14)
+
+    def test_legacy_group_target_remains_frozen(self):
+        import soul_universe
+        soul_universe.set_chapter_pages(self.db,0)
+        _,p=self.make(1,"Хакурэя осторожно вошла в зал. Вдали мерцал огонёк, и герой предложил осмотреть неизвестную дверь вместе.")
+        self.assertNotIn("target_chars",p["novel"])
+        soul_universe.set_chapter_pages(self.db,20)
+        next_part=novel.next_group(self.db,"future")
+        self.assertEqual(next_part["target"],p["novel"]["target"])
+        self.assertNotIn("target_chars",next_part)
+
     def test_forecast_does_not_publish(self):
         q=novel.forecast(self.db)
         self.assertEqual(len(q["items"]),100)

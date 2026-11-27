@@ -104,12 +104,16 @@ def writer_status(db):
     elif cooldown:reason="Пауза между литературными запросами: "+str(cooldown)+" сек."
     elif wait and not reading_window(db):reason="Ожидание бездействия"
     else:reason="Готов к следующей проверке планировщика"
+    try:chapter_progress=soul_novel.latest_progress(db)
+    except (ValueError,TypeError,KeyError) as error:
+        diagnostics.failure("novel.progress_failed",error)
+        chapter_progress=None
     budget_row=db.execute("SELECT model,input_rate,output_rate,monthly_kopecks FROM evolution_budget WHERE id=1").fetchone()
     return {"budget_settings":{"model":budget_row[0],"input":budget_row[1]/100,"output":budget_row[2]/100,"monthly":budget_row[3]/100} if budget_row else None,"mode":mode,"connected":bool(CONFIG["key"]),"model":cloud_writer.selected(db) or CONFIG["model"],
             "saved_connection":(DB.parent/"cloud.dpapi").is_file(),"can_remember":cloud_vault.supported(),
             "interval":idle//60,"wait_seconds":0 if once else wait,"pending":pending,"job":task,
             "published":soul_reader.latest(db),"attempt":attempt,"resume_available":bool(task and task["state"]=="error" and task["model"]==model and task["attempts"]<writer_volume.MAX_ATTEMPTS and len(attempts)<writer_volume.MAX_ATTEMPTS and not pending and not reserved and CONFIG["key"]),
-            "chapter_pages":soul_universe.chapter_pages(db),"target_pages":pages,"published_chars":chars,"page_chars":writer_volume.PAGE_CHARS,"attempts_today":len(attempts),
+            "chapter_pages":soul_universe.chapter_pages(db),"chapter_progress":chapter_progress,"target_pages":pages,"published_chars":chars,"page_chars":writer_volume.PAGE_CHARS,"attempts_today":len(attempts),
             "daily_limit":writer_volume.limit(db),"max_tokens":writer_volume.JOB_OUTPUT_LIMIT if once else cloud_writer.LIMIT,"reason":reason,
             "budget":soul_evolution.budget_text(db,day[:7])}
 
