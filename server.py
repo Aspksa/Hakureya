@@ -1106,15 +1106,15 @@ class Handler(SimpleHTTPRequestHandler):
                                 return self.respond({"error":"Сначала создайте векторный индекс сцен."},409)
                             inputs=[query]
                         if not key:return self.respond({"error":"Подключите Cloud.ru в настройках."},400)
-                        # Existing writer budget is separate. Refuse rather than bypass a configured
-                        # monetary ceiling for a different model. No automatic charge or retry.
-                        if db.execute("SELECT 1 FROM evolution_budget WHERE id=1").fetchone():
-                            return self.respond({"error":"Настроен бюджет писателя для другой модели. Векторные запросы заблокированы до настройки отдельного бюджета."},409)
+                        if data.get("budget") is not None:soul_embeddings.configure(db,data["budget"])
+                        cost_id=soul_embeddings.reserve(db,inputs)
+                        if cost_id is None:return self.respond({"error":"Укажите отдельный тариф и лимит эмбеддингов либо увеличьте остаток бюджета."},409)
                     req=Request(soul_embeddings.ENDPOINT,data=json.dumps({"model":soul_embeddings.MODEL,"input":inputs},ensure_ascii=False).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
                     with urlopen(req,timeout=60) as res:raw=res.read(1000001)
                     if len(raw)>1000000:raise ValueError("embedding response too large")
                     response=json.loads(raw)
                     with LOCK, closing(connect()) as db, db:
+                        soul_embeddings.settle(db,cost_id,response)
                         if CHRONICLE.get("config_epoch",0)!=epoch:
                             return self.respond({"error":"Подключение изменилось; результат не сохранён."},409)
                         if action=="index":
