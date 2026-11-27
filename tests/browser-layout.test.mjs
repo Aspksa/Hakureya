@@ -60,6 +60,8 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
      res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify(payload.action==="position"?{ok:true}:{reader}));return;
     }
     if(path==="/api/history"&&historyFailure){historyFailure=false;res.writeHead(503,{"Content-Type":"application/json"}).end(JSON.stringify({error:"fixture unavailable"}));return}
+    if(path==="/api/writer/draft/count"){res.writeHead(200,{"Content-Type":"application/json"}).end(JSON.stringify({pending:0,proposals:0,connected:false}));return}
+    if(path==="/api/writer"){res.writeHead(200,{"Content-Type":"application/json"}).end(JSON.stringify({pending:0,published:14,attempts_today:2,daily_limit:20,published_chars:3600,page_chars:1800,target_pages:20,chapter_pages:20,chapter_progress:{chapter:14,parts:2,chars:3600,target_chars:36000},mode:"draft",interval:20,connected:false,model:"fixture",reason:"Ожидание",budget:"Бюджет не задан"}));return}
     if(path==="/api/proposals"){res.writeHead(200,{"Content-Type":"application/json"}).end(JSON.stringify({pending:null,recent:[],approved:0}));return}
     if(path==="/api/proposals/generate"){proposalCalls++;req.resume();res.writeHead(200,{"Content-Type":"application/json"}).end(JSON.stringify({pending:{id:1,revision:"fixture",kind:"character",idea:"Хочу добавить персонажа",title:"Новый герой",description:"Описание",impact:"Влияние",risks:"Риски"},recent:[],approved:0}));return}
     if(path==="/api/proposals/decision"){req.resume();res.writeHead(200,{"Content-Type":"application/json"}).end(JSON.stringify({pending:null,recent:[{title:"Новый герой",status:"approved"}],approved:1}));return}
@@ -133,6 +135,15 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
    assert.equal(await evaluate("document.querySelectorAll('#composer button').length"),1);
    assert.equal(await evaluate("document.querySelector('#chat-connection').textContent"),"Локальный режим");
    assert.equal(await evaluate("document.querySelector('#menu #writer-open')===null && document.querySelector('#menu #universe-open')===null"),true);
+   if(width===1920){
+    await evaluate("document.querySelector('#writer-open').click()");
+    await waitFor(()=>evaluate("document.querySelector('#writer-metrics').children.length===4 && !document.querySelector('#writer-save').disabled"));
+    assert.deepEqual(await evaluate("[...document.querySelectorAll('#writer-metrics strong')].map(e=>e.textContent)"),["14","0","2 / 20","2.0 / 20 А4"]);
+    assert.equal(await evaluate("document.querySelector('#writer-chapter-bar').value"),0.1);
+    assert.equal(await evaluate("document.querySelector('#writer-technical').closest('details').open"),false);
+    assert.equal(await evaluate("document.querySelector('#writer-status').textContent"),"Ожидание");
+    await evaluate("document.querySelector('#writer-close').click()");
+   }
    const chat=await evaluate("({width:document.querySelector('#chat').getBoundingClientRect().width,graph:document.querySelector('#graph').clientWidth,font:parseFloat(getComputedStyle(document.querySelector('#messages')).fontSize)})");
    assert.ok(chat.font>=16);
    if(width>=1050){assert.ok(chat.width>=640&&chat.width<=860);assert.ok(Math.abs(chat.width+chat.graph-width)<2)}else assert.equal(chat.width,width);
@@ -196,6 +207,13 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
    await evaluate("document.querySelector('#settings').click()");
    assert.ok(await evaluate("document.querySelector('#config').open && parseFloat(getComputedStyle(document.querySelector('#key')).fontSize)>=16"));
    await evaluate("document.querySelector('#config-close').click()");
+   await evaluate("document.querySelector('#book-exit').click()");
+   const beforeRead=chatCalls;
+   await evaluate("document.querySelector('#prompt').value='Моя незаконченная мысль';document.querySelector('#quick-read').click()");
+   await waitFor(()=>evaluate("!document.querySelector('#book').hidden"));
+   assert.equal(chatCalls,beforeRead);
+   assert.equal(await evaluate("document.querySelector('#prompt').value"),"Моя незаконченная мысль");
+
   }
   assert.ok(maxGraphConcurrency<=1,"overlapping graph requests: "+maxGraphConcurrency);
  }finally{
