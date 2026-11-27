@@ -10,6 +10,7 @@ from collections import Counter
 import soul_omega as o
 import soul_universe as u
 import soul_evolution as ev
+import soul_embeddings as embeddings
 
 VERSION=1
 CONTEXT_BYTES=10000
@@ -30,6 +31,7 @@ CUES={
     "emotion":("страх","боял","испуг","радост","гнев","смущ","одиночеств"),
 }
 def init(db):
+    embeddings.init(db)
     db.execute("""CREATE TABLE IF NOT EXISTS narrative_sources(
         chapter INTEGER PRIMARY KEY,digest TEXT NOT NULL,payload TEXT NOT NULL,checksum TEXT NOT NULL,
         scenes INTEGER NOT NULL,chars INTEGER NOT NULL,signals INTEGER NOT NULL)""")
@@ -139,7 +141,7 @@ def status(db):
     evidence=db.execute("SELECT COUNT(*) FROM intellect_evidence").fetchone()[0]
     return {"published":expected,"archive":total,"indexed":indexed,"pending":max(0,expected-indexed),
             "scenes":scenes,"chars":chars,"signals":signals,"evidence":evidence,"method":"local_extractive",
-            "vector_enabled":False}
+            "vector_enabled":embeddings.status(db)["indexed"]>0,"vectors":embeddings.status(db)}
 
 def audit(db):
     if status(db)["published"]!=status(db)["archive"]:return "Архив публикаций неполон; требуется восстановление."
@@ -189,7 +191,8 @@ def prepare(db,plan):
                     "quote":best["quote"][:120],"signals":best["signals"][:3]})
     current_numbers={x["chapter"] for x in current}
     recall=[]
-    for r in u.search(db,query,16,False,scope(arc)):
+    vector=embeddings.latest_vector(db,scope(arc))
+    for r in embeddings.hybrid(db,query,vector,scope(arc),False,16):
         if r["chapter"] in current_numbers or any(x["chapter"]==r["chapter"] for x in recall):continue
         quote=u.focused_excerpt(r["text"],query,330)
         recall.append({"chapter":r["chapter"],"scene":r["scene"],"start":r["start"]+r["text"].index(quote),"quote":quote})
@@ -202,7 +205,7 @@ def prepare(db,plan):
         if row and (scope(arc) is None or row[0]==arc) and f.get("quote") and f["quote"] in row[1]:
             profiles.append({k:f[k] for k in ("chapter","subject","kind","value","quote")})
     data={"scope":arc,"current":current,"recall":recall,"profiles":profiles[:6],
-          "method":"exact_extracts_and_lexical_signals_not_confirmed_facts"}
+          "method":"exact_extracts_and_lexical_signals_not_confirmed_facts","retrieval":"hybrid_cached" if vector is not None else "lexical"}
     while len(o.dump(data).encode("utf-8"))>CONTEXT_BYTES:
         if data["profiles"]:data["profiles"].pop()
         elif data["recall"]:data["recall"].pop()
@@ -253,4 +256,4 @@ def report(db):
     return (f"Литературная память: {s['indexed']}/{s['published']} опубликованных частей; "
             f"в очереди {s['pending']}; {s['scenes']} сцен, {s['chars']} знаков. "
             f"Свидетельства: {s['evidence']}; фрагменты с возможными смысловыми признаками: {s['signals']}. "
-            "Локальный поиск и цитаты; векторный анализ не подключён.")
+            f"Векторный кэш: {s['vectors']['indexed']}/{s['vectors']['total']} сцен. Внешние запросы только по отдельному согласию.")
