@@ -71,11 +71,11 @@ def excerpts(story,spans):
         result.extend(selected[k] for k in sorted(selected))
     return result
 
-def build(db,n,source):
+def build(db,n,source,canon_checked=False):
     row=db.execute("SELECT arc,title,story,checksum,draft_id FROM omega_index WHERE number=?",(n,)).fetchone()
     if not row:raise ValueError("narrative source missing")
     arc,title,story,h,did=row
-    u.verified_source(db,n,arc,title,story,h,did)
+    u.verified_source(db,n,arc,title,story,h,did,canon_checked=canon_checked)
     if source!=o.digest(o.dump([u.VERSION,title,story,h])):raise ValueError("narrative source fingerprint")
     spans=db.execute("SELECT seq,start,end,body FROM universe_scenes WHERE chapter=? ORDER BY seq",(n,)).fetchall()
     cursor=0
@@ -98,10 +98,14 @@ def refresh(db,limit=None,chapter=None):
     sql+=" ORDER BY s.chapter"
     if limit is not None:sql+=" LIMIT ?";args.append(max(1,min(100,limit)))
     changed=0
-    for n,source in db.execute(sql,args).fetchall():
+    pending=db.execute(sql,args).fetchall()
+    if pending:
+        import soul_chronicle as ch
+        if not ch.canon_ok(db):raise ValueError("canon integrity")
+    for n,source in pending:
         old=db.execute("SELECT digest FROM narrative_sources WHERE chapter=?",(n,)).fetchone()
         if old==(fingerprint(source),):continue
-        row=build(db,n,source)
+        row=build(db,n,source,canon_checked=True)
         db.execute("INSERT OR REPLACE INTO narrative_sources VALUES(?,?,?,?,?,?,?)",row)
         changed+=1
         if limit is not None and changed>=max(1,min(100,limit)):break
