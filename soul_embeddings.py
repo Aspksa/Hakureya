@@ -129,6 +129,7 @@ def latest_vector(db,arc=None):
        JOIN omega_index i ON i.number=v.chapter WHERE v.model=? AND v.chapter NOT IN (SELECT chapter FROM universe_dirty)"""
     args=[MODEL]
     if arc:sql+=" AND i.arc=?";args.append(arc)
+    sql+=" AND i.number=(SELECT MAX(number) FROM omega_index WHERE (? IS NULL OR arc=?))";args.extend((arc,arc))
     row=db.execute(sql+" ORDER BY v.chapter DESC,v.seq DESC LIMIT 1",args).fetchone()
     if not row:return None
     try:return unpack(*row)
