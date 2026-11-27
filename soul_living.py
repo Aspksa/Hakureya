@@ -202,7 +202,7 @@ def eligible(db,did):
             import re
             words=sum(len(re.findall(r"\b\w+\b",r["story"])) for r in rows)+len(re.findall(r"\b\w+\b",text))
             if words>=part["target"] or o.volume(part["start"]+part["part"])!=o.volume(part["start"]):return False
-    if db.execute("SELECT 1 FROM lit_rejections WHERE draft_id=?",(did,)).fetchone():return False
+    if db.execute("SELECT 1 FROM lit_rejections WHERE draft_id=?",(did,)).fetchone() or c.review_warnings(db,did):return False
     import soul_intellect
     soul_intellect.refresh(db)
     if soul_intellect.draft_concerns(db,did):return False
@@ -212,7 +212,7 @@ def eligible(db,did):
 def publish_if_allowed(db,did):
     import soul_chronicle as c
     try:allowed=eligible(db,did)
-    except (ValueError,TypeError,KeyError,sqlite3.Error):allowed=False
+    except (ValueError,TypeError,KeyError,IndexError,AttributeError,sqlite3.Error):allowed=False
     if not allowed:
         log(db,"manual_review","Черновик оставлен на ручную проверку")
         return False
