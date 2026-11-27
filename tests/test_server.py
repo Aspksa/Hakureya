@@ -93,6 +93,42 @@ class ServerTest(unittest.TestCase):
             self.assertEqual(db.execute("SELECT status FROM chronicle_attempts").fetchone()[0],"draft")
         self.assertIn("ручная проверка",self.request("chat",{"content":"Покажи черновик"})["reply"])
 
+    def test_review_workspace_approves_only_viewed_revision(self):
+        from test_dynasty import base
+        self.request("config",{"key":"test-key","model":"test-model","consent":True})
+        data=base()
+        self.assertIsNone(self.request("writer/draft")["draft"])
+        fake=MagicMock()
+        fake.__enter__.return_value.read.return_value=json.dumps({"choices":[{"message":{"content":json.dumps(data,ensure_ascii=False)},"finish_reason":"stop"}]}).encode()
+        with patch.object(server,"urlopen",return_value=fake) as remote:
+            self.assertIn("Черновик создан",self.request("chat",{"content":"Продолжи династию"})["reply"])
+            review=self.request("writer/draft")["draft"]
+            self.assertEqual(review["story"],data["story"])
+            decision={"id":review["id"],"revision":review["revision"],"approve":True}
+            with self.assertRaises(HTTPError) as err:self.request("writer/decision",{**decision,"revision":"stale"})
+            self.assertEqual(err.exception.code,409)
+            self.assertEqual(self.request("writer/draft")["draft"]["id"],review["id"])
+            result=self.request("writer/decision",decision)
+            self.assertTrue(result["approved"])
+            self.assertEqual(result["published"],14)
+            self.assertIsNone(self.request("writer/draft")["draft"])
+            with self.assertRaises(HTTPError):self.request("writer/decision",decision)
+            self.assertEqual(remote.call_count,1)
+
+    def test_review_workspace_rejects_without_publication(self):
+        from test_dynasty import base
+        self.request("config",{"key":"test-key","model":"test-model","consent":True})
+        fake=MagicMock()
+        fake.__enter__.return_value.read.return_value=json.dumps({"choices":[{"message":{"content":json.dumps(base(),ensure_ascii=False)},"finish_reason":"stop"}]}).encode()
+        with patch.object(server,"urlopen",return_value=fake) as remote:
+            self.assertIn("Черновик создан",self.request("chat",{"content":"Продолжи династию"})["reply"])
+            review=self.request("writer/draft")["draft"]
+            result=self.request("writer/decision",{"id":review["id"],"revision":review["revision"],"approve":False})
+            self.assertFalse(result["approved"])
+            self.assertEqual(result["published"],13)
+            self.assertIsNone(self.request("writer/draft")["draft"])
+            self.assertEqual(remote.call_count,1)
+
     def test_writer_complete_json_at_token_limit_needs_manual_review(self):
         from test_dynasty import base
         self.request("config",{"key":"test-key","model":"test-model","consent":True})
