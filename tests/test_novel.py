@@ -79,7 +79,7 @@ class NovelTest(unittest.TestCase):
         import soul_export
         stories=[]
         for day in range(1,14):
-            story=" ".join("тестслово"+str(day)+"буква"+str(i) for i in range(24))+"."
+            story=" ".join("тестслово"+chr(1072+day)+"буква"+chr(1072+i) for i in range(24))+"."
             stories.append(story)
             _,p=self.make(day,story)
             self.assertEqual(p["novel"]["start"],14)
