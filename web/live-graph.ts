@@ -81,9 +81,9 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   }
   const boxes:{l:number,r:number,t:number,b:number}[]=[];
   // Screen-space overlays must not cover a label that is otherwise considered visible.
-  const svgRect=svg.getBoundingClientRect();
-  for(const control of Array.from(svg.parentElement?.querySelectorAll<HTMLElement>("#info,#atlas-open,#atlas-back,#network-open,#replay,#stellar-cinema,.genesis-settings,.stellar-ledger")||[])){
-   if(control.hidden)continue;const r=control.getBoundingClientRect();
+  const svgRect=svg.getBoundingClientRect?.()??{left:0,top:0};
+  for(const control of Array.from(svg.parentElement?.querySelectorAll?.<HTMLElement>("#info,#atlas-open,#atlas-back,#network-open,#replay,#stellar-cinema,.genesis-settings,.stellar-ledger")||[])){
+   if(control.hidden||typeof control.getBoundingClientRect!=="function")continue;const r=control.getBoundingClientRect();
    if(r.width>0&&r.height>0)boxes.push({l:r.left-svgRect.left-4,r:r.right-svgRect.left+4,t:r.top-svgRect.top-4,b:r.bottom-svgRect.top+4})
   }
   const priority=(key:string)=>key==="root"?0:key===active||key==="cloud:api"?1:key.startsWith("brain:")?2:key.startsWith("hub:")?3:graph.byKey.get(key)?.kind?.endsWith("_root")?3:4;
