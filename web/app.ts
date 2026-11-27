@@ -78,7 +78,7 @@ function reportClientFailure(path:string,kind:string,status:number){
  void fetch("/api/diagnostics",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({route:path.split("/")[0].split("?")[0],kind,status}),keepalive:true}).catch(()=>{});
 }
 async function api(path:string,data?:unknown){
- const controller=new AbortController(),timeout=window.setTimeout(()=>controller.abort(),path==="chat"?420000:path==="proposals/generate"||path==="narrative/embeddings"?130000:15000);
+ const controller=new AbortController(),timeout=window.setTimeout(()=>controller.abort(),path==="chat"?420000:path==="proposals/generate"||path==="narrative/embeddings"||path==="narrative/semantic"?130000:15000);
  let status=0;
  try{
   const response=await fetch("/api/"+path,{...(data===undefined?{}:{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)}),signal:controller.signal});
@@ -303,6 +303,7 @@ async function renderUniverse(){
   const data=await api("universe/"+universePage);if(serial!==universeSerial||!universeDialog.open)return;
   $("universe-summary").textContent=data.chapters+" частей · "+data.scenes+" сцен · "+data.volumes+" томов · "+Math.round(data.chars/1800)+" усл. А4 · "+data.actors+" персонажей · "+data.pending+" черновиков";
   renderNarrative(data.narrative);
+  void loadSemantic();
   $("universe-page").textContent=universePage+" / "+data.pages;
   ($("universe-prev") as HTMLButtonElement).disabled=universePage<=1;($("universe-next") as HTMLButtonElement).disabled=universePage>=data.pages;
   const galaxies=$("universe-galaxies");galaxies.replaceChildren();
@@ -376,6 +377,47 @@ $("narrative-audit").onclick=()=>universeCommand("Проверить литер�
 $("narrative-repair").onclick=()=>{if(window.confirm("Перестроить локальный индекс из утверждённого текста? Сам роман не изменится."))universeCommand("Восстановить литературную память")};
 $("narrative-sources").onclick=()=>universeCommand("Источники писателя");
 $("narrative-ideas").onclick=()=>universeCommand("Очередь замыслов");
+let semanticBusy=false,semanticCurrent:any=null,semanticSequence=0;
+const semanticAnalyze=$("semantic-analyze") as HTMLButtonElement,semanticApprove=$("semantic-approve") as HTMLButtonElement,semanticReject=$("semantic-reject") as HTMLButtonElement;
+function semanticButtons(){semanticAnalyze.disabled=semanticBusy||!!semanticCurrent;semanticApprove.disabled=semanticReject.disabled=semanticBusy||!semanticCurrent}
+function renderSemantic(data:any){
+ semanticCurrent=data.pending||null;
+ const st=data.status||{};
+ $("semantic-status").textContent="Утверждено сцен: "+(st.approved??0)+" · отклонено: "+(st.rejected??0)+(semanticCurrent?" · ожидает решения":"");
+ $("semantic-review").hidden=!semanticCurrent;
+ const list=$("semantic-facts");list.replaceChildren();
+ if(semanticCurrent){
+  $("semantic-title").textContent="Часть "+semanticCurrent.chapter+" · сцена "+semanticCurrent.scene;
+  if(!semanticCurrent.facts.length){const p=document.createElement("p");p.textContent="Модель не предложила подтверждаемых сведений.";list.append(p)}
+  for(const f of semanticCurrent.facts){const a=document.createElement("article"),title=document.createElement("strong"),body=document.createElement("p");title.textContent=f.subject+" · "+f.kind+" · "+f.value;body.textContent="«"+f.quote+"»";a.append(title,body);list.append(a)}
+ }
+ semanticButtons();
+}
+async function loadSemantic(){
+ if(semanticBusy)return;
+ const seq=++semanticSequence;semanticBusy=true;semanticButtons();
+ try{const data=await api("narrative/semantic");if(seq===semanticSequence)renderSemantic(data)}
+ catch(e){if(seq===semanticSequence)$("semantic-status").textContent=String(e)}
+ finally{if(seq===semanticSequence){semanticBusy=false;semanticButtons()}}
+}
+async function semanticAction(approve?:boolean){
+ if(semanticBusy)return;
+ const deciding=typeof approve==="boolean";
+ if(deciding&&!semanticCurrent)return;
+ if(!window.confirm(deciding?(approve?"Утвердить извлечённые сведения как авторские заметки с цитатами?":"Отклонить весь анализ этой сцены?"):"Разрешить один платный запрос для анализа опубликованной сцены? Текст будет отправлен в Cloud.ru."))return;
+ const seq=++semanticSequence;semanticBusy=true;semanticButtons();
+ $("semantic-status").textContent="Обработка…";
+ try{
+  const data=await api("narrative/semantic",deciding?{action:"decide",chapter:semanticCurrent.chapter,scene:semanticCurrent.scene,revision:semanticCurrent.revision,approve}:{action:"analyze",consent:true});
+  if(seq===semanticSequence){renderSemantic(data);if(deciding)void refreshGraph()}
+ }catch(e){if(seq===semanticSequence)$("semantic-status").textContent=String(e)+" Автоматического повтора нет."}
+ finally{if(seq===semanticSequence){semanticBusy=false;semanticButtons()}}
+}
+semanticAnalyze.onclick=()=>void semanticAction();
+semanticApprove.onclick=()=>void semanticAction(true);
+semanticReject.onclick=()=>void semanticAction(false);
+$("semantic-refresh").onclick=()=>void loadSemantic();
+
 
 const writerPreviewOpt=$("writer-preview-opt") as HTMLInputElement,writerPreviewText=$("writer-preview-text");
 writerPreviewOpt.onchange=()=>{writerPreviewText.hidden=!writerPreviewOpt.checked;writerPreviewText.textContent="";if(writerPreviewOpt.checked)void refreshActivity()};
