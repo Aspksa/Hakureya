@@ -944,6 +944,14 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == "/api/writer":
             with LOCK, closing(connect()) as db:
                 return self.respond(writer_status(db))
+        if self.path == "/api/writer/draft":
+            with LOCK, closing(connect()) as db:
+                pending=soul_chronicle.latest_pending(db)
+                if pending:
+                    revision=db.execute("SELECT checksum FROM chronicle_drafts WHERE id=?",(pending["id"],)).fetchone()[0]
+                    pending={k:pending[k] for k in ("id","title","story")}
+                    pending.update(revision=revision,warnings=soul_chronicle.review_warnings(db,pending["id"]))
+                return self.respond({"draft":pending,"published":soul_reader.latest(db)})
         if self.path == "/api/writer/preview":
             return self.respond(writer_preview.snapshot())
         if self.path == "/api/activity":
@@ -1020,6 +1028,24 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.respond({"error":"Некорректная диагностика"},400)
                 diagnostics.emit("client.failed",kind=kind,route=diagnostics.route("/api/"+route),status=status,source="web/app.ts")
                 return self.respond({"ok":True})
+            if self.path == "/api/writer/decision":
+                draft_id=data.get("id")
+                revision=data.get("revision")
+                approve=data.get("approve")
+                if type(draft_id) is not int or draft_id<1 or type(approve) is not bool or not isinstance(revision,str) or len(revision)>128:
+                    return self.respond({"error":"Некорректное решение по черновику."},400)
+                with LOCK, closing(connect()) as db, db:
+                    row=db.execute("SELECT checksum,status FROM chronicle_drafts WHERE id=?",(draft_id,)).fetchone()
+                    if not row or row[1]!="pending" or row[0]!=revision:
+                        return self.respond({"error":"Черновик изменился или уже обработан. Обновите редакцию."},409)
+                    try:ok=soul_chronicle.decide(db,draft_id,approve)
+                    except (ValueError,TypeError,KeyError,IndexError) as error:
+                        diagnostics.failure("writer.decision_failed",error,draft_id=draft_id)
+                        ok=False
+                    if not ok:return self.respond({"error":"Решение не сохранено: проверьте целостность черновика и канона."},409)
+                    published=soul_reader.latest(db)
+                diagnostics.emit("writer.decision",draft_id=draft_id,approved=approve,published=published)
+                return self.respond({"ok":True,"published":published,"approved":approve})
             if self.path == "/api/writer/resume":
                 if data.get("consent") is not True:return self.respond({"error":"Подтвердите новый платный запрос."},400)
                 with LOCK, closing(connect()) as db, db:
