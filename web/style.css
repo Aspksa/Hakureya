@@ -377,3 +377,12 @@ dialog select:focus-visible,summary:focus-visible{outline:2px solid #d9bd8f;outl
 #chat button:focus-visible,#menu button:focus-visible,dialog button:focus-visible{outline:2px solid #d9bb84;outline-offset:2px}
 @media(max-width:760px){#chat{gap:8px}.chat-identity{gap:8px}#chat-workspace{gap:0}#chat-workspace button{font-size:13px;padding:6px 8px;min-height:36px}#writer-dialog .writer-metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 0}#writer-dialog .writer-metrics section:nth-child(odd){border:0;padding-left:0}#writer-dialog .writer-metrics small{min-height:0}#chat #composer{padding:7px 9px}#chat #prompt{min-height:40px}}
 @media(max-height:500px){#chat{gap:5px}#chat>header{min-height:34px}#chat-workspace button{min-height:30px;font-size:12px}#chat-menu,#close{min-height:34px;min-width:34px}#chat #messages{gap:12px;padding:5px 2px}#chat #prompt{min-height:36px}#chat #composer{padding:5px 8px}#chat #chat-send{height:34px;flex-basis:34px}}
+
+#narrative-panel{border:0;border-top:1px solid #d5bd9320;padding:12px 0;margin:6px 0;color:#d9c9b0}
+#narrative-panel summary{cursor:pointer;color:#ecd1a3;font-weight:550}
+#narrative-panel output{display:block;color:#b9aa96;font-size:13px;line-height:1.55;margin:9px 0;white-space:pre-wrap}
+#narrative-panel .narrative-actions{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+#narrative-panel button{border:1px solid #b89b6130;border-radius:8px;min-height:36px;padding:7px 10px;color:#e3c58f}
+#narrative-panel label{margin:8px 0;font-size:13px}
+#narrative-panel p{font-size:13px;color:#b9aa96;line-height:1.6}
+#narrative-hits article{border-top:1px solid #d5bd9320;padding:10px 0;overflow-wrap:anywhere;white-space:pre-wrap}
