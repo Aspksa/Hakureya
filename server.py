@@ -295,6 +295,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
         return execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
 
 def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan):
+    stage="подготовка запроса"
     try:
         intelligence=plan.get("intelligence",{})
         trace=intelligence.get("network")
@@ -311,6 +312,7 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
         payload={"model":model,"messages":soul_chronicle.prompt(reservation,traits,previous,plan),"max_tokens":writer_volume.JOB_OUTPUT_LIMIT if plan.get("writer_job") else cloud_writer.LIMIT,"stream":True,"stream_options":{"include_usage":True}}
         req=Request(API,data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
         graph_activity.update(activity,"waiting")
+        stage="получение ответа Cloud.ru"
         checkpoint=[time.monotonic(),0]
         def preview(raw):
             writer_preview.push(activity,raw)
@@ -332,9 +334,11 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
             writer_preview.clear(activity)
         graph_activity.update(activity,"received","hub:4")
         graph_activity.update(activity,"validating","hub:4")
+        stage="учёт токенов"
         with LOCK, closing(connect()) as db, db:
             cloud_writer.usage(db,reservation[0],model,result)
             soul_evolution.settle_cost(db,reservation[0],result)
+        stage="разбор ответа модели"
         if result["choices"][0].get("finish_reason")=="length":
             with LOCK, closing(connect()) as db, db:
                 soul_universe.save_fragment(db,reservation[0],writer_preview.story_prefix(result["choices"][0]["message"]["content"]),"truncated")
@@ -357,6 +361,7 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
                 graph_activity.update(activity,"discarded")
                 return "Настройки изменились; черновик отброшен."
             graph_activity.update(activity,"saving","hub:4")
+            stage="сохранение и проверка черновика"
             soul_chronicle.finish(db,reservation,value,plan,tolerant=True,warnings=adaptations)
             db.execute("DELETE FROM universe_fragments WHERE attempt=?",(reservation[0],))
             pending=soul_chronicle.latest_pending(db)
@@ -391,7 +396,7 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
             elif isinstance(error,(URLError,TimeoutError,HTTPException,OSError)):detail="Обрыв или ошибка соединения с Cloud.ru"
             elif isinstance(error,json.JSONDecodeError):detail="Модель вернула неполный или некорректный JSON"
             elif isinstance(locals().get("result"),dict) and locals()["result"].get("choices") and isinstance(locals()["result"]["choices"][0],dict) and locals()["result"]["choices"][0].get("finish_reason")=="length":detail="Ответ модели достиг предельной длины"
-            else:detail=writer_response.detail(error)
+            else:detail=stage.capitalize()+": "+writer_response.detail(error)
             if plan.get("writer_job"):
                 db.execute("UPDATE writer_job SET reason=? WHERE id=1 AND state='error'",(detail+". Задание остановлено; автоматического повтора нет.",))
             soul_living.log(db,"generation_failed",detail+"; попытка учтена")
