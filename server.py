@@ -501,7 +501,7 @@ def chronicle_command(content):
                 elif q=="восстановить литературную память":result=f"Восстановлено записей памяти: {soul_narrative.repair(db)}. Текст романа не изменён."
                 elif q=="источники писателя":
                     data=soul_narrative.last_run(db)
-                    result=("Источники последнего контекста (доступные части): "+", ".join(f"{r[\'chapter\']}:{r[\'scene\']}" for r in data["refs"]) if data else "Писатель ещё не использовал общую память.")
+                    result=("Источники последнего контекста (доступные части): "+", ".join(f"{r['chapter']}:{r['scene']}" for r in data["refs"]) if data else "Писатель ещё не использовал общую память.")
                 else:
                     _,kind,n=q.split();result=soul_narrative.summary(db,int(n),"chapter" if kind=="главы" else "volume")
                 db.execute("RELEASE narrative_command");return result
