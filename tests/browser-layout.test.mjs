@@ -129,11 +129,17 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
    assert.equal(await evaluate("document.querySelector('#menu').hidden"),false);
    await evaluate("document.querySelector('#chat-menu').click()");
    assert.equal(await evaluate("document.querySelector('#menu').hidden"),true);
+   assert.deepEqual(await evaluate("[...document.querySelectorAll('#chat-workspace button')].map(b=>b.id)"),["quick-read","writer-open","quick-draft","quick-proposals","universe-open"]);
+   assert.equal(await evaluate("document.querySelectorAll('#composer button').length"),1);
+   assert.equal(await evaluate("document.querySelector('#chat-connection').textContent"),"Локальный режим");
+   assert.equal(await evaluate("document.querySelector('#menu #writer-open')===null && document.querySelector('#menu #universe-open')===null"),true);
    const chat=await evaluate("({width:document.querySelector('#chat').getBoundingClientRect().width,graph:document.querySelector('#graph').clientWidth,font:parseFloat(getComputedStyle(document.querySelector('#messages')).fontSize)})");
    assert.ok(chat.font>=16);
    if(width>=1050){assert.ok(chat.width>=640&&chat.width<=860);assert.ok(Math.abs(chat.width+chat.graph-width)<2)}else assert.equal(chat.width,width);
-   await evaluate("document.querySelector('#command-plus').click()");
+   await evaluate("document.querySelector('#chat-menu').click();document.querySelector('#command-plus').click()");
    assert.equal(await evaluate("document.querySelector('#command-dialog').open"),true);
+   assert.equal(await evaluate("document.querySelectorAll('#command-dialog .command-tools button').length"),0);
+   assert.equal(await evaluate("document.querySelector('#menu').hidden"),true);
    assert.ok(await evaluate("document.querySelectorAll('#command-results .command-item').length>0 && document.querySelectorAll('#command-results .command-item').length<30"));
    await evaluate("(()=>{const s=document.querySelector('#command-category');s.value='';s.dispatchEvent(new Event('change',{bubbles:true}))})()");
    assert.equal(await evaluate("document.querySelectorAll('#command-results .command-item').length"),186);
@@ -147,7 +153,7 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
    assert.equal(await evaluate("document.querySelector('#command-dialog').open"),false);
    assert.equal(await evaluate("document.querySelector('#messages').children.length"),0);
    await evaluate("document.querySelector('#prompt').value=''");
-   await evaluate("document.querySelector('#command-plus').click()");
+   await evaluate("document.querySelector('#chat-menu').click();document.querySelector('#command-plus').click()");
    await evaluate("(()=>{const s=document.querySelector('#command-search');s.value='открыть главу';s.dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#command-results .command-item').click();return true})()");
    assert.equal(await evaluate("document.querySelector('#prompt').value"),"Летопись: читать 5");
    assert.equal(await evaluate("document.querySelector('#prompt').value.slice(document.querySelector('#prompt').selectionStart,document.querySelector('#prompt').selectionEnd)"),"5");
@@ -171,6 +177,7 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
    const sentBefore=chatCalls;
    await evaluate("document.querySelector('#prompt').value='Читать книгу';document.querySelector('#composer').dispatchEvent(new Event('submit',{cancelable:true,bubbles:true}));document.querySelector('#prompt').value='Дубль';document.querySelector('#composer').dispatchEvent(new Event('submit',{cancelable:true,bubbles:true}));true");
    await waitFor(()=>evaluate("!document.querySelector('#book').hidden"));
+   assert.equal(await evaluate("document.querySelector('#chat-workspace').hidden"),true);
    assert.equal(chatCalls,sentBefore+1);
    const book=await evaluate("({font:parseFloat(getComputedStyle(document.querySelector('#book-page')).fontSize),title:parseFloat(getComputedStyle(document.querySelector('#book-title')).fontSize),button:document.querySelector('#book-next').getBoundingClientRect().width})");
    assert.equal(book.font,21);
