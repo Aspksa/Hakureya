@@ -11,7 +11,7 @@ function ensureGraph(){
  return live;
 }
 let busy=false,historyReady=false,historyLoading=false;
-$("replay").onclick=()=>{networkView=false;selectedVolume=null;selectedAtlas=null;atlasTrail.length=0;void refreshGraph().then(()=>live?.replay())};$("reset").onclick=()=>{networkView=false;selectedVolume=null;selectedAtlas=null;atlasTrail.length=0;void refreshGraph().then(()=>live?.replay());$("menu").hidden=true};
+$("replay").onclick=()=>{networkView=false;selectedVolume=null;selectedAtlas=null;atlasTrail.length=0;void refreshGraph().then(()=>live?.replay())};
 let graphRequest=0,graphInFlight=false,graphQueued=false;
 function graphPath(){return networkView?"graph/network":selectedAtlas!==null?"graph/atlas"+(selectedAtlas?"/"+selectedAtlas:""):selectedVolume===null?"graph":"graph/volume/"+selectedVolume}
 let graphPending:Promise<void>|null=null;
