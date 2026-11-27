@@ -70,11 +70,11 @@ function toggleMenu(){menu.hidden=!menu.hidden;$("chat-menu").setAttribute("aria
 $("chat-menu").onclick=toggleMenu;document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(config.open||writerDialog.open||commandDialog.open||universeDialog.open||note.open)return;if(cinema){setCinema(false);return}if(!menu.hidden)menu.hidden=true;else if(!chat.hidden&&!config.open&&!writerDialog.open&&!commandDialog.open&&!universeDialog.open&&!note.open)toggle(false)}});document.addEventListener("click",e=>{if(!menu.contains(e.target as Node)&&!avatar.contains(e.target as Node)&&!$("chat-menu").contains(e.target as Node))menu.hidden=true;if(menu.hidden)$("chat-menu").setAttribute("aria-expanded","false")});
 function message(role:string,content:string,force=false){const box=$("messages"),follow=force||box.scrollHeight-box.scrollTop-box.clientHeight<80;const p=document.createElement("p");p.className="message "+role;p.textContent=content;box.append(p);if(follow)box.scrollTop=box.scrollHeight;return p}
 async function api(path:string,data?:unknown){
- const controller=new AbortController(),timeout=window.setTimeout(()=>controller.abort(),path==="chat"?130000:15000);
+ const controller=new AbortController(),timeout=window.setTimeout(()=>controller.abort(),path==="chat"?420000:15000);
  try{
   const response=await fetch("/api/"+path,{...(data===undefined?{}:{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)}),signal:controller.signal});
   const value=await response.json();if(!response.ok)throw Error(value.error||"Ошибка сервера");return value;
- }catch(e){if(controller.signal.aborted)throw Error("Истекло время ожидания. Запрос мог завершиться на сервере; проверьте историю.");throw e}finally{clearTimeout(timeout)}
+ }catch(e){if(controller.signal.aborted)throw Error("Истекло время ожидания. Не отправляйте запрос повторно: он мог завершиться на сервере. Проверьте историю и панель писателя.");throw e}finally{clearTimeout(timeout)}
 }
 const sendButton=$("chat-send") as HTMLButtonElement;
 function syncComposer(){sendButton.disabled=busy||!historyReady||!prompt.value.trim();$("composer").setAttribute("aria-busy",String(busy))}
