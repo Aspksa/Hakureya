@@ -288,6 +288,7 @@ def _decide(db, draft_id, approve):
             soul_intelligence.refresh(db)
             n=db.execute("SELECT number FROM saga_arcs WHERE draft_id=?",(draft_id,)).fetchone()[0]
             soul_narrative.refresh(db,chapter=n)
+            soul_intellect.refresh(db)
             soul_director.update_annotation(db,n)
     return bool(cur.rowcount)
 
