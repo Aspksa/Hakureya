@@ -23,6 +23,7 @@ import cloud_writer
 import cloud_vault
 import writer_stream
 import writer_response
+import diagnostics
 import writer_preview
 import writer_volume
 import soul_evolution
@@ -137,7 +138,7 @@ def connect():
                     db.execute("RELEASE initial_index")
                 except (ValueError,TypeError,KeyError,IndexError) as error:
                     db.execute("ROLLBACK TO initial_index");db.execute("RELEASE initial_index")
-                    LOG.warning("initial literary index failure: %s",type(error).__name__)
+                    diagnostics.failure("index.failed",error)
                 db.commit()
                 INITIALIZED.add(path)
         return db
@@ -296,6 +297,9 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
 
 def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan):
     stage="подготовка запроса"
+    started=time.monotonic()
+    diag={"activity":diagnostics.identifier(activity),"attempt":diagnostics.identifier(reservation[0])}
+    diagnostics.emit("writer.start",**diag,one_off=bool(plan.get("writer_job")))
     try:
         intelligence=plan.get("intelligence",{})
         trace=intelligence.get("network")
@@ -313,7 +317,15 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
         req=Request(API,data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
         graph_activity.update(activity,"waiting")
         stage="получение ответа Cloud.ru"
+        diagnostics.emit("writer.request",**diag,destination="Cloud.ru /v1/chat/completions",
+                         max_tokens=payload["max_tokens"],request_bytes=len(req.data),stream=True)
         checkpoint=[time.monotonic(),0]
+        counters=[0,0]
+        def progress(chars,chunks):
+            counters[:]=[chars,chunks]
+            graph_activity.progress(activity,chars,chunks)
+            if chunks==1:
+                diagnostics.emit("writer.first_content",**diag,chars=chars,elapsed_ms=round((time.monotonic()-started)*1000))
         def preview(raw):
             writer_preview.push(activity,raw)
             body=writer_preview.fragment(activity)
@@ -325,7 +337,7 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
                 checkpoint[:]=[now,len(body)]
         try:
             with urlopen(req,timeout=60) as res:
-                result=writer_stream.read_response(res,lambda chars,chunks:graph_activity.progress(activity,chars,chunks),preview)
+                result=writer_stream.read_response(res,progress,preview)
         except (HTTPException,URLError,TimeoutError,ValueError,OSError):
             with LOCK, closing(connect()) as db, db:
                 soul_universe.save_fragment(db,reservation[0],writer_preview.fragment(activity),"interrupted")
@@ -335,11 +347,16 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
         graph_activity.update(activity,"received","hub:4")
         graph_activity.update(activity,"validating","hub:4")
         stage="учёт токенов"
+        diagnostics.emit("writer.received",**diag,chars=counters[0],chunks=counters[1],
+                         elapsed_ms=round((time.monotonic()-started)*1000),tail_interrupted=result.get("tail_interrupted") is True)
         with LOCK, closing(connect()) as db, db:
             cloud_writer.usage(db,reservation[0],model,result)
             soul_evolution.settle_cost(db,reservation[0],result)
         stage="разбор ответа модели"
         finish_reason=result["choices"][0].get("finish_reason")
+        usage=result.get("usage")
+        tokens={k:usage[k] for k in ("prompt_tokens","completion_tokens","total_tokens") if isinstance(usage,dict) and type(usage.get(k)) is int}
+        diagnostics.emit("writer.validate",**diag,finish_reason=diagnostics.finish(finish_reason),**tokens)
         if finish_reason not in (None,"stop","length"):raise ValueError("unsupported finish reason")
         raw=result["choices"][0]["message"].get("content")
         if raw is None or isinstance(raw,str) and not raw.strip():raise ValueError("empty literary content")
@@ -358,9 +375,11 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
             if CHRONICLE["epoch"]!=epoch:
                 soul_chronicle.fail(db,reservation)
                 graph_activity.update(activity,"discarded")
+                diagnostics.emit("writer.discarded",**diag,reason="configuration_changed")
                 return "Настройки изменились; черновик отброшен."
             graph_activity.update(activity,"saving","hub:4")
             stage="сохранение и проверка черновика"
+            diagnostics.emit("writer.save",**diag,story_chars=len(value["story"]),warnings=len(adaptations))
             soul_chronicle.finish(db,reservation,value,plan,tolerant=True,warnings=adaptations)
             db.execute("DELETE FROM universe_fragments WHERE attempt=?",(reservation[0],))
             pending=soul_chronicle.latest_pending(db)
@@ -377,6 +396,7 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
             if auto_published:
                 number=db.execute("SELECT number FROM saga_arcs WHERE draft_id=?",(pending["id"],)).fetchone()[0]
         graph_activity.update(activity,"published" if auto_published else "saved",f"c:{pending['id']}" if auto_published else f"draft:{pending['id']}" if pending else "hub:4")
+        diagnostics.emit("writer.completed",**diag,draft_id=pending["id"],published=auto_published,warnings=len(warnings),elapsed_ms=round((time.monotonic()-started)*1000))
         if auto_published:return f"Глава {number} опубликована: "+pending["title"]
         if warnings:return "Черновик создан. Требуется ручная проверка: "+"; ".join(warnings)+"\n\n"+pending["title"]+"\n\n"+pending["story"]+"\n\nПринять главу / Отклонить главу."
         if plan.get("destiny"):
@@ -387,6 +407,9 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
             return "Черновик создан.\n\n"+pending["title"]+"\n\n"+pending["story"]+"\n\n"+("Этап сюжета подтверждён цитатой." if shadow_saved else "Этап ещё не завершён; следующий пока не откроется.")+"\nПринять главу / Отклонить главу. Оценки: летопись: качество."
         return "Черновик создан. "+soul_saga.ARC_LABELS[plan["arc"]]+".\n\n"+pending["title"]+"\n\n"+pending["story"]+("\n\nЕсть варианты: летопись: варианты" if variants else "")+"\n\nПринять главу / Отклонить главу. Оценки: летопись: качество / летопись: оригинальность."
     except (URLError,TimeoutError,ValueError,KeyError,IndexError,TypeError,OSError,sqlite3.Error,HTTPException,AttributeError) as error:
+        diagnostics.failure("writer.failed",error,**diag,stage=stage,
+                            chars=locals().get("counters",[0,0])[0],chunks=locals().get("counters",[0,0])[1],
+                            elapsed_ms=round((time.monotonic()-started)*1000))
         with LOCK, closing(connect()) as db, db:
             if isinstance(locals().get("value"),dict):soul_universe.save_fragment(db,reservation[0],value.get("story"),"unvalidated")
             elif isinstance(locals().get("raw"),str):soul_universe.save_fragment(db,reservation[0],writer_preview.story_prefix(raw),"unvalidated")
@@ -861,7 +884,7 @@ def chronicle_worker(stop):
                 generate_chronicle(background=True)
         except (sqlite3.Error,ValueError,OSError,KeyError,TypeError,IndexError,AttributeError) as error:
             # Never include arbitrary model text, secrets or exception payloads.
-            LOG.warning("worker failure: %s",type(error).__name__)
+            diagnostics.failure("worker.failed",error)
             continue
 
 class Handler(SimpleHTTPRequestHandler):
@@ -880,6 +903,8 @@ class Handler(SimpleHTTPRequestHandler):
 
     def respond(self, data, status=200):
         raw = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        if status>=400 or self.command=="POST":
+            diagnostics.emit("http.response",route=diagnostics.route(self.path),method=self.command,status=status,bytes=len(raw))
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
@@ -951,7 +976,7 @@ class Handler(SimpleHTTPRequestHandler):
                     data=memory_graph.snapshot(db)
                 return self.respond(data)
             except (sqlite3.Error,ValueError,KeyError,TypeError) as error:
-                LOG.warning("graph failure: %s",type(error).__name__)
+                diagnostics.failure("graph.failed",error)
                 return self.respond({"error":"Граф временно недоступен; проверьте литературную базу."},503)
         if self.path.split("?",1)[0] == "/api/avatar":
             path = ROOT / "data" / "avatar.png"
@@ -1143,13 +1168,15 @@ class Handler(SimpleHTTPRequestHandler):
                 req=Request(API,data=json.dumps(payload).encode(),headers={"Authorization":"Bearer "+key,"Content-Type":"application/json"},method="POST")
                 with graph_activity.track("chat",f"m:{user_id}") as activity:
                     try:
+                        diagnostics.emit("chat.request",activity=diagnostics.identifier(activity),destination="Cloud.ru /v1/chat/completions",request_bytes=len(req.data),max_tokens=1200)
                         graph_activity.update(activity,"waiting")
                         with urlopen(req,timeout=60) as res:
                             body=json.loads(res.read(4_000_000))
                         graph_activity.update(activity,"received")
                         reply=body["choices"][0]["message"]["content"]
                         if not isinstance(reply,str) or not reply.strip():raise ValueError("empty response")
-                    except (URLError,TimeoutError,ValueError,KeyError,IndexError,TypeError,OSError,HTTPException):
+                    except (URLError,TimeoutError,ValueError,KeyError,IndexError,TypeError,OSError,HTTPException) as error:
+                        diagnostics.failure("chat.failed",error,activity=diagnostics.identifier(activity),destination="Cloud.ru /v1/chat/completions")
                         graph_activity.update(activity,"error")
                         return self.respond({"error":"Cloud.ru не вернул ответ. Сообщение сохранено; проверьте модель и ключ."},502)
                     with LOCK:
@@ -1158,14 +1185,16 @@ class Handler(SimpleHTTPRequestHandler):
                             return self.respond({"error":"Настройки изменились; ответ отброшен."},409)
                         answer_id=store("assistant",reply)
                         CHRONICLE["last_activity"]=time.monotonic()
+                    diagnostics.emit("chat.completed",activity=diagnostics.identifier(activity),chars=len(reply))
                     graph_activity.update(activity,"done",f"m:{answer_id}")
                     return self.respond({"reply":reply,"connected":True})
             finally:
                 CHAT_GATE.release()
         except sqlite3.Error as error:
-            LOG.warning("database request failure: %s",type(error).__name__)
+            diagnostics.failure("database.failed",error,route=diagnostics.route(self.path))
             return self.respond({"error":"База данных временно недоступна."},503)
         except (ValueError, UnicodeError, TypeError, binascii.Error) as e:
+            diagnostics.failure("http.invalid",e,route=diagnostics.route(self.path))
             return self.respond({"error":"Некорректные данные запроса"},400)
 
 def main():
@@ -1177,12 +1206,19 @@ def main():
         raise SystemExit("Frontend not built: npm install && npm run build")
     try:
         with instance_guard.exclusive(DB):
-            handler=RotatingFileHandler(DB.parent/"hakureya.log",maxBytes=1_000_000,backupCount=3,encoding="utf-8")
-            handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+            log_dir=ROOT/"logs"
+            log_dir.mkdir(parents=True,exist_ok=True)
+            handler=RotatingFileHandler(log_dir/"hakureya.log",maxBytes=2_000_000,backupCount=3,encoding="utf-8")
+            formatter=logging.Formatter("%(asctime)sZ %(levelname)s %(filename)s:%(lineno)d %(message)s")
+            formatter.converter=time.gmtime
+            handler.setFormatter(formatter)
             LOG.addHandler(handler);LOG.setLevel(logging.INFO)
             try:
-                LOG.info("server startup")
+                diagnostics.emit("server.start",**diagnostics.environment())
                 serve(args)
+            except Exception as error:
+                diagnostics.failure("server.failed",error)
+                raise
             finally:
                 LOG.info("server shutdown")
                 LOG.removeHandler(handler);handler.close()
@@ -1202,6 +1238,12 @@ def restore_connection():
         LOG.warning("saved Cloud.ru connection unavailable")
     return False
 
+class DiagnosticHTTPServer(ThreadingHTTPServer):
+    def handle_error(self,request,client_address):
+        import sys
+        error=sys.exc_info()[1]
+        if error is not None:diagnostics.failure("http.unhandled",error)
+
 def serve(args):
     with closing(connect()) as db, db:
         soul_chronicle.recover(db)
@@ -1210,7 +1252,7 @@ def serve(args):
     stop=threading.Event()
     worker=threading.Thread(target=chronicle_worker,args=(stop,),daemon=True)
     worker.start()
-    with ThreadingHTTPServer(("127.0.0.1",args.port),Handler) as server:
+    with DiagnosticHTTPServer(("127.0.0.1",args.port),Handler) as server:
         url = f"http://127.0.0.1:{server.server_address[1]}"
         print("Hakureya: "+url,flush=True)
         if not args.no_browser:
