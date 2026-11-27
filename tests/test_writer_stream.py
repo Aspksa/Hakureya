@@ -24,6 +24,22 @@ class WriterStreamTests(unittest.TestCase):
         self.assertEqual(result["choices"][0]["message"]["content"],"Глава один")
         self.assertEqual(result["usage"]["completion_tokens"],4)
 
+    def test_terminal_choice_survives_transport_tail_failure(self):
+        class BrokenTail(Response):
+            def readline(self,*args):
+                line=super().readline(*args)
+                if not line:raise ConnectionResetError("tail lost")
+                return line
+        result=writer_stream.read_response(BrokenTail(chunk('{"story":"text"}',"stop")),lambda *_:None)
+        self.assertEqual(result["choices"][0]["message"]["content"],'{"story":"text"}')
+        self.assertTrue(result["tail_interrupted"])
+        with self.assertRaises(ConnectionResetError):
+            writer_stream.read_response(BrokenTail(chunk("unfinished")),lambda *_:None)
+
+    def test_provider_error_after_terminal_choice_is_not_hidden(self):
+        with self.assertRaisesRegex(ValueError,"writer stream error"):
+            writer_stream.read_response(Response(chunk("text","stop")+event({"error":{"message":"provider error"}})),lambda *_:None)
+
     def test_truncated_stream(self):
         with self.assertRaises(ValueError):
             writer_stream.read_response(Response(chunk("unfinished")),lambda *_:None)
