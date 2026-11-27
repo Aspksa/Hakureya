@@ -114,3 +114,49 @@ class NarrativeTests(unittest.TestCase):
         proposals.mark_executed(self.db,ids[0],14,story[:55])
         self.assertEqual(proposals.execution(self.db,ids[0]),14)
         self.assertEqual(proposals.directions(self.db)[0]["id"],ids[1])
+
+    def test_semantic_review_only_adds_author_approved_exact_facts(self):
+        import soul_semantic as semantic
+        import soul_intelligence as li
+        import soul_intellect as intellect
+        story="Хакурэя подошла к старому архиву. Хакурэя обещала вернуть найденную карту, когда наступит утро. Герой молча кивнул."
+        self.publish(1,story)
+        ev.mark_read(self.db,14)
+        item=semantic.source(self.db,14,1)
+        fact={"kind":"promise","subject":"Хакурэя","object":"","value":"вернуть найденную карту","quote":"Хакурэя обещала вернуть найденную карту, когда наступит утро.","cause":None}
+        with self.assertRaises(ValueError):semantic.save(self.db,item,json.dumps({"facts":[{**fact,"quote":"Не существующая в тексте цитата."}]}))
+        semantic.save(self.db,item,json.dumps({"facts":[fact]}))
+        self.assertFalse(any(f["kind"]=="promise" for k,f in li.rows(self.db) if k==14))
+        review=semantic.pending(self.db)
+        self.assertFalse(semantic.decide(self.db,14,1,"stale",True))
+        self.assertTrue(semantic.decide(self.db,14,1,review["revision"],True))
+        self.assertTrue(any(f["kind"]=="promise" and f["value"]==fact["value"] for k,f in li.rows(self.db) if k==14))
+        self.assertTrue(any(f["kind"]=="promise" and f["chapter"]==14 for f in intellect.rows(self.db,public=False)))
+        self.assertEqual(self.db.execute("SELECT story FROM omega_index WHERE number=14").fetchone()[0],story)
+
+    def test_archive_scale_1000_5000_10000(self):
+        import soul_lore
+        h=soul_lore.metadata()["sha256"]
+        prior=0
+        def word(i):
+            return "архивмаркер"+"".join(chr(1072+(i//(26**j))%26) for j in range(4))
+        for count in (1000,5000,10000):
+            drafts=[];arcs=[];archive=[]
+            for i in range(prior,count):
+                num=i+14;did=i+100
+                story="Хакурэя исследовала заброшенный архив. На столе лежала карта с надписью "+word(i)+". Она решила сохранить карту до утра."
+                value={"title":"Архив "+str(i),"story":story,"tags":["познание"],"emotions":{"wonder":50,"calm":50,"joy":50},"traits":{"patience":0,"curiosity":0,"warmth":0}}
+                raw=c.encode(value);digest=c.checksum(raw)
+                drafts.append((did,-did,h,raw,digest,"approved"))
+                arcs.append((did,"future",13,None,num))
+                archive.append((num,"future",value["title"],story,digest,did))
+            self.db.executemany("INSERT INTO chronicle_drafts(id,diary_id,canon_hash,payload,checksum,status) VALUES(?,?,?,?,?,?)",drafts)
+            self.db.executemany("INSERT INTO saga_arcs VALUES(?,?,?,?,?)",arcs)
+            self.db.executemany("INSERT INTO omega_index VALUES(?,?,?,?,?,?)",archive)
+            n.refresh(self.db)
+            self.assertEqual(n.status(self.db)["indexed"],count+13)
+            self.assertEqual(n.status(self.db)["pending"],0)
+            hits=u.search(self.db,word(count-1),3,False,"future")
+            self.assertEqual(hits[0]["chapter"],count+13)
+            prior=count
+        self.assertEqual(n.refresh(self.db),0)
