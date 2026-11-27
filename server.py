@@ -820,7 +820,9 @@ def chronicle_command(content):
                 return "Черновик повреждён; публикация заблокирована."
             if not p:
                 return "Нет ожидающего черновика."
-            return f"Художественный черновик: {p['title']}\n\n{p['story']}\n\nПринять главу / Отклонить главу. Оценки: летопись: качество."
+            warnings=soul_chronicle.review_warnings(db,p["id"])
+            notice=("\n\nТребуется ручная проверка: "+"; ".join(warnings)) if warnings else ""
+            return f"Художественный черновик: {p['title']}\n\n{p['story']}"+notice+"\n\nПринять главу / Отклонить главу. Оценки: летопись: качество."
         if q=="летопись: главы":
             rows=soul_saga.reading_rows(db)[-5:]
             return "\n\n".join(f"Вымышленная глава №{p['number']}: {p['title']}\n{p['story']}" for p in rows) or "Новых утверждённых глав пока нет."
