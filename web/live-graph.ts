@@ -45,7 +45,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
  const starBuckets=new Map<string,{path:SVGPathElement,points:typeof starData}>();
  for(const [i,p] of starData.entries()){const tone=i%13===0?"#d8b9a1":"#e1dcd8",opacity=Math.max(.05,Math.round(p.o*10)/10),key=tone+":"+opacity;let bucket=starBuckets.get(key);if(!bucket){bucket={path:el("path",{fill:tone,opacity},stars),points:[]};starBuckets.set(key,bucket)}bucket.points.push(p)}
  function placeStars(){for(const b of starBuckets.values())b.path.setAttribute("d",b.points.map(p=>{const x=(p.x*w).toFixed(2),y=(p.y*h).toFixed(2),r=p.r.toFixed(2);return "M"+x+" "+y+"m-"+r+" 0a"+r+" "+r+" 0 1 0 "+(2*p.r).toFixed(2)+" 0a"+r+" "+r+" 0 1 0 -"+(2*p.r).toFixed(2)+" 0"}).join(""))}
- let snapshot:Snapshot={records:[],edges:[],total:0,limited:false},graph=layout({...snapshot,transport:true}),w=1,h=1,s=1,zoom=1,panX=0,panY=0,fit=1,desired=1,active="",drag:null|{x:number,y:number,moved:boolean}=null,items=new Map<string,SVGGElement>(),edgeEls:SVGLineElement[]=[],drawnEdges:any[]=[],replayAt=0,shown=0,last=performance.now(),raf=0,disposed=false;
+ let snapshot:Snapshot={records:[],edges:[],total:0,limited:false},graph=layout({...snapshot,transport:true}),w=1,h=1,s=1,zoom=1,panX=0,panY=0,fit=1,desired=1,active="",drag:null|{id:number,x:number,y:number,startX:number,startY:number,moved:boolean}=null,items=new Map<string,SVGGElement>(),edgeEls:SVGLineElement[]=[],drawnEdges:any[]=[],replayAt=0,shown=0,last=performance.now(),raf=0,disposed=false;
  let session="",works=new Map<string,{item:Work,started:number,terminal:boolean}>(),seen=new Set<string>();
  let receivedSnapshot=false,maxChapter=0,level=-1,lastPublication=0,manualUntil=0,autoReturnAt=0,readerOpen=false,paused=false;
  const edgeBirths=new Map<string,number>(),edgeVisuals=new Map<string,{line:SVGLineElement,opacity:number}>();
@@ -80,7 +80,13 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
    selectionGlyph?.setAttribute("transform","scale("+inverse+")");
   }
   const boxes:{l:number,r:number,t:number,b:number}[]=[];
-  const priority=(key:string)=>key==="root"?0:key===active||key==="cloud:api"?1:key.startsWith("hub:")?2:graph.byKey.get(key)?.kind?.endsWith("_root")?3:4;
+  // Screen-space overlays must not cover a label that is otherwise considered visible.
+  const svgRect=svg.getBoundingClientRect?.()??{left:0,top:0};
+  for(const control of Array.from(svg.parentElement?.querySelectorAll?.<HTMLElement>("#info,#atlas-open,#atlas-back,#network-open,#replay,#stellar-cinema,.genesis-settings,.stellar-ledger")||[])){
+   if(control.hidden||typeof control.getBoundingClientRect!=="function")continue;const r=control.getBoundingClientRect();
+   if(r.width>0&&r.height>0)boxes.push({l:r.left-svgRect.left-4,r:r.right-svgRect.left+4,t:r.top-svgRect.top-4,b:r.bottom-svgRect.top+4})
+  }
+  const priority=(key:string)=>key==="root"?0:key===active||key==="cloud:api"?1:key.startsWith("brain:")?2:key.startsWith("hub:")?3:graph.byKey.get(key)?.kind?.endsWith("_root")?3:4;
   for(const [key,t] of [...labels].sort((a,b)=>priority(a[0])-priority(b[0])||a[0].localeCompare(b[0]))){
    const n=graph.byKey.get(key),px=x+n.x*s*k,py=y+n.y*s*k;
    let width=labelWidths.get(key);if(width===undefined){width=Math.max(48,t.getComputedTextLength?.()||((n.label?.length||0)*7.5));labelWidths.set(key,width)}
@@ -106,6 +112,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   if(snapshot.network&&!work){const trace=snapshot.neural_trace;rows.push({label:trace?(snapshot.trace_origin==="diagnostic"?"Локальная диагностика: 10/10":"Последний проход писателя: 10/10"):"Сеть готова · запуск ещё не записан",active:true});if(trace)rows.push({label: "9/9 разделов · "+trace.context_bytes+" байт контекста",active:false});if(active.startsWith("brain:")){const node=snapshot.records.find(n=>n.key===active);if(node){rows.push({label:node.label,active:true});rows.push({label:"Входы: "+(node.neural_inputs?.join(", ")||"SQLite / план"),active:false});if(node.neural_ms!=null)rows.push({label:node.neural_ms+" мс · "+node.neural_bytes+" байт",active:false})}}}
   if(warning){rows.push({label:"Черновик · замечания проверок",active:true,warning:true});for(const item of warning.review_warnings.slice(0,3))rows.push({label:String(item),active:false,warning:true})}
   const signature=JSON.stringify(rows);if(signature===ledgerSignature)return;ledgerSignature=signature;ledger.hidden=!rows.length;ledgerTitle.textContent=snapshot.network?"Связи литературных мозгов":"Литературные события";ledgerRows.replaceChildren();for(const row of rows){const line=document.createElement("p");line.textContent=row.label;line.className=row.warning?"stellar-warning":row.active?"stellar-current":"stellar-event";ledgerRows.append(line)}
+  lastCameraSignature="";invalidate();
  }
  function status(){updateLedger();const writer=[...works.values()].find(a=>!a.terminal&&a.item.kind==="chronicle");const count=[...works.values()].filter(a=>!a.terminal).length;info.textContent=(snapshot.volume?"Том "+snapshot.volume+" · ":"")+(snapshot.network?"Нейросеть · 10 мозгов":snapshot.atlas?"Атлас · "+snapshot.total+" частей":snapshot.total+" записей")+" · "+graph.edges.length+" связей"+(snapshot.limited?" · ограничено 5000":"")+(snapshot.volume?" · ↻ общая карта":"")+(writer?" · Глава: "+(stageNames[writer.item.stage]||writer.item.stage)+(writer.item.response_chars?" · "+writer.item.response_chars+" симв. ответа":""):count?" · "+([...stages.values()].find(a=>!a.terminal)?.current&&stageNames[[...stages.values()].find(a=>!a.terminal)!.current.stage]||"Cloud.ru: "+count):[...stages.values()].some(a=>a.terminal)?" · "+(stageNames[[...stages.values()].at(-1)?.current.stage||""]||""):"")}
  function redrawSelection(){
@@ -128,14 +135,14 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   autoReturnAt=0;focusMotion=null;const oldScale=Math.max(.00001,s*fit*zoom),dx=panX/oldScale,dy=panY/oldScale;
   w=nw;h=nh;s=Math.max(1,Math.min(w,h));desired=baseFit();fit=desired;
   panX=dx*s*fit*zoom;panY=dy*s*fit*zoom;level=-1;
-  svg.setAttribute("viewBox","0 0 "+w+" "+h);placeStars();place();glyphScale=NaN;invalidate()}
+  lastCameraSignature="";svg.setAttribute("viewBox","0 0 "+w+" "+h);placeStars();place();glyphScale=NaN;invalidate()}
  function reveal(n:number){
   const visible=new Set(graph.nodes.slice(0,n).map(x=>x.key));graph.nodes.forEach(x=>items.get(x.key)?.setAttribute("visibility",visible.has(x.key)?"visible":"hidden"));drawnEdges.forEach((e,i)=>edgeEls[i]?.setAttribute("visibility",visible.has(e.a)&&visible.has(e.b)?"visible":"hidden"));shown=n;
  }
  function applyDetail(){
   const next=detailLevel(graph.nodes.length,zoom);
   if(level===next||replayAt)return;
-  level=next;
+  level=next;lastCameraSignature="";
   const visible=new Set<string>();
   for(const n of graph.nodes){const major=n.key==="root"||n.key==="cloud:api"||n.key.startsWith("hub:")||n.key.startsWith("canon:")||n.kind==="epoch"||n.kind==="book"||n.kind==="book_segment"||n.kind==="draft"||n.kind==="heart_root"||n.kind==="heart_topic"||n.kind==="shadow_root"||n.kind==="shadow_topic"||n.kind==="guardian_root"||n.kind==="guardian_character"||n.kind==="destiny_root"||n.kind==="destiny_topic"||n.kind==="destiny_character"||n.kind==="living_root"||n.kind==="living_topic"||n.kind==="evolution_root"||n.kind==="evolution_subject"||n.kind==="immortal_root"||n.kind==="immortal_saga"||n.kind==="director_saga"||n.kind==="dynasty_root"||n.kind==="dynasty_saga"||n.kind==="director_root"||n.kind==="director_turn"||n.kind==="novel_epoch"||n.kind==="novel_chapter"||n.kind==="infinite_root"||n.kind==="infinite_character"||n.kind==="infinite_stage"||n.kind==="lit_brain"||n.kind==="lit_database"||n.kind==="lit_character"||n.kind==="lit_family"||n.key==="character:hero"||n.kind==="realm"||n.key===active||recentChapterKeys.has(n.key);
    const show=next===2||n.group!==4||major||(next===1&&n.kind==="fictional_chapter");
@@ -145,6 +152,8 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
  function render(next:Snapshot,initial=false){
   if(!initial&&JSON.stringify(next)===JSON.stringify(snapshot))return;
   const now=performance.now();
+  if(!Array.isArray(next.records)||!Array.isArray(next.edges))return;
+  lastCameraSignature="";
   const oldKeys=new Set(snapshot.records.map(n=>n.key)),previousSnapshot=snapshot,previousPositions=new Map(graph.nodes.map(n=>[n.key,{x:n.x,y:n.y}]));
   layoutMotion=null;edgeBirths.clear();edgeVisuals.clear();
   const scopeChanged=snapshot.volume!==next.volume||snapshot.atlas!==next.atlas||snapshot.network!==next.network,firstSnapshot=!receivedSnapshot&&!initial;
@@ -162,7 +171,7 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
   if(newDraft)births.set(newDraft.key,now);
   for(const e of changes.edges)edgeBirths.set(edgeKey(e),now);
   while(births.size>40)births.delete(births.keys().next().value!);
-  snapshot=next;graph=layout({...next,transport:true});level=-1;
+  snapshot=next;graph=layout({...next,transport:true});level=-1;if(active&&!graph.byKey.has(active))active="";
   if(animate&&!active&&!drag&&graph.nodes.length<=250&&graph.edges.length<=700&&quality>=.65){const moves=graph.nodes.flatMap(n=>{const p=previousPositions.get(n.key);return p&&Math.hypot(n.x-p.x,n.y-p.y)>.0005?[{node:n,x:p.x,y:p.y,tx:n.x,ty:n.y}]:[]});if(moves.length){layoutMotion={start:now,moves};for(const m of moves){m.node.x=m.x;m.node.y=m.y}}}
   recentChapterKeys=new Set<string>(next.records.filter(n=>/^c:[1-9]\d*$/.test(n.key)).sort((a,b)=>Number(b.key.slice(2))-Number(a.key.slice(2))).slice(0,20).map(n=>n.key));items.clear();glyphs.clear();labels.clear();labelWidths.clear();glyphScale=NaN;links.replaceChildren();dots.replaceChildren();orbits.replaceChildren();orbitEls.clear();nebulae.replaceChildren();nebulaEls.clear();overlay.replaceChildren();
   const chapterGroups=new Map<string,any[]>();for(const c of graph.nodes){if(c.kind!=="fictional_chapter")continue;const key=c.sector+":"+c.book;const group=chapterGroups.get(key)||[];group.push(c);chapterGroups.set(key,group)}
@@ -340,10 +349,11 @@ export function mountGraph(svg:SVGSVGElement,info:HTMLElement,onVolume?:(volume:
  function visibility(){if(document.hidden){stepLayout(performance.now(),true);for(const v of edgeVisuals.values())v.line.setAttribute("stroke-opacity",String(v.opacity));edgeBirths.clear();cancelAnimationFrame(raf);raf=0;for(const key of births.keys())items.get(key)?.removeAttribute("opacity");births.clear();for(const wave of waves.values())for(const ring of wave.rings)ring.remove();waves.clear();birthTrails.clear();clearActivity()}else{last=performance.now();invalidate()}}
  document.addEventListener("visibilitychange",visibility);
  svg.addEventListener("wheel",e=>{e.preventDefault();manualUntil=performance.now()+60000;autoReturnAt=0;focusMotion=null;const rect=svg.getBoundingClientRect(),x=e.clientX-rect.left,y=e.clientY-rect.top,old=origin(),next=clamp(zoom*Math.exp(-e.deltaY*.001),.35,12),ratio=next/zoom;zoom=next;panX=x-(x-old.x)*ratio-w/2+camera.cx*s*zoom*fit;panY=y-(y-old.y)*ratio-h/2+camera.cy*s*zoom*fit;invalidate()},{passive:false});
- svg.addEventListener("pointerdown",e=>{if(e.button===0){manualUntil=performance.now()+60000;autoReturnAt=0;focusMotion=null;drag={x:e.clientX,y:e.clientY,moved:false}}});
- svg.addEventListener("pointermove",e=>{const rect=svg.getBoundingClientRect();mouseX=(e.clientX-rect.left)/Math.max(1,rect.width)-.5;mouseY=(e.clientY-rect.top)/Math.max(1,rect.height)-.5;if(!drag){invalidate();return}const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.abs(dx)+Math.abs(dy)>2){drag.moved=true;if(!svg.hasPointerCapture(e.pointerId))svg.setPointerCapture(e.pointerId)}if(drag.moved){panX+=dx;panY+=dy;invalidate()}drag.x=e.clientX;drag.y=e.clientY});
- svg.addEventListener("pointerup",e=>{if(!drag?.moved){const key=(e.target as Element).closest("[data-key]")?.getAttribute("data-key");if(key&&graph.byKey.has(key)){active=key;redrawSelection();updateLedger();info.textContent=graph.byKey.get(key).label;const match=/^(?:book:|segment:[a-z]+:)([1-9]\d*)$/.exec(key);if(match&&zoom>=2.4)onVolume?.(Number(match[1]));else if(!match&&(labels.has(key)))focusNode(key);else invalidate()}}drag=null});
- svg.addEventListener("dblclick",e=>{const key=(e.target as Element).closest("[data-key]")?.getAttribute("data-key")||"";const match=/^(?:book:|segment:[a-z]+:)([1-9]\d*)$/.exec(key);if(match)onVolume?.(Number(match[1]));else {const scope=/^atlas:([1-9]\d*):([1-9]\d*)$/.exec(key);if(scope)onAtlas?.(scope[1]+"/"+scope[2])}});
- for(const name of ["pointercancel","lostpointercapture"])svg.addEventListener(name,()=>{drag=null});
+ svg.addEventListener("pointerdown",e=>{if(e.button===0&&e.isPrimary){manualUntil=performance.now()+60000;autoReturnAt=0;focusMotion=null;drag={id:e.pointerId,x:e.clientX,y:e.clientY,startX:e.clientX,startY:e.clientY,moved:false}}});
+ svg.addEventListener("pointermove",e=>{const rect=svg.getBoundingClientRect();mouseX=(e.clientX-rect.left)/Math.max(1,rect.width)-.5;mouseY=(e.clientY-rect.top)/Math.max(1,rect.height)-.5;if(!drag||drag.id!==e.pointerId){invalidate();return}if(!drag.moved&&Math.hypot(e.clientX-drag.startX,e.clientY-drag.startY)>5){drag.moved=true;if(!svg.hasPointerCapture(e.pointerId))svg.setPointerCapture(e.pointerId)}if(drag.moved){panX+=e.clientX-drag.x;panY+=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;invalidate()}});
+ svg.addEventListener("pointerup",e=>{if(!drag||drag.id!==e.pointerId)return;if(!drag.moved){const key=(e.target as Element).closest("[data-key]")?.getAttribute("data-key");if(key&&graph.byKey.has(key)){active=key;redrawSelection();updateLedger();info.textContent=graph.byKey.get(key).label;const match=/^(?:book:|segment:[a-z]+:)([1-9]\d*)$/.exec(key);const scope=/^atlas:([1-9]\d*):([1-9]\d*)$/.exec(key);if(match&&(snapshot.atlas||zoom>=2.4))onVolume?.(Number(match[1]));else if(scope&&snapshot.atlas)onAtlas?.(scope[1]+"/"+scope[2]);else if(!match&&!snapshot.network&&labels.has(key))focusNode(key);else invalidate()}}drag=null});
+ svg.addEventListener("dblclick",e=>{const key=(e.target as Element).closest("[data-key]")?.getAttribute("data-key")||"";const match=/^(?:book:|segment:[a-z]+:)([1-9]\d*)$/.exec(key);if(snapshot.atlas)return;if(match)onVolume?.(Number(match[1]));else {const scope=/^atlas:([1-9]\d*):([1-9]\d*)$/.exec(key);if(scope)onAtlas?.(scope[1]+"/"+scope[2])}});
+ for(const name of ["pointercancel","lostpointercapture"])svg.addEventListener(name,e=>{if(drag?.id===(e as PointerEvent).pointerId)drag=null});
+ panel.addEventListener("toggle",()=>{lastCameraSignature="";invalidate()});
  return {render,setActivity,clearActivity,resize,setReader(open:boolean,full:boolean){readerOpen=open;paused=full;if(open){autoReturnAt=0;focusMotion=null}if(full){stepLayout(performance.now(),true);for(const v of edgeVisuals.values())v.line.setAttribute("stroke-opacity",String(v.opacity));edgeBirths.clear();cancelAnimationFrame(raf);raf=0;for(const key of births.keys())items.get(key)?.removeAttribute("opacity");births.clear();focusMotion=null;clearActivity();for(const wave of waves.values())for(const ring of wave.rings)ring.remove();waves.clear();birthTrails.clear()}else{last=performance.now();invalidate()}},replay(){stepLayout(performance.now(),true);autoReturnAt=0;focusMotion=null;zoom=1;panX=panY=0;active="";redrawSelection();if(graph.nodes.length<=1){status();invalidate();return}replayAt=performance.now();reveal(1);invalidate()},dispose(){disposed=true;ledger.remove();panel.remove();genesis.remove();fog.remove();cancelAnimationFrame(raf);observer?.disconnect();if(!observer)window.removeEventListener("resize",resize);document.removeEventListener("visibilitychange",visibility);for(const wave of waves.values())for(const ring of wave.rings)ring.remove();waves.clear();birthTrails.clear();clearActivity()}};
 }

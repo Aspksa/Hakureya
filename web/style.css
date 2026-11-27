@@ -194,3 +194,61 @@ dialog button:hover{background:#d5b38b12}
 #atlas-open,#atlas-back{position:absolute;z-index:5;right:16px;top:104px;width:36px;height:36px;border:1px solid #c9a76544;border-radius:50%;background:#151312b8;color:#ead6a1;font-size:19px;cursor:pointer}#atlas-back{top:148px}#atlas-open[aria-pressed="true"]{color:#fff3ca;border-color:#e7c46d}#atlas-back[hidden]{display:none}
 
 #network-open{position:absolute;z-index:5;right:16px;top:192px;width:36px;height:36px;border:1px solid #c9a76555;border-radius:50%;background:#151312b8;color:#ead6a1;font-size:21px;cursor:pointer}#network-open[aria-pressed="true"]{color:#fff3ca;border-color:#e7c46d;box-shadow:0 0 15px #e7c46d33}
+
+
+/* Interface Stability 9: local, scoped controls; no global dialog div flex. */
+#chat-header-actions,.chat-header-actions{display:flex;align-items:center;gap:4px;flex-shrink:0}
+#chat-menu{font-size:25px;min-width:44px;min-height:44px}
+#chat-status-row{display:flex;gap:8px;align-items:center;justify-content:space-between;min-width:0;flex-shrink:0}
+#status{min-width:0;overflow-wrap:anywhere}
+#chat-retry{flex:none;color:#edcf98;min-height:36px}
+#composer{flex-shrink:0;min-width:0;gap:8px}
+#composer #prompt{min-width:0;max-height:28dvh;overflow:auto;resize:vertical}
+#chat-send{flex:0 0 42px;border-radius:8px;color:#edcf98}
+#chat-send:disabled{opacity:.35;cursor:default}
+#chat header{flex-shrink:0;min-width:0}
+#chat{height:100dvh;max-height:100dvh;overflow:hidden;padding-bottom:max(18px,env(safe-area-inset-bottom))}
+#messages{overscroll-behavior:contain}
+.message{flex-shrink:0;min-width:0;overflow-wrap:anywhere;word-break:normal}
+#menu{max-height:min(65dvh,460px);overflow:auto;overscroll-behavior:contain}
+#menu.from-chat{top:68px;bottom:auto;right:18px}
+dialog div{display:block}
+dialog form>div:last-child{display:flex;justify-content:flex-end;align-items:center;gap:8px;flex-wrap:wrap}
+dialog form,dialog label{min-width:0}
+dialog input:not([type=checkbox]),dialog select,dialog textarea{max-width:100%;min-width:0;width:100%}
+dialog output,dialog label,dialog summary,dialog button{overflow-wrap:anywhere}
+dialog button:disabled{opacity:.4;cursor:default}
+dialog select:focus-visible,summary:focus-visible{outline:2px solid #d9bd8f;outline-offset:2px}
+#config-status,#note-status,#writer-status,#writer-error{white-space:pre-wrap;overflow-wrap:anywhere}
+#book-footer>div{min-width:0}
+#command-dialog .command-tools,#universe-dialog header,#universe-navigation,#universe-tools,.universe-exports,#universe-galaxies,#universe-actors{display:flex}
+#command-dialog .command-item{min-width:0}
+#command-dialog .command-item small{max-width:100%;white-space:normal}
+#command-dialog #command-results{scrollbar-gutter:stable}
+#stage #info{left:12px;right:60px;top:10px;max-width:none;line-height:1.35;max-height:3.2em;overflow:hidden}
+#stage #atlas-open,#stage #atlas-back,#stage #network-open{right:12px;width:40px;height:40px;touch-action:manipulation}
+#stage #atlas-open{top:52px}#stage #network-open{top:100px}#stage #atlas-back{top:148px}
+#stage #replay{left:10px;bottom:10px;z-index:3;touch-action:manipulation}
+#stage .genesis-settings{left:60px;bottom:15px;max-width:min(210px,calc(100% - 118px));z-index:3}
+#stage #stellar-cinema{left:auto;right:12px;top:196px;bottom:auto;width:40px;height:40px;z-index:4}
+#stage.stellar-cinema #stellar-cinema{right:12px;top:196px;bottom:auto}
+#stage .stellar-ledger{top:52px;left:12px;max-width:min(240px,calc(100% - 72px));max-height:calc(100% - 124px);overflow:hidden}
+#stage .genesis-settings[open]{bottom:60px;max-height:calc(100% - 110px);overflow:auto}
+@media(min-width:1050px){#avatar[aria-expanded=true]{width:75px;height:96px;bottom:12px}}
+@media(max-width:600px){
+ #chat,#chat.reading{padding:10px 12px max(12px,env(safe-area-inset-bottom));gap:10px}
+ #composer{padding:8px;gap:4px}#composer #prompt{min-height:44px}
+ #book-toolbar{flex-wrap:wrap;gap:3px}#book-toolbar button{min-width:34px}
+ #book-footer button{min-width:50px;flex-shrink:0}
+ #stage .stellar-ledger{max-width:min(155px,calc(100% - 72px))}
+ #stage .genesis-settings{left:60px;max-width:calc(100% - 120px)}
+ dialog{max-height:calc(100dvh - 16px);padding:14px}
+}
+@media(max-height:420px){
+ #stage .stellar-ledger{max-height:calc(100% - 102px)}
+ #stage #atlas-open,#stage #network-open,#stage #atlas-back,#stage #stellar-cinema{height:34px;width:34px}
+ #stage #atlas-open{top:40px}#stage #network-open{top:78px}#stage #atlas-back{top:116px}#stage #stellar-cinema,#stage.stellar-cinema #stellar-cinema{top:154px}
+ #chat,#chat.reading{gap:6px;padding-block:6px}
+ #chat header{font-size:15px}#chat #prompt{min-height:36px}#composer{padding:4px}
+ #book{gap:4px}#book-page{padding:8px 12px}#book-toolbar button{min-height:32px}
+}

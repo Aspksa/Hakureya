@@ -10,10 +10,33 @@ function ensureGraph(){
  if(!live){try{$("graph").replaceChildren();live=mountGraph($("graph") as unknown as SVGSVGElement,$("info"),volume=>{networkView=false;if(selectedAtlas!==null)atlasTrail.push(selectedAtlas);selectedAtlas=null;selectedVolume=volume;void refreshGraph()},scope=>{networkView=false;if(selectedAtlas!==null)atlasTrail.push(selectedAtlas);selectedVolume=null;selectedAtlas=scope;void refreshGraph()})}catch(e){console.error("Hakureya graph initialization",e);$("graph").replaceChildren();$("info").textContent="Ошибка визуализации · ↻ повторить"}}
  return live;
 }
-let busy=false;
-$("replay").onclick=()=>{networkView=false;selectedVolume=null;selectedAtlas=null;atlasTrail.length=0;void refreshGraph().then(()=>live?.replay())};$("reset").onclick=()=>{selectedVolume=null;selectedAtlas=null;atlasTrail.length=0;void refreshGraph().then(()=>live?.replay());$("menu").hidden=true};
-let graphRequest=0;
-async function refreshGraph(){const id=++graphRequest;try{const data=await api(networkView?"graph/network":selectedAtlas!==null?"graph/atlas"+(selectedAtlas?"/"+selectedAtlas:""):selectedVolume===null?"graph":"graph/volume/"+selectedVolume);if(id===graphRequest){ensureGraph()?.render(data);$("atlas-back").hidden=!atlasTrail.length;$("atlas-open").setAttribute("aria-pressed",String(selectedAtlas!==null));$("network-open").setAttribute("aria-pressed",String(networkView))}}catch(e){console.error("Hakureya graph refresh",e);if(id===graphRequest)$("info").textContent="Область недоступна · ↻ для общей карты"}}
+let busy=false,historyReady=false,historyLoading=false;
+$("replay").onclick=()=>{networkView=false;selectedVolume=null;selectedAtlas=null;atlasTrail.length=0;void refreshGraph().then(()=>live?.replay())};$("reset").onclick=()=>{networkView=false;selectedVolume=null;selectedAtlas=null;atlasTrail.length=0;void refreshGraph().then(()=>live?.replay());$("menu").hidden=true};
+let graphRequest=0,graphInFlight=false,graphQueued=false;
+function graphPath(){return networkView?"graph/network":selectedAtlas!==null?"graph/atlas"+(selectedAtlas?"/"+selectedAtlas:""):selectedVolume===null?"graph":"graph/volume/"+selectedVolume}
+let graphPending:Promise<void>|null=null;
+function refreshGraph():Promise<void>{
+ graphQueued=true;
+ if(graphInFlight)return graphPending!;
+ graphInFlight=true;
+ graphPending=(async()=>{
+  try{
+   while(graphQueued){
+    graphQueued=false;const path=graphPath(),id=++graphRequest;
+    try{
+     const data=await api(path);
+     if(path!==graphPath()||id!==graphRequest){graphQueued=true;continue}
+     if(!Array.isArray(data.records)||!Array.isArray(data.edges))throw Error("Некорректная карта");
+     ensureGraph()?.render(data);
+     $("atlas-back").hidden=!atlasTrail.length;
+     $("atlas-open").setAttribute("aria-pressed",String(selectedAtlas!==null));
+     $("network-open").setAttribute("aria-pressed",String(networkView));
+    }catch(e){if(path===graphPath())$("info").textContent="Карта недоступна · ↻ повторить";console.error("Hakureya graph refresh",e)}
+   }
+  }finally{graphInFlight=false;graphPending=null}
+ })();
+ return graphPending;
+}
 let writerPollBusy=false,previewPollBusy=false;
 $("network-open").onclick=()=>{networkView=!networkView;selectedVolume=null;selectedAtlas=null;atlasTrail.length=0;void refreshGraph()};
 $("atlas-open").onclick=()=>{networkView=false;selectedVolume=null;selectedAtlas="";atlasTrail.length=0;void refreshGraph()};
@@ -27,7 +50,7 @@ async function refreshActivity(){
   let data;try{const response=await fetch("/api/activity",{cache:"no-store",signal:controller.signal});if(!response.ok)throw Error("activity");data=await response.json()}finally{clearTimeout(timeout)}
   if(document.hidden)return;
   activityActive=data.active.length>0;
-  if(writerDialog.open&&writerPreviewOpt.checked&&!previewPollBusy){previewPollBusy=true;const session=writerSession;void api("writer/preview").then(st=>{if(session===writerSession&&writerDialog.open&&writerPreviewOpt.checked){writerPreviewText.textContent=st.active?(st.story||"Ожидание художественного текста…"):(st.story?"Последний полученный фрагмент (не утверждён):\n"+st.story:"Нет поступающего текста");writerPreviewText.scrollTop=writerPreviewText.scrollHeight}}).catch(()=>{}).finally(()=>{previewPollBusy=false})}
+  if(writerDialog.open&&writerPreviewOpt.checked&&!previewPollBusy){previewPollBusy=true;const session=writerSession;void api("writer/preview").then(st=>{if(session===writerSession&&writerDialog.open&&writerPreviewOpt.checked){const follow=writerPreviewText.scrollHeight-writerPreviewText.scrollTop-writerPreviewText.clientHeight<48;writerPreviewText.textContent=st.active?(st.story||"Ожидание художественного текста…"):(st.story?"Последний полученный фрагмент (не утверждён):\n"+st.story:"Нет поступающего текста");if(follow)writerPreviewText.scrollTop=writerPreviewText.scrollHeight}}).catch(()=>{}).finally(()=>{previewPollBusy=false})}
   if(writerDialog.open&&!writerPollBusy){writerPollBusy=true;const session=writerSession;void api("writer").then(st=>{if(session===writerSession&&writerDialog.open&&!writerSave.disabled)renderWriter(st)}).catch(()=>{}).finally(()=>{writerPollBusy=false})}
   live?.setActivity(data);
   const revision=data.session+":"+data.revision;
@@ -39,11 +62,13 @@ document.addEventListener("visibilitychange",()=>{clearTimeout(activityTimer);if
 const avatar=$("avatar"),chat=$("chat"),prompt=$("prompt") as HTMLTextAreaElement,menu=$("menu"),config=$("config") as HTMLDialogElement;
 let cinema=false;
 function syncGraphViewport(){const stage=$("stage");stage.classList.toggle("stellar-cinema",cinema);stage.classList.toggle("chat-open",!chat.hidden);stage.classList.toggle("book-open",!chat.hidden&&!book.hidden);stage.classList.toggle("book-full",!chat.hidden&&!book.hidden&&focused);live?.setReader(!cinema&&!chat.hidden&&!book.hidden,!cinema&&!chat.hidden&&!book.hidden&&focused);live?.resize()}
-function toggle(open=chat.hidden){chat.hidden=!open;syncGraphViewport();avatar.setAttribute("aria-expanded",String(open));avatar.setAttribute("aria-label",open?"Свернуть чат":"Открыть чат Hakureya");if(open){if(!book.hidden){$("book-scroll").focus();scheduleReflow()}else prompt.focus()}else avatar.focus()}
+function toggle(open=chat.hidden){menu.hidden=true;chat.hidden=!open;syncGraphViewport();avatar.setAttribute("aria-expanded",String(open));avatar.setAttribute("aria-label",open?"Свернуть чат":"Открыть чат Hakureya");if(open){if(!book.hidden){$("book-scroll").focus();scheduleReflow()}else{$("messages").scrollTop=$("messages").scrollHeight;prompt.focus()}}else avatar.focus()}
 function setCinema(value:boolean){cinema=value;$("stellar-cinema").setAttribute("aria-pressed",String(value));$("stellar-cinema").setAttribute("aria-label",value?"Выйти из режима наблюдения":"Кинематографический режим");syncGraphViewport();}
 $("stellar-cinema").onclick=()=>setCinema(!cinema);
-avatar.onclick=()=>toggle();$("close").onclick=()=>toggle(false);avatar.oncontextmenu=e=>{e.preventDefault();menu.hidden=!menu.hidden};document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(cinema){setCinema(false);return}if(!menu.hidden)menu.hidden=true;else if(!chat.hidden&&!config.open&&!writerDialog.open&&!commandDialog.open&&!universeDialog.open&&!note.open)toggle(false)}});document.addEventListener("click",e=>{if(!menu.contains(e.target as Node)&&!avatar.contains(e.target as Node))menu.hidden=true});
-function message(role:string,content:string){const p=document.createElement("p");p.className="message "+role;p.textContent=content;$("messages").append(p);p.scrollIntoView({block:"end"});return p}
+avatar.onclick=()=>toggle();$("close").onclick=()=>toggle(false);avatar.oncontextmenu=e=>{e.preventDefault();toggleMenu()};
+function toggleMenu(){menu.hidden=!menu.hidden;$("chat-menu").setAttribute("aria-expanded",String(!menu.hidden));if(!menu.hidden){menu.classList.toggle("from-chat",!chat.hidden);(menu.querySelector("button") as HTMLButtonElement|null)?.focus()}}
+$("chat-menu").onclick=toggleMenu;document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(config.open||writerDialog.open||commandDialog.open||universeDialog.open||note.open)return;if(cinema){setCinema(false);return}if(!menu.hidden)menu.hidden=true;else if(!chat.hidden&&!config.open&&!writerDialog.open&&!commandDialog.open&&!universeDialog.open&&!note.open)toggle(false)}});document.addEventListener("click",e=>{if(!menu.contains(e.target as Node)&&!avatar.contains(e.target as Node)&&!$("chat-menu").contains(e.target as Node))menu.hidden=true;if(menu.hidden)$("chat-menu").setAttribute("aria-expanded","false")});
+function message(role:string,content:string,force=false){const box=$("messages"),follow=force||box.scrollHeight-box.scrollTop-box.clientHeight<80;const p=document.createElement("p");p.className="message "+role;p.textContent=content;box.append(p);if(follow)box.scrollTop=box.scrollHeight;return p}
 async function api(path:string,data?:unknown){
  const controller=new AbortController(),timeout=window.setTimeout(()=>controller.abort(),path==="chat"?130000:15000);
  try{
@@ -51,7 +76,22 @@ async function api(path:string,data?:unknown){
   const value=await response.json();if(!response.ok)throw Error(value.error||"Ошибка сервера");return value;
  }catch(e){if(controller.signal.aborted)throw Error("Истекло время ожидания. Запрос мог завершиться на сервере; проверьте историю.");throw e}finally{clearTimeout(timeout)}
 }
-async function init(){try{const data=await api("history");for(const m of data.messages)message(m.role,m.content);$("status").textContent=data.connected?"Cloud.ru подключён":"Локальный режим · Cloud.ru не подключён";const page=await api("reader");if(page.reader&&!busy)showBook(page.reader)}catch{$("status").textContent="Сервер недоступен"}}
+const sendButton=$("chat-send") as HTMLButtonElement;
+function syncComposer(){sendButton.disabled=busy||!historyReady||!prompt.value.trim();$("composer").setAttribute("aria-busy",String(busy))}
+prompt.oninput=syncComposer;
+async function init(){
+ if(historyLoading||historyReady)return;historyLoading=true;syncComposer();
+ try{
+  const data=await api("history");$("messages").replaceChildren();
+  for(const m of data.messages)message(m.role,m.content,true);
+  historyReady=true;$("status").textContent=data.connected?"Cloud.ru подключён":"Локальный режим · Cloud.ru не подключён";
+  $("chat-retry").hidden=true;
+ }catch{$("status").textContent="История недоступна. Повторите подключение.";$("chat-retry").hidden=false}
+ finally{historyLoading=false;syncComposer()}
+ if(historyReady){const generation=readerGeneration;try{const page=await api("reader");if(page.reader&&!busy&&generation===readerGeneration&&!prompt.value.trim())showBook(page.reader)}catch{}}
+}
+$("chat-retry").onclick=()=>void init();
+syncComposer();
 const commandDialog=$("command-dialog") as HTMLDialogElement,commandPlus=$("command-plus") as HTMLButtonElement,commandSearch=$("command-search") as HTMLInputElement,commandCategory=$("command-category") as HTMLSelectElement,commandResults=$("command-results");
 let commandInitialized=false;
 function renderCommands(){
@@ -69,7 +109,7 @@ function renderCommands(){
    btn.onclick=()=>{
     const value=command+(example??"");
     if(prompt.value.trim()&&prompt.value!==value&&!window.confirm("Заменить текущий текст выбранной командой?"))return;
-    prompt.value=value;commandDialog.close();prompt.focus();
+    prompt.value=value;syncComposer();commandDialog.close();prompt.focus();
     if(example)prompt.setSelectionRange(command.length,value.length);
    };
    section.append(btn);
@@ -84,35 +124,37 @@ commandPlus.onclick=()=>{
   for(const [name] of commandGroups){const option=document.createElement("option");option.value=option.textContent=name;commandCategory.append(option)}
   commandInitialized=true;
  }
- commandSearch.value="";commandCategory.value="";renderCommands();commandDialog.showModal();commandPlus.setAttribute("aria-expanded","true");commandSearch.focus();
+ if(commandDialog.open)return;commandSearch.value="";commandCategory.value="";renderCommands();commandResults.scrollTop=0;commandDialog.showModal();commandPlus.setAttribute("aria-expanded","true");commandSearch.focus();
 };
 commandDialog.onclose=()=>{commandPlus.setAttribute("aria-expanded","false")};
 $("command-close").onclick=()=>commandDialog.close();
-commandSearch.oninput=renderCommands;commandCategory.onchange=renderCommands;
+commandSearch.oninput=()=>{renderCommands();commandResults.scrollTop=0};commandCategory.onchange=()=>{renderCommands();commandResults.scrollTop=0};
 $("command-writer").onclick=()=>{commandDialog.close();$("writer-open").click()};
 $("command-cloud").onclick=()=>{commandDialog.close();$("settings").click()};
+$("command-universe").onclick=()=>{commandDialog.close();$("universe-open").click()};
+$("command-network").onclick=()=>{commandDialog.close();toggle(false);if(!networkView)$("network-open").click()};
 const cloudModel=$("model") as HTMLInputElement,cloudKey=$("key") as HTMLInputElement;
 const modelList=$("model-list") as HTMLSelectElement,modelListLabel=$("model-list-label");
 const loadModels=$("load-models") as HTMLButtonElement,saveConfig=$("save") as HTMLButtonElement;
 const configStatus=$("config-status"),cloudConsent=$("consent") as HTMLInputElement,rememberCloud=$("remember-cloud") as HTMLInputElement;
 let configSession=0;
-function setConfigPending(pending:boolean){loadModels.disabled=saveConfig.disabled=pending}
+function setConfigPending(pending:boolean){loadModels.disabled=saveConfig.disabled=($("forget-cloud") as HTMLButtonElement).disabled=pending}
 $("settings").onclick=()=>{
  menu.hidden=true;
- configSession++;
- cloudKey.value="";
+ if(config.open)return;configSession++;setConfigPending(false);
+ cloudConsent.checked=false;cloudKey.value="";
  configStatus.textContent="";
  modelListLabel.hidden=true;
  modelList.replaceChildren();
  config.showModal();
 };
 $("config-close").onclick=()=>config.close();
-$("forget-cloud").onclick=async()=>{try{await api("config/forget",{});cloudKey.value="";rememberCloud.checked=false;$("status").textContent="Cloud.ru отключён";configStatus.textContent="Ключ удалён, автономный писатель остановлен."}catch(e){configStatus.textContent=String(e)}};
+$("forget-cloud").onclick=async()=>{if(saveConfig.disabled)return;const session=configSession;setConfigPending(true);try{await api("config/forget",{});$("status").textContent="Cloud.ru отключён";if(session===configSession&&config.open){cloudKey.value="";rememberCloud.checked=false;configStatus.textContent="Ключ удалён, автономный писатель остановлен."}}catch(e){if(session===configSession&&config.open)configStatus.textContent=String(e)}finally{if(session===configSession)setConfigPending(false)}};
 const writerDialog=$("writer-dialog") as HTMLDialogElement,writerMode=$("writer-mode") as HTMLSelectElement,writerInterval=$("writer-interval") as HTMLSelectElement,writerConsent=$("writer-consent") as HTMLInputElement,writerNow=$("writer-now") as HTMLInputElement;
 const universeDialog=$("universe-dialog") as HTMLDialogElement;
 let universePage=1,universeSerial=0;
 async function renderUniverse(){
- const serial=++universeSerial;$("universe-summary").textContent="Загрузка…";
+ const serial=++universeSerial;$("universe-retry").hidden=true;$("universe-summary").textContent="Загрузка…";
  ($("universe-prev") as HTMLButtonElement).disabled=true;($("universe-next") as HTMLButtonElement).disabled=true;
  try{
   const data=await api("universe/"+universePage);if(serial!==universeSerial||!universeDialog.open)return;
@@ -138,13 +180,15 @@ async function renderUniverse(){
    row.type="button";title.textContent=item.number+". "+item.title;small.textContent="Том "+item.volume+" · "+item.chars+" знаков";
    row.append(title,small);row.onclick=()=>universeCommand("Летопись: читать "+item.number);list.append(row)
   }
- }catch(e){if(serial===universeSerial)$("universe-summary").textContent=String(e)}
+ }catch(e){if(serial===universeSerial&&universeDialog.open){$("universe-summary").textContent=String(e);$("universe-list").replaceChildren();$("universe-galaxies").replaceChildren();$("universe-actors").replaceChildren();$("universe-family").textContent="";$("universe-page").textContent="";($("universe-prev") as HTMLButtonElement).disabled=universePage<=1;$("universe-retry").hidden=false}}
 }
-function universeCommand(value:string){if(busy)return;if(prompt.value.trim()&&prompt.value!==value&&!window.confirm("Заменить текущий текст?"))return;universeDialog.close();toggle(true);prompt.value=value;prompt.focus();if(!value.endsWith(" ")){const form=$("composer") as HTMLFormElement;form.requestSubmit()}}
-$("universe-open").onclick=()=>{menu.hidden=true;universePage=1;universeDialog.showModal();void renderUniverse()};
+function universeCommand(value:string){if(busy||!historyReady){$("universe-summary").textContent="Дождитесь окончания запроса или загрузки истории.";return}if(prompt.value.trim()&&prompt.value!==value&&!window.confirm("Заменить текущий текст?"))return;universeDialog.close();if(!book.hidden)exitBook();toggle(true);prompt.value=value;syncComposer();prompt.focus();if(!value.endsWith(" ")){const form=$("composer") as HTMLFormElement;form.requestSubmit()}}
+$("universe-open").onclick=()=>{menu.hidden=true;if(universeDialog.open)return;universePage=1;universeDialog.showModal();void renderUniverse()};
 $("universe-close").onclick=()=>{universeSerial++;universeDialog.close()};
 $("universe-prev").onclick=()=>{if(universePage>1){universePage--;void renderUniverse()}};
 $("universe-next").onclick=()=>{universePage++;void renderUniverse()};
+$("universe-retry").onclick=()=>void renderUniverse();
+universeDialog.onclose=()=>{universeSerial++};
 $("universe-dossier").onclick=()=>universeCommand("Реестр персонажей");
 $("universe-knowledge").onclick=()=>universeCommand("Матрица знаний");
 $("universe-search").onclick=()=>universeCommand("Поиск сцены ");
@@ -162,12 +206,14 @@ function syncWriterMode(){const once=writerMode.value==="once";$("writer-target-
 writerMode.onchange=syncWriterMode;
 writerTarget.onchange=()=>{if(writerMode.value==="off"&&Number(writerTarget.value))writerMode.value="once";syncWriterMode()};
 function renderWriter(data:any){const active=data.job?.state==="active";if(writerJobActive&&!active&&writerMode.value==="once"){writerMode.value=data.mode;writerTarget.value=String(data.target_pages);syncWriterMode()}writerJobActive=active;writerStop.hidden=!active;writerStatus.textContent=[data.reason,...(data.job?["Разовое задание: "+(data.job.chars/data.page_chars).toFixed(1)+" / "+data.job.pages+" усл. А4 · "+data.job.attempts+"/"+data.job.limit+" запросов"]:[]),"Последняя глава: "+data.published+" · Черновики: "+data.pending,"Модель: "+(data.model||"не выбрана"),"Cloud.ru: "+(data.connected?"подключён":"не подключён")+(data.saved_connection?" · есть защищённое подключение":""),"Сегодня: "+(data.published_chars/data.page_chars).toFixed(1)+" усл. А4"+(data.target_pages?" / "+data.target_pages:"")+" · Запросов: "+data.attempts_today+"/"+data.daily_limit,data.budget].join("\n")}
-$("writer-open").onclick=async()=>{menu.hidden=true;const session=++writerSession;writerConsent.checked=false;writerNow.checked=false;writerPreviewOpt.checked=false;writerPreviewText.hidden=true;writerPreviewText.textContent="";writerSave.disabled=true;writerJobActive=false;writerStop.hidden=true;writerError.textContent="";writerStatus.textContent="Загрузка…";writerDialog.showModal();try{const data=await api("writer");if(session!==writerSession||!writerDialog.open)return;writerMode.value=data.job?.state==="active"?"once":data.mode;writerInterval.value=String(data.interval);writerTarget.value=String(data.job?.state==="active"?data.job.pages:data.target_pages);writerChapterPages.value=String(data.chapter_pages??0);writerBudget.value=String(data.budget_settings?.monthly??"");writerInputRate.value=String(data.budget_settings?.input??"");writerOutputRate.value=String(data.budget_settings?.output??"");renderWriter(data);syncWriterMode();writerSave.disabled=false}catch(e){if(session===writerSession)writerStatus.textContent=String(e)}};
+$("writer-open").onclick=async()=>{menu.hidden=true;if(writerDialog.open)return;const session=++writerSession;writerConsent.checked=false;writerNow.checked=false;writerPreviewOpt.checked=false;writerPreviewText.hidden=true;writerPreviewText.textContent="";writerSave.disabled=true;writerJobActive=false;writerStop.hidden=true;writerError.textContent="";$("writer-retry").hidden=true;writerStatus.textContent="Загрузка…";writerDialog.showModal();try{const data=await api("writer");if(session!==writerSession||!writerDialog.open)return;writerMode.value=data.job?.state==="active"?"once":data.mode;writerInterval.value=String(data.interval);writerTarget.value=String(data.job?.state==="active"?data.job.pages:data.target_pages);writerChapterPages.value=String(data.chapter_pages??0);writerBudget.value=String(data.budget_settings?.monthly??"");writerInputRate.value=String(data.budget_settings?.input??"");writerOutputRate.value=String(data.budget_settings?.output??"");renderWriter(data);syncWriterMode();writerSave.disabled=false}catch(e){if(session===writerSession&&writerDialog.open){writerStatus.textContent=String(e);$("writer-retry").hidden=false}}};
+$("writer-retry").onclick=()=>{writerDialog.close();$("writer-open").click()};
+writerDialog.onclose=()=>{if(!writerDialog.open)writerSession++};
 $("writer-close").onclick=()=>{writerSession++;writerDialog.close()};
 writerStop.onclick=async()=>{if(writerSave.disabled)return;writerSave.disabled=true;writerStop.disabled=true;const session=++writerSession;writerError.textContent="";try{const data=await api("writer",{mode:"off",interval:Number(writerInterval.value),target_pages:0});if(session!==writerSession||!writerDialog.open)return;writerMode.value="off";writerTarget.value="0";writerConsent.checked=false;writerNow.checked=false;renderWriter(data);syncWriterMode()}catch(e){if(session===writerSession)writerError.textContent=String(e)}finally{writerStop.disabled=false;if(session===writerSession)writerSave.disabled=false}};
 $("writer-form").onsubmit=async e=>{e.preventDefault();if(writerSave.disabled)return;writerSave.disabled=true;writerError.textContent="";const session=++writerSession;try{const data=await api("writer",{mode:writerMode.value,interval:Number(writerInterval.value),consent:writerConsent.checked,start_now:writerNow.checked,target_pages:Number(writerTarget.value),chapter_pages:Number(writerChapterPages.value),...([writerBudget,writerInputRate,writerOutputRate].some(x=>x.value.trim())?{budget:{monthly:Number(writerBudget.value),input:Number(writerInputRate.value),output:Number(writerOutputRate.value)}}:{})});if(session!==writerSession||!writerDialog.open)return;renderWriter(data);writerMode.value=data.job?.state==="active"?"once":data.mode;writerNow.checked=false;writerConsent.checked=false;syncWriterMode()}catch(e){if(session===writerSession)writerError.textContent=String(e)}finally{if(session===writerSession)writerSave.disabled=false}};
 
-config.onclose=()=>{if(!config.open)cloudKey.value=""};
+config.onclose=()=>{if(!config.open){configSession++;cloudKey.value="";cloudConsent.checked=false;setConfigPending(false)}};
 modelList.onchange=()=>{if(modelList.value)cloudModel.value=modelList.value};
 cloudModel.oninput=()=>{if(!modelListLabel.hidden)modelList.value=cloudModel.value.trim()};
 loadModels.onclick=async()=>{
@@ -195,7 +241,7 @@ loadModels.onclick=async()=>{
  }catch(e){
   if(session===configSession&&config.open)configStatus.textContent=e instanceof Error?e.message:String(e);
  }finally{
-  setConfigPending(false);
+  if(session===configSession)setConfigPending(false);
  }
 };
 $("config-form").onsubmit=async e=>{
@@ -211,10 +257,10 @@ $("config-form").onsubmit=async e=>{
  }catch(e){
   if(session===configSession&&config.open)configStatus.textContent=e instanceof Error?e.message:String(e);
  }finally{
-  setConfigPending(false);
+  if(session===configSession)setConfigPending(false);
  }
 };
-$("composer").onsubmit=async e=>{e.preventDefault();const content=prompt.value.trim();if(!content||busy)return;busy=true;prompt.value="";message("user",content);$("status").textContent="Обработка запроса…";try{const result=await api("chat",{content});if(result.reader)showBook(result.reader);else message("assistant",result.reply);$("status").textContent=result.connected?"Cloud.ru · ответ получен":"Локальный режим · сообщение сохранено"}catch(e){message("error",String(e));$("status").textContent="Ошибка запроса"}finally{busy=false;await refreshGraph();if(book.hidden)prompt.focus();else $("book-scroll").focus()}};
+$("composer").onsubmit=async e=>{e.preventDefault();const content=prompt.value.trim();if(!content||busy||!historyReady)return;busy=true;prompt.value="";syncComposer();message("user",content,true);$("status").textContent="Обработка запроса…";try{const result=await api("chat",{content});if(result.reader)showBook(result.reader);else message("assistant",result.reply);$("status").textContent=result.connected?"Cloud.ru · ответ получен":"Локальный режим · сообщение сохранено"}catch(e){message("error",String(e));$("status").textContent="Ошибка запроса"}finally{busy=false;syncComposer();void refreshGraph();if(!chat.hidden&&!config.open&&!writerDialog.open&&!commandDialog.open&&!universeDialog.open&&!note.open){if(book.hidden){if(!prompt.value.trim())prompt.focus()}else $("book-scroll").focus()}}};
 
 const image=$("avatar-image") as HTMLImageElement;
 function useAvatar(){image.src="/api/avatar?"+Date.now();image.onerror=()=>{image.onerror=null;image.src="/avatar.svg"}}
@@ -222,8 +268,8 @@ useAvatar();
 $("avatar-picker").onclick=()=>{menu.hidden=true;($("avatar-file") as HTMLInputElement).click()};
 ($("avatar-file") as HTMLInputElement).onchange=async e=>{const input=e.target as HTMLInputElement,file=input.files?.[0];if(!file)return;try{if(file.type!=="image/png"||file.size>8000000)throw Error("Нужен PNG до 8 МБ");const data=await new Promise<string>((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(",")[1]);reader.onerror=reject;reader.readAsDataURL(file)});await api("avatar",{png:data});useAvatar()}catch(err){$("info").textContent=String(err)}finally{input.value=""}};
 const note=$("note-dialog") as HTMLDialogElement;
-$("note-open").onclick=()=>{menu.hidden=true;note.showModal()};
-$("note-save").onclick=async()=>{const content=($("note-text") as HTMLTextAreaElement).value,kind=Number(($("note-kind") as HTMLSelectElement).value);try{await api("note",{kind,content});($("note-text") as HTMLTextAreaElement).value="";note.close();await refreshGraph()}catch(err){$("note-status").textContent=String(err)}};
+$("note-open").onclick=()=>{menu.hidden=true;$("note-status").textContent="";if(!note.open)note.showModal()};
+$("note-save").onclick=async()=>{const btn=$("note-save") as HTMLButtonElement;if(btn.disabled)return;const field=$("note-text") as HTMLTextAreaElement,content=field.value.trim(),kind=Number(($("note-kind") as HTMLSelectElement).value);if(!content){$("note-status").textContent="Введите текст.";field.focus();return}btn.disabled=true;try{await api("note",{kind,content});field.value="";if(note.open)note.close();void refreshGraph()}catch(err){if(note.open)$("note-status").textContent=String(err)}finally{btn.disabled=false}};
 
 
 // Reading is a separate local presentation of the same immutable SQLite bookmark.
@@ -300,7 +346,7 @@ function scheduleReflow(){
 }
 function showBook(p:BookPage){
  readerGeneration++;
- book.hidden=false;chat.classList.add("reading");syncGraphViewport();$("messages").hidden=true;$("composer").hidden=true;$("status").hidden=true;
+ book.hidden=false;chat.classList.add("reading");syncGraphViewport();$("messages").hidden=true;$("composer").hidden=true;$("chat-status-row").hidden=true;
  novelDoc=p.document||null;novelPages=[];novelIndex=0;layoutKey="";
  const d=novelDoc;
  $("book-kicker").textContent="ТОМ "+(d?.volume??p.volume)+" · ГЛАВА "+(d?.chapter??p.chapter);
@@ -316,7 +362,7 @@ function showBook(p:BookPage){
  $("book-end").hidden=!p.last_published;$("book-status").textContent="";
  animatePage();scheduleReflow();
 }
-function exitBook(){readerGeneration++;novelDoc=null;novelPages=[];layoutKey="";book.hidden=true;chat.classList.remove("reading","book-focus");focused=false;syncGraphViewport();$("book-focus").setAttribute("aria-pressed","false");$("messages").hidden=false;$("composer").hidden=false;$("status").hidden=false;prompt.focus()}
+function exitBook(){readerGeneration++;novelDoc=null;novelPages=[];layoutKey="";book.hidden=true;chat.classList.remove("reading","book-focus");focused=false;syncGraphViewport();$("book-focus").setAttribute("aria-pressed","false");$("messages").hidden=false;$("composer").hidden=false;$("chat-status-row").hidden=false;prompt.focus()}
 async function turn(action:string){
  if(reading||busy)return;
  reading=true;
@@ -329,7 +375,9 @@ async function turn(action:string){
    action=delta>0?"advance":"retreat";
   }
   await positionChain;
+  const generation=readerGeneration;
   const result=await api("reader",{action});
+  if(generation!==readerGeneration)return;
   if(action==="pause"){exitBook();return}
   if(result.reader)showBook(result.reader);
   else $("book-status").textContent=result.reply||"Страница недоступна";
