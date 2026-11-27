@@ -27,7 +27,7 @@ def source(db,n,seq):
     if not row:raise ValueError("analysis source missing")
     body,a,b,digest,arc,title,story,h,did=row
     u.verified_source(db,n,arc,title,story,h,did)
-    if story[a:b]!=body:raise ValueError("analysis source mismatch")
+    if story[a:b]!=body or digest!=o.digest(o.dump([u.VERSION,title,story,h])):raise ValueError("analysis source mismatch")
     return {"chapter":n,"scene":seq,"body":body,"source":digest,"arc":arc,"title":title}
 
 def next_scene(db):
@@ -97,7 +97,7 @@ def decide(db,n,seq,revision,approve):
 def accepted(db,n):
     result=[]
     for row in db.execute("""SELECT a.chapter,a.scene,a.source,a.payload,a.checksum,a.status FROM narrative_analysis a
-        JOIN universe_sources s ON s.chapter=a.chapter AND s.digest=a.source WHERE a.chapter=? AND a.status='approved' ORDER BY a.scene""",(n,)):
+        JOIN universe_sources s ON s.chapter=a.chapter AND s.digest=a.source WHERE a.chapter=? AND a.status='approved' AND a.chapter NOT IN (SELECT chapter FROM universe_dirty) ORDER BY a.scene""",(n,)):
         result.extend(checked(db,row)["facts"])
     return result
 
