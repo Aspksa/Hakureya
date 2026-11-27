@@ -73,11 +73,11 @@ def init(db):
     db.execute("""CREATE TRIGGER IF NOT EXISTS universe_dirty_renumber AFTER UPDATE OF number ON omega_index
         BEGIN INSERT OR IGNORE INTO universe_dirty VALUES(OLD.number); END""")
 
-def verified_source(db,n,arc,title,story,checksum,did):
+def verified_source(db,n,arc,title,story,checksum,did,canon_checked=False):
     import soul_chronicle as ch
     import soul_saga
     import soul_lore
-    if not ch.canon_ok(db):raise ValueError("canon integrity")
+    if not canon_checked and not ch.canon_ok(db):raise ValueError("canon integrity")
     if n<=13:
         _,expected_title,expected_story=soul_saga.canonical_chapters()[n-1]
         expected_arc="past" if n<=4 else "meeting" if n<=8 else "love" if n<=11 else "future"
@@ -161,8 +161,11 @@ def refresh(db,force=False,limit=None,chapter=None):
     if limit is not None:
         sql+=" LIMIT ?";args.append(max(1,min(100,limit)))
     rows=db.execute(sql,args).fetchall()
+    if rows:
+        import soul_chronicle as ch
+        if not ch.canon_ok(db):raise ValueError("canon integrity")
     for n,arc,title,story,source,did in rows:
-        verified_source(db,n,arc,title,story,source,did)
+        verified_source(db,n,arc,title,story,source,did,canon_checked=True)
         digest=o.digest(o.dump([VERSION,title,story,source]))
         old=db.execute("SELECT digest FROM universe_sources WHERE chapter=?",(n,)).fetchone()
         dirty=db.execute("SELECT 1 FROM universe_dirty WHERE chapter=?",(n,)).fetchone()
