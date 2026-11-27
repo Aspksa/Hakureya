@@ -93,6 +93,31 @@ class ServerTest(unittest.TestCase):
             self.assertEqual(db.execute("SELECT status FROM chronicle_attempts").fetchone()[0],"draft")
         self.assertIn("ручная проверка",self.request("chat",{"content":"Покажи черновик"})["reply"])
 
+    def test_narrative_memory_and_embedding_requires_consent_and_budget(self):
+        self.request("config",{"key":"test-key","model":"test-model","consent":True})
+        status=self.request("universe")["narrative"]
+        self.assertEqual(status["indexed"],13)
+        self.assertEqual(status["pending"],0)
+        self.assertEqual(status["vectors"]["indexed"],0)
+        with patch.object(server,"urlopen") as remote:
+            self.assertIn("Литературная память",self.request("chat",{"content":"Литературная память"})["reply"])
+            with self.assertRaises(HTTPError):self.request("narrative/embeddings",{"action":"index","consent":False})
+            with self.assertRaises(HTTPError):self.request("narrative/embeddings",{"action":"index","consent":True})
+            remote.assert_not_called()
+        with closing(server.connect()) as db,db:
+            count=len(server.soul_embeddings.missing(db))
+        payload={"data":[{"index":i,"embedding":[1.0]+[0.0]*1023} for i in range(count)],"usage":{"total_tokens":500}}
+        fake=MagicMock()
+        fake.__enter__.return_value.read.return_value=json.dumps(payload).encode()
+        with patch.object(server,"urlopen",return_value=fake) as remote:
+            result=self.request("narrative/embeddings",{"action":"index","consent":True,"budget":{"rate":100,"cap":1000}})
+            self.assertEqual(result["added"],count)
+            self.assertEqual(remote.call_count,1)
+            sent=json.loads(remote.call_args.args[0].data)
+            self.assertEqual(sent["model"],server.soul_embeddings.MODEL)
+            self.assertEqual(len(sent["input"]),count)
+        self.assertEqual(self.request("universe")["narrative"]["vectors"]["indexed"],count)
+
     def test_proposal_generation_and_approval_are_separate_from_canon(self):
         self.request("config",{"key":"test-key","model":"test-model","consent":True})
         data={"title":"Хранительница звёзд","description":"Новая героиня появляется в будущем.","impact":"Сюжет получает новое испытание.","risks":"Не меняет прошлые главы."}
