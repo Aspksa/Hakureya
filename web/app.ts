@@ -69,7 +69,7 @@ function setCinema(value:boolean){cinema=value;$("stellar-cinema").setAttribute(
 $("stellar-cinema").onclick=()=>setCinema(!cinema);
 avatar.onclick=()=>toggle();$("close").onclick=()=>toggle(false);avatar.oncontextmenu=e=>{e.preventDefault();toggleMenu()};
 function toggleMenu(){menu.hidden=!menu.hidden;$("chat-menu").setAttribute("aria-expanded",String(!menu.hidden));if(!menu.hidden){menu.classList.toggle("from-chat",!chat.hidden);(menu.querySelector("button") as HTMLButtonElement|null)?.focus()}}
-$("chat-menu").onclick=toggleMenu;document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(config.open||writerDialog.open||commandDialog.open||universeDialog.open||note.open||draftDialog.open||proposalDialog.open)return;if(cinema){setCinema(false);return}if(!menu.hidden){hideMenu();$("chat-menu").focus()}else if(!chat.hidden&&!config.open&&!writerDialog.open&&!commandDialog.open&&!universeDialog.open&&!note.open)toggle(false)}});document.addEventListener("click",e=>{if(!menu.contains(e.target as Node)&&!avatar.contains(e.target as Node)&&!$("chat-menu").contains(e.target as Node))menu.hidden=true;if(menu.hidden)$("chat-menu").setAttribute("aria-expanded","false")});
+$("chat-menu").onclick=toggleMenu;document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(!book.hidden&&(!contentsPanel.hidden||!settingsPanel.hidden)){closeBookPanels();scroll.focus();return}if(config.open||writerDialog.open||commandDialog.open||universeDialog.open||note.open||draftDialog.open||proposalDialog.open)return;if(cinema){setCinema(false);return}if(!menu.hidden){hideMenu();$("chat-menu").focus()}else if(!chat.hidden&&!config.open&&!writerDialog.open&&!commandDialog.open&&!universeDialog.open&&!note.open)toggle(false)}});document.addEventListener("click",e=>{if(!menu.contains(e.target as Node)&&!avatar.contains(e.target as Node)&&!$("chat-menu").contains(e.target as Node))menu.hidden=true;if(menu.hidden)$("chat-menu").setAttribute("aria-expanded","false")});
 function message(role:string,content:string,force=false){const box=$("messages"),follow=force||box.scrollHeight-box.scrollTop-box.clientHeight<80;const p=document.createElement("p");p.className="message "+role;p.textContent=content;box.append(p);if(follow)box.scrollTop=box.scrollHeight;return p}
 let lastDiagnostic=0;
 function reportClientFailure(path:string,kind:string,status:number){
@@ -505,16 +505,20 @@ type NovelDocument={chapter:number,last_chapter:number,title:string,volume:numbe
 type BookPage={chapter:number,title:string,volume:number,page:number,pages:number,text:string,chapter_progress:number,volume_progress:number,can_back:boolean,can_next:boolean,last_published:boolean,document?:NovelDocument|null};
 const book=$("book"),scroll=$("book-scroll");
 let font=21,spacing=1.8,focused=false,reading=false;
+let bookTheme="night",bookFamily="serif",bookWidth="normal";
+const contentsPanel=$("book-contents-panel"),settingsPanel=$("book-settings-panel");
+const jump=$("book-jump") as HTMLInputElement;
 let novelDoc:NovelDocument|null=null,novelPages:{start:number,end:number,text:string}[]=[],novelIndex=0,layoutKey="",reflowTimer=0,positionChain:Promise<unknown>=Promise.resolve();
 let readerGeneration=0;
-try{const saved=JSON.parse(localStorage.getItem("hakureya-reading-style")||"{}");if(Number.isFinite(saved.font))font=Math.min(32,Math.max(16,saved.font===18&&!saved.largeUI?21:saved.font));if(Number.isFinite(saved.spacing))spacing=Math.min(2.2,Math.max(1.5,saved.spacing))}catch{}
-function readerStyle(){book.style.setProperty("--book-font",font+"px");book.style.setProperty("--book-spacing",String(spacing));try{localStorage.setItem("hakureya-reading-style",JSON.stringify({font,spacing,largeUI:true}))}catch{}scheduleReflow()}
+try{const saved=JSON.parse(localStorage.getItem("hakureya-reading-style")||"{}");if(Number.isFinite(saved.font))font=Math.min(32,Math.max(16,saved.font===18&&!saved.largeUI?21:saved.font));if(Number.isFinite(saved.spacing))spacing=[1.5,1.8,2.1].reduce((a,b)=>Math.abs(a-saved.spacing)<=Math.abs(b-saved.spacing)?a:b);if(["night","sepia","paper"].includes(saved.theme))bookTheme=saved.theme;if(["serif","sans"].includes(saved.family))bookFamily=saved.family;if(["normal","wide"].includes(saved.width))bookWidth=saved.width}catch{}
+function readerStyle(){book.style.setProperty("--book-font",font+"px");book.style.setProperty("--book-spacing",String(spacing));chat.dataset.bookTheme=bookTheme;book.dataset.family=bookFamily;book.dataset.width=bookWidth;$("book-font-value").textContent=font+" px";($("book-spacing") as HTMLSelectElement).value=String(spacing);($("book-font-family") as HTMLSelectElement).value=bookFamily;($("book-width") as HTMLSelectElement).value=bookWidth;($("book-theme") as HTMLSelectElement).value=bookTheme;try{localStorage.setItem("hakureya-reading-style",JSON.stringify({font,spacing,largeUI:true,theme:bookTheme,family:bookFamily,width:bookWidth}))}catch{}scheduleReflow()}
 readerStyle();
 function renderProse(text:string){
  const body=$("book-text");body.replaceChildren();
  for(const paragraph of text.split(/\n\s*\n/)){
   if(!paragraph.trim())continue;
-  const el=document.createElement("p");el.textContent=paragraph;body.append(el);
+  const lines=paragraph.split("\n");
+  for(const line of lines){if(!line.trim())continue;const match=line.match(/^#{1,4}\s+(.+)$/);const el=document.createElement(match?"h2":"p");el.textContent=match?match[1]:line;if(!match&&/^\s*[—–]/.test(line))el.className="book-dialogue";body.append(el)}
  }
 }
 function animatePage(){
@@ -540,6 +544,7 @@ function renderNovelPage(animate=false){
  const length=Array.from(d.text).length;
  const progress=length?p.end/length:1;
  $("book-position").textContent="Страница "+(novelIndex+1)+" из "+novelPages.length;
+ jump.max=String(novelPages.length);jump.value=String(novelIndex+1);jump.disabled=novelPages.length<=1;$("book-percent").textContent=Math.round(progress*100)+"%";
  ($("book-progress") as HTMLProgressElement).value=progress;
  ($("book-volume") as HTMLProgressElement).value=Math.min(1,(d.volume_ordinal-1+progress*(d.volume_parts??d.parts))/Math.max(1,d.volume_count));
  ($("book-prev") as HTMLButtonElement).disabled=novelIndex===0&&d.chapter===1;
@@ -552,10 +557,10 @@ function reflowNovel(anchor?:number,animate=false){
  const d=novelDoc;if(!d||book.hidden||chat.hidden)return;
  const width=scroll.clientWidth,available=scroll.clientHeight;
  if(available<1||width<1)return;
- const pageWidth=Math.min(width,210*96/25.4,available*210/297),height=pageWidth*297/210;
+ const pageWidth=Math.min(width,bookWidth==="wide"?1050:760),height=Math.max(1,available-4);
  $("book-page").style.setProperty("--a4-width",pageWidth+"px");
  const offset=anchor??novelPages[novelIndex]?.start??d.offset;
- const key=[d.hash,width,height,font,spacing,offset].join(":");
+ const key=[d.hash,width,height,font,spacing,bookWidth,bookFamily,offset].join(":");
  if(key===layoutKey&&novelPages.length)return;
  layoutKey=key;
  $("book-end").hidden=true;
@@ -583,6 +588,7 @@ function showBook(p:BookPage){
  if(d&&!chat.hidden&&scroll.clientHeight>0){reflowNovel(d.offset,true);return}
  renderProse(p.text);
  $("book-position").textContent="Страница "+p.page+" из "+p.pages;
+ jump.disabled=true;$("book-percent").textContent=Math.round(p.chapter_progress*100)+"%";
  ($("book-progress") as HTMLProgressElement).value=p.chapter_progress;
  ($("book-volume") as HTMLProgressElement).value=p.volume_progress;
  ($("book-prev") as HTMLButtonElement).disabled=!p.can_back;
@@ -590,10 +596,10 @@ function showBook(p:BookPage){
  $("book-end").hidden=!p.last_published;$("book-status").textContent="";
  animatePage();scheduleReflow();
 }
-function exitBook(){readerGeneration++;novelDoc=null;novelPages=[];layoutKey="";book.hidden=true;$("chat-workspace").hidden=false;chat.classList.remove("reading","book-focus");focused=false;syncGraphViewport();$("book-focus").setAttribute("aria-pressed","false");$("messages").hidden=false;$("composer").hidden=false;$("chat-status-row").hidden=false;prompt.focus()}
-async function turn(action:string){
+function exitBook(){closeBookPanels();readerGeneration++;novelDoc=null;novelPages=[];layoutKey="";book.hidden=true;$("chat-workspace").hidden=false;chat.classList.remove("reading","book-focus");focused=false;syncGraphViewport();$("book-focus").setAttribute("aria-pressed","false");$("messages").hidden=false;$("composer").hidden=false;$("chat-status-row").hidden=false;prompt.focus()}
+async function turn(action:string,chapter?:number){
  if(reading||busy)return;
- reading=true;
+ closeBookPanels();reading=true;
  try{
   if(novelDoc&&novelPages.length&&(action==="next"||action==="back")){
    const delta=action==="next"?1:-1,next=novelIndex+delta;
@@ -604,7 +610,7 @@ async function turn(action:string){
   }
   await positionChain;
   const generation=readerGeneration;
-  const result=await api("reader",{action});
+  const result=await api("reader",chapter===undefined?{action}:{action,chapter});
   if(generation!==readerGeneration)return;
   if(action==="pause"){exitBook();return}
   if(result.reader)showBook(result.reader);
@@ -637,9 +643,38 @@ setInterval(()=>void readerPresence(),10000);
 $("book-prev").onclick=()=>void turn("back");$("book-next").onclick=()=>void turn("next");$("book-exit").onclick=()=>void turn("pause");
 $("book-smaller").onclick=()=>{font=Math.max(16,font-1);readerStyle()};
 $("book-larger").onclick=()=>{font=Math.min(32,font+1);readerStyle()};
-$("book-spacing").onclick=()=>{spacing=spacing>=2.15?1.5:Math.min(2.2,Math.round((spacing+.15)*100)/100);readerStyle()};
+($("book-spacing") as HTMLSelectElement).onchange=()=>{spacing=Number(($("book-spacing") as HTMLSelectElement).value);readerStyle()};
+($("book-font-family") as HTMLSelectElement).onchange=()=>{bookFamily=($("book-font-family") as HTMLSelectElement).value;readerStyle()};
+($("book-width") as HTMLSelectElement).onchange=()=>{bookWidth=($("book-width") as HTMLSelectElement).value;readerStyle()};
+($("book-theme") as HTMLSelectElement).onchange=()=>{bookTheme=($("book-theme") as HTMLSelectElement).value;readerStyle()};
+$("book-reset-style").onclick=()=>{font=21;spacing=1.8;bookTheme="night";bookFamily="serif";bookWidth="normal";readerStyle()};
+let contentsPage=1,contentsSeq=0,contentsPages=1;
+function closeBookPanels(){contentsSeq++;contentsPanel.hidden=true;settingsPanel.hidden=true;$("book-contents").setAttribute("aria-expanded","false");$("book-settings").setAttribute("aria-expanded","false")}
+async function loadBookContents(){
+ const seq=++contentsSeq,query=($("book-search") as HTMLInputElement).value.trim();
+ $("book-contents-status").textContent="Загрузка…";$("book-contents-list").replaceChildren();
+ ($("book-contents-prev") as HTMLButtonElement).disabled=true;($("book-contents-next") as HTMLButtonElement).disabled=true;
+ try{
+  const result=await api("reader",{action:"contents",page:contentsPage,query});
+  if(seq!==contentsSeq||contentsPanel.hidden)return;
+  contentsPage=result.page;contentsPages=result.pages;
+  $("book-contents-status").textContent=result.total+" глав";
+  $("book-contents-page").textContent=contentsPage+" / "+contentsPages;
+  ($("book-contents-prev") as HTMLButtonElement).disabled=contentsPage<=1;($("book-contents-next") as HTMLButtonElement).disabled=contentsPage>=contentsPages;
+  for(const item of result.items){const button=document.createElement("button"),title=document.createElement("strong"),small=document.createElement("small");button.type="button";title.textContent=item.chapter+". "+item.title;small.textContent="Том "+item.volume;button.append(title,small);if(item.chapter===result.current)button.setAttribute("aria-current","true");button.onclick=()=>{if(item.chapter===novelDoc?.chapter){closeBookPanels();scroll.focus()}else void turn("chapter",item.chapter)};$("book-contents-list").append(button)}
+ }catch(e){if(seq===contentsSeq&&!contentsPanel.hidden)$("book-contents-status").textContent=String(e)}
+}
+$("book-contents").onclick=()=>{const open=contentsPanel.hidden;closeBookPanels();if(open){contentsPanel.hidden=false;$("book-contents").setAttribute("aria-expanded","true");contentsPage=1;($("book-search") as HTMLInputElement).value="";void loadBookContents();$("book-search").focus()}};
+$("book-settings").onclick=()=>{const open=settingsPanel.hidden;closeBookPanels();if(open){settingsPanel.hidden=false;$("book-settings").setAttribute("aria-expanded","true");$("book-smaller").focus()}};
+$("book-contents-close").onclick=()=>{closeBookPanels();$("book-contents").focus()};
+$("book-settings-close").onclick=()=>{closeBookPanels();$("book-settings").focus()};
+$("book-search-form").onsubmit=e=>{e.preventDefault();contentsPage=1;void loadBookContents()};
+$("book-contents-prev").onclick=()=>{if(contentsPage>1){contentsPage--;void loadBookContents()}};
+$("book-contents-next").onclick=()=>{if(contentsPage<contentsPages){contentsPage++;void loadBookContents()}};
+jump.oninput=()=>{$("book-position").textContent="Перейти на страницу "+jump.value+" из "+novelPages.length};
+jump.onchange=async()=>{if(reading||busy||!novelDoc||!novelPages.length)return;const next=Number(jump.value)-1;if(!Number.isInteger(next)||next<0||next>=novelPages.length)return;reading=true;try{novelIndex=next;renderNovelPage(true);await savePosition()}finally{reading=false}};
 $("book-focus").onclick=()=>{focused=!focused;chat.classList.toggle("book-focus",focused);syncGraphViewport();scheduleReflow();$("book-focus").setAttribute("aria-pressed",String(focused))};
-document.addEventListener("keydown",e=>{if(book.hidden||chat.hidden||config.open||writerDialog.open||commandDialog.open||universeDialog.open||note.open||draftDialog.open||proposalDialog.open||e.altKey||e.ctrlKey||e.metaKey||e.shiftKey||e.repeat||window.getSelection()?.toString())return;if(e.target instanceof HTMLInputElement||e.target instanceof HTMLTextAreaElement||e.target instanceof HTMLButtonElement)return;if(e.key==="ArrowRight"||e.key==="ArrowLeft"){e.preventDefault();void turn(e.key==="ArrowRight"?"next":"back")}});
+document.addEventListener("keydown",e=>{if(book.hidden||chat.hidden||!contentsPanel.hidden||!settingsPanel.hidden||config.open||writerDialog.open||commandDialog.open||universeDialog.open||note.open||draftDialog.open||proposalDialog.open||e.altKey||e.ctrlKey||e.metaKey||e.shiftKey||e.repeat||window.getSelection()?.toString())return;if(e.target instanceof HTMLInputElement||e.target instanceof HTMLTextAreaElement||e.target instanceof HTMLButtonElement||e.target instanceof HTMLSelectElement)return;if(e.key==="ArrowRight"||e.key==="ArrowLeft"){e.preventDefault();void turn(e.key==="ArrowRight"?"next":"back")}});
 let touch:{x:number,y:number}|null=null;
 scroll.addEventListener("touchstart",e=>{touch=e.touches.length===1?{x:e.touches[0].clientX,y:e.touches[0].clientY}:null},{passive:true});
 scroll.addEventListener("touchcancel",()=>{touch=null},{passive:true});
