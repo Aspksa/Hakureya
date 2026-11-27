@@ -128,9 +128,11 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
    assert.equal(await evaluate("document.querySelector('#menu').hidden"),true);
    const chat=await evaluate("({width:document.querySelector('#chat').getBoundingClientRect().width,graph:document.querySelector('#graph').clientWidth,font:parseFloat(getComputedStyle(document.querySelector('#messages')).fontSize)})");
    assert.ok(chat.font>=16);
-   if(width>=1050){assert.ok(chat.width>=600&&chat.width<=700);assert.ok(Math.abs(chat.width+chat.graph-width)<2)}else assert.equal(chat.width,width);
+   if(width>=1050){assert.ok(chat.width>=640&&chat.width<=860);assert.ok(Math.abs(chat.width+chat.graph-width)<2)}else assert.equal(chat.width,width);
    await evaluate("document.querySelector('#command-plus').click()");
    assert.equal(await evaluate("document.querySelector('#command-dialog').open"),true);
+   assert.ok(await evaluate("document.querySelectorAll('#command-results .command-item').length>0 && document.querySelectorAll('#command-results .command-item').length<30"));
+   await evaluate("(()=>{const s=document.querySelector('#command-category');s.value='';s.dispatchEvent(new Event('change',{bubbles:true}))})()");
    assert.equal(await evaluate("document.querySelectorAll('#command-results .command-item').length"),186);
    const palette=await evaluate("(()=>{const r=document.querySelector('#command-dialog').getBoundingClientRect();return {w:r.width,h:r.height}})()");
    assert.ok(palette.w<=width&&palette.h<=height,JSON.stringify(palette));
