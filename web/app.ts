@@ -50,6 +50,7 @@ async function refreshActivity(){
   let data;try{const response=await fetch("/api/activity",{cache:"no-store",signal:controller.signal});if(!response.ok)throw Error("activity");data=await response.json()}finally{clearTimeout(timeout)}
   if(document.hidden)return;
   activityActive=data.active.length>0;
+  void updateDraftCount();
   if(writerDialog.open&&writerPreviewOpt.checked&&!previewPollBusy){previewPollBusy=true;const session=writerSession;void api("writer/preview").then(st=>{if(session===writerSession&&writerDialog.open&&writerPreviewOpt.checked){const follow=writerPreviewText.scrollHeight-writerPreviewText.scrollTop-writerPreviewText.clientHeight<48;writerPreviewText.textContent=st.active?(st.story||"Ожидание художественного текста…"):(st.story?"Последний полученный фрагмент (не утверждён):\n"+st.story:"Нет поступающего текста");if(follow)writerPreviewText.scrollTop=writerPreviewText.scrollHeight}}).catch(()=>{}).finally(()=>{previewPollBusy=false})}
   if(writerDialog.open&&!writerPollBusy){writerPollBusy=true;const session=writerSession;void api("writer").then(st=>{if(session===writerSession&&writerDialog.open&&!writerSave.disabled)renderWriter(st)}).catch(()=>{}).finally(()=>{writerPollBusy=false})}
   live?.setActivity(data);
@@ -67,7 +68,7 @@ function setCinema(value:boolean){cinema=value;$("stellar-cinema").setAttribute(
 $("stellar-cinema").onclick=()=>setCinema(!cinema);
 avatar.onclick=()=>toggle();$("close").onclick=()=>toggle(false);avatar.oncontextmenu=e=>{e.preventDefault();toggleMenu()};
 function toggleMenu(){menu.hidden=!menu.hidden;$("chat-menu").setAttribute("aria-expanded",String(!menu.hidden));if(!menu.hidden){menu.classList.toggle("from-chat",!chat.hidden);(menu.querySelector("button") as HTMLButtonElement|null)?.focus()}}
-$("chat-menu").onclick=toggleMenu;document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(config.open||writerDialog.open||commandDialog.open||universeDialog.open||note.open)return;if(cinema){setCinema(false);return}if(!menu.hidden)menu.hidden=true;else if(!chat.hidden&&!config.open&&!writerDialog.open&&!commandDialog.open&&!universeDialog.open&&!note.open)toggle(false)}});document.addEventListener("click",e=>{if(!menu.contains(e.target as Node)&&!avatar.contains(e.target as Node)&&!$("chat-menu").contains(e.target as Node))menu.hidden=true;if(menu.hidden)$("chat-menu").setAttribute("aria-expanded","false")});
+$("chat-menu").onclick=toggleMenu;document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(config.open||writerDialog.open||commandDialog.open||universeDialog.open||note.open||draftDialog.open||proposalDialog.open)return;if(cinema){setCinema(false);return}if(!menu.hidden)menu.hidden=true;else if(!chat.hidden&&!config.open&&!writerDialog.open&&!commandDialog.open&&!universeDialog.open&&!note.open)toggle(false)}});document.addEventListener("click",e=>{if(!menu.contains(e.target as Node)&&!avatar.contains(e.target as Node)&&!$("chat-menu").contains(e.target as Node))menu.hidden=true;if(menu.hidden)$("chat-menu").setAttribute("aria-expanded","false")});
 function message(role:string,content:string,force=false){const box=$("messages"),follow=force||box.scrollHeight-box.scrollTop-box.clientHeight<80;const p=document.createElement("p");p.className="message "+role;p.textContent=content;box.append(p);if(follow)box.scrollTop=box.scrollHeight;return p}
 let lastDiagnostic=0;
 function reportClientFailure(path:string,kind:string,status:number){
@@ -76,7 +77,7 @@ function reportClientFailure(path:string,kind:string,status:number){
  void fetch("/api/diagnostics",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({route:path.split("/")[0].split("?")[0],kind,status}),keepalive:true}).catch(()=>{});
 }
 async function api(path:string,data?:unknown){
- const controller=new AbortController(),timeout=window.setTimeout(()=>controller.abort(),path==="chat"?420000:15000);
+ const controller=new AbortController(),timeout=window.setTimeout(()=>controller.abort(),path==="chat"?420000:path==="proposals/generate"?130000:15000);
  let status=0;
  try{
   const response=await fetch("/api/"+path,{...(data===undefined?{}:{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)}),signal:controller.signal});
@@ -103,7 +104,11 @@ syncComposer();
 const commandDialog=$("command-dialog") as HTMLDialogElement,commandPlus=$("command-plus") as HTMLButtonElement,commandSearch=$("command-search") as HTMLInputElement,commandCategory=$("command-category") as HTMLSelectElement,commandResults=$("command-results");
 let commandInitialized=false;
 function renderCommands(){
- const groups=searchCommands(commandSearch.value,commandCategory.value);
+ const home=commandCategory.value==="@start"&&!commandSearch.value.trim();
+ const core=new Set(["Читать книгу","Продолжить чтение","Оглавление","Последняя глава","Написать следующую главу","Показать черновик","Статус развития","Что нового написала","Статус романа","Реестр персонажей","Поиск сцены","Расход писателя"]);
+ const groups=searchCommands(commandSearch.value,commandCategory.value==="@start"?"":commandCategory.value)
+  .map(([name,entries])=>[name,home?entries.filter(entry=>core.has(entry[0])):entries] as [string,string[][]])
+  .filter(([,entries])=>entries.length);
  commandResults.replaceChildren();
  let count=0;
  for(const [name,entries] of groups){
@@ -112,9 +117,10 @@ function renderCommands(){
   for(const [label,command,example] of entries){
    count++;
    const btn=document.createElement("button"),strong=document.createElement("strong"),small=document.createElement("small");
-   btn.type="button";btn.className="command-item";strong.textContent=label;small.textContent=command+(example??"");
+   btn.type="button";btn.className="command-item";strong.textContent=label;small.textContent=example?"Требуется параметр · "+example:command===label?"":command;small.hidden=home&&!example||!small.textContent;
    btn.append(strong,small);
    btn.onclick=()=>{
+    if(["Покажи черновик","Принять главу","Отклонить главу","Летопись: принять ","Летопись: отклонить "].includes(command)){commandDialog.close();void openDraft();return}
     const value=command+(example??"");
     if(prompt.value.trim()&&prompt.value!==value&&!window.confirm("Заменить текущий текст выбранной командой?"))return;
     prompt.value=value;syncComposer();commandDialog.close();prompt.focus();
@@ -129,10 +135,10 @@ function renderCommands(){
 }
 commandPlus.onclick=()=>{
  if(!commandInitialized){
-  for(const [name] of commandGroups){const option=document.createElement("option");option.value=option.textContent=name;commandCategory.append(option)}
+  for(const [name] of commandGroups){const option=document.createElement("option");option.value=name;option.textContent=name==="Eternal Intelligence"?"Литературный интеллект":name;commandCategory.append(option)}
   commandInitialized=true;
  }
- if(commandDialog.open)return;commandSearch.value="";commandCategory.value="";renderCommands();commandResults.scrollTop=0;commandDialog.showModal();commandPlus.setAttribute("aria-expanded","true");commandSearch.focus();
+ if(commandDialog.open)return;commandSearch.value="";commandCategory.value="@start";renderCommands();commandResults.scrollTop=0;commandDialog.showModal();commandPlus.setAttribute("aria-expanded","true");commandSearch.focus();
 };
 commandDialog.onclose=()=>{commandPlus.setAttribute("aria-expanded","false")};
 $("command-close").onclick=()=>commandDialog.close();
@@ -141,6 +147,142 @@ $("command-writer").onclick=()=>{commandDialog.close();$("writer-open").click()}
 $("command-cloud").onclick=()=>{commandDialog.close();$("settings").click()};
 $("command-universe").onclick=()=>{commandDialog.close();$("universe-open").click()};
 $("command-network").onclick=()=>{commandDialog.close();toggle(false);if(!networkView)$("network-open").click()};
+const proposalDialog=$("proposal-dialog") as HTMLDialogElement;
+const proposalIdea=$("proposal-idea") as HTMLTextAreaElement,proposalKind=$("proposal-kind") as HTMLSelectElement,proposalConsent=$("proposal-consent") as HTMLInputElement;
+const proposalGenerate=$("proposal-generate") as HTMLButtonElement,proposalApprove=$("proposal-approve") as HTMLButtonElement,proposalReject=$("proposal-reject") as HTMLButtonElement;
+let proposalBusy=false,proposalCurrent:any=null,proposalSequence=0;
+function proposalButtons(){
+ proposalGenerate.disabled=proposalBusy||!!proposalCurrent||!proposalIdea.value.trim()||!proposalConsent.checked;
+ proposalApprove.disabled=proposalReject.disabled=proposalBusy||!proposalCurrent;
+ ($("proposal-refresh") as HTMLButtonElement).disabled=proposalBusy;
+}
+function renderProposals(data:any,notice=""){
+ proposalCurrent=data.pending||null;
+ $("proposal-badge").hidden=!proposalCurrent;
+ $("proposal-create").hidden=!!proposalCurrent;$("proposal-review").hidden=!proposalCurrent;
+ $("proposal-status").textContent=notice||(proposalCurrent?"Предложение ожидает решения.":"Утверждено замыслов: "+(data.approved||0)+".");
+ if(proposalCurrent){
+  const p=proposalCurrent;
+  $("proposal-kind-label").textContent=p.kind==="character"?"Новый персонаж":"Развитие сюжета";
+  $("proposal-title").textContent=p.title;$("proposal-original").textContent=p.idea;$("proposal-description").textContent=p.description;$("proposal-impact").textContent=p.impact;$("proposal-risks").textContent=p.risks;
+ }
+ const list=$("proposal-history-list");list.replaceChildren();
+ for(const p of data.recent||[]){const item=document.createElement("li");item.textContent=p.title+" · "+(p.status==="approved"?"Утверждён":"Отклонён");list.append(item)}
+ if(!list.children.length){const item=document.createElement("li");item.textContent="Решений пока нет.";list.append(item)}
+ proposalButtons();
+}
+async function loadProposals(){
+ if(proposalBusy)return;
+ const seq=++proposalSequence;proposalBusy=true;proposalCurrent=null;proposalButtons();
+ $("proposal-create").hidden=true;$("proposal-review").hidden=true;$("proposal-status").textContent="Загрузка…";
+ try{const data=await api("proposals");if(seq===proposalSequence&&proposalDialog.open)renderProposals(data)}
+ catch(e){if(seq===proposalSequence)$("proposal-status").textContent=String(e)}
+ finally{if(seq===proposalSequence){proposalBusy=false;proposalButtons()}}
+}
+function openProposals(kind?:string,idea?:string){
+ if(proposalDialog.open)return;
+ menu.hidden=true;proposalConsent.checked=false;
+ if(kind)proposalKind.value=kind;if(idea!==undefined)proposalIdea.value=idea.slice(0,2000);
+ proposalDialog.showModal();void loadProposals();
+}
+function creativeIntent(input:string){
+ const t=input.trim().toLocaleLowerCase("ru");
+ if(!/^(?:хочу|давай|добавь|придумай|разработай|предлагаю|введи|пусть)(?:\s|$)/u.test(t))return null;
+ if(/персонаж|персонал|нов(?:ый|ую|ого|ая)\s+геро|нов(?:ая|ую)\s+хранительниц/u.test(t)&&/добав|созда|придум|разработ|введ|появ|нов[а-яё]+|предлаг/u.test(t))return "character";
+ if(/сюжет|поворот\s+истории|развити[ея]\s+истории/u.test(t)&&/развит|развив|измен|поворот|продолж|придум|разработ|предлаг|добав/u.test(t))return "plot";
+ return null;
+}
+proposalIdea.oninput=proposalButtons;proposalConsent.onchange=proposalButtons;
+$("proposal-close").onclick=()=>{if(!proposalBusy)proposalDialog.close()};
+proposalDialog.oncancel=e=>{if(proposalBusy)e.preventDefault()};
+proposalDialog.onclose=()=>{proposalSequence++;proposalBusy=false;proposalCurrent=null;proposalButtons()};
+$("proposal-refresh").onclick=()=>void loadProposals();
+proposalGenerate.onclick=async()=>{
+ if(proposalGenerate.disabled)return;
+ const seq=++proposalSequence;proposalBusy=true;proposalButtons();$("proposal-status").textContent="Хакурэя разрабатывает предложение…";
+ try{const result=await api("proposals/generate",{kind:proposalKind.value,idea:proposalIdea.value.trim(),consent:proposalConsent.checked});if(seq!==proposalSequence||!proposalDialog.open)return;if(prompt.value.trim()===proposalIdea.value.trim()){prompt.value="";syncComposer()}proposalIdea.value="";renderProposals(result)}
+ catch(e){if(seq===proposalSequence)$("proposal-status").textContent=String(e)+" Перед новой попыткой обновите список."}
+ finally{if(seq===proposalSequence){proposalConsent.checked=false;proposalBusy=false;proposalButtons()}}
+};
+async function decideProposal(approve:boolean){
+ const item=proposalCurrent;if(!item||proposalBusy)return;
+ if(!window.confirm(approve?"Утвердить этот замысел для будущих глав?":"Отклонить предложение?"))return;
+ const seq=++proposalSequence;proposalBusy=true;proposalButtons();
+ try{const result=await api("proposals/decision",{id:item.id,revision:item.revision,approve});if(seq===proposalSequence&&proposalDialog.open)renderProposals(result,approve?"Замысел утверждён. Писатель сможет учесть его в будущих главах.":"Предложение отклонено.")}
+ catch(e){if(seq===proposalSequence){proposalCurrent=null;$("proposal-status").textContent=String(e)+" Обновите список."}}
+ finally{if(seq===proposalSequence){proposalBusy=false;proposalButtons()}}
+}
+proposalApprove.onclick=()=>void decideProposal(true);proposalReject.onclick=()=>void decideProposal(false);
+$("quick-proposals").onclick=()=>openProposals();
+$("command-proposals").onclick=()=>{commandDialog.close();openProposals()};
+const draftDialog=$("draft-dialog") as HTMLDialogElement;
+const approveDraft=$("draft-approve") as HTMLButtonElement,rejectDraft=$("draft-reject") as HTMLButtonElement,refreshDraft=$("draft-refresh") as HTMLButtonElement;
+type ReviewDraft={id:number;revision:string;title:string;story:string;warnings:string[]};
+let currentDraft:ReviewDraft|null=null,draftRequest=0,draftBusy=false,draftCountBusy=false,lastDraftCount=0;
+function draftBadge(count:number){const badge=$("draft-badge");badge.hidden=count<1;badge.textContent=String(count)}
+async function updateDraftCount(force=false){
+ if(draftCountBusy||(!force&&(chat.hidden||Date.now()-lastDraftCount<5000)))return;
+ draftCountBusy=true;lastDraftCount=Date.now();
+ try{const st=await api("writer/draft/count");draftBadge(Number(st.pending)||0);$("proposal-badge").hidden=!(Number(st.proposals)>0)}catch{}finally{draftCountBusy=false}
+}
+function setDraftButtons(){approveDraft.disabled=rejectDraft.disabled=draftBusy||!currentDraft;refreshDraft.disabled=draftBusy}
+async function loadDraft(notice=""){
+ const seq=++draftRequest;currentDraft=null;draftBusy=true;setDraftButtons();$("draft-article").hidden=true;$("draft-status").textContent="Загрузка черновика…";
+ try{
+  const data=await api("writer/draft");
+  if(seq!==draftRequest||!draftDialog.open)return;
+  currentDraft=data.draft;
+  draftBadge(currentDraft?1:0);
+  $("draft-status").textContent=(notice?notice+" · ":"")+(currentDraft?"Ожидает вашего решения":"Нет черновиков на утверждение. Последняя опубликованная глава: "+data.published);
+  if(currentDraft){
+   $("draft-title").textContent=currentDraft.title;
+   $("draft-meta").textContent="Черновик №"+currentDraft.id+" · "+currentDraft.story.length.toLocaleString("ru-RU")+" знаков · Не опубликован";
+   const warnings=$("draft-warnings");warnings.replaceChildren();
+   for(const warning of currentDraft.warnings){const li=document.createElement("li");li.textContent=warning;warnings.append(li)}
+   $("draft-review").hidden=!currentDraft.warnings.length;
+   const body=$("draft-story");body.replaceChildren();
+   for(const paragraph of currentDraft.story.split(/\n+/)){if(paragraph.trim()){const p=document.createElement("p");p.textContent=paragraph;body.append(p)}}
+   $("draft-article").hidden=false;draftDialog.scrollTop=0;
+  }
+ }catch(e){if(seq===draftRequest&&draftDialog.open)$("draft-status").textContent=String(e)}
+ finally{if(seq===draftRequest){draftBusy=false;setDraftButtons()}}
+}
+async function openDraft(){
+ if(draftDialog.open)return;
+ menu.hidden=true;draftDialog.showModal();await loadDraft();
+}
+async function decideDraft(approve:boolean){
+ const draft=currentDraft;if(!draft||draftBusy)return;
+ if(!window.confirm(approve?"Утвердить этот черновик и опубликовать его в романе?":"Отклонить этот черновик? Он не будет опубликован."))return;
+ const seq=++draftRequest;draftBusy=true;setDraftButtons();
+ try{
+  const result=await api("writer/decision",{id:draft.id,revision:draft.revision,approve});
+  if(seq!==draftRequest||!draftDialog.open)return;
+  await loadDraft(approve?"Текст опубликован · последняя глава "+result.published:"Черновик отклонён");
+ }catch(e){
+  if(seq===draftRequest&&draftDialog.open){currentDraft=null;$("draft-status").textContent=String(e)+" Обновите редакцию, прежде чем повторять решение."}
+ }finally{if(seq===draftRequest){draftBusy=false;setDraftButtons()}void updateDraftCount(true);void refreshGraph()}
+}
+$("draft-close").onclick=()=>{if(!draftBusy)draftDialog.close()};
+draftDialog.oncancel=e=>{if(draftBusy)e.preventDefault()};
+draftDialog.onclose=()=>{draftRequest++;draftBusy=false;currentDraft=null;setDraftButtons();void updateDraftCount(true)};
+refreshDraft.onclick=()=>void loadDraft();
+approveDraft.onclick=()=>void decideDraft(true);rejectDraft.onclick=()=>void decideDraft(false);
+$("quick-draft").onclick=()=>void openDraft();
+$("command-drafts").onclick=()=>{commandDialog.close();void openDraft()};
+$("writer-drafts").onclick=()=>{writerDialog.close();void openDraft()};
+$("quick-write").onclick=()=>$("writer-open").click();
+$("quick-commands").onclick=()=>commandPlus.click();
+function quickRead(){
+ if(busy||!historyReady){$("status").textContent="Дождитесь окончания запроса или загрузки истории.";return}
+ if(!book.hidden){$("book-scroll").focus();return}
+ const value="Читать книгу";
+ if(prompt.value.trim()&&prompt.value!==value&&!window.confirm("Заменить текущий текст и открыть книгу?"))return;
+ prompt.value=value;syncComposer();($("composer") as HTMLFormElement).requestSubmit();
+}
+$("quick-read").onclick=quickRead;
+$("command-read").onclick=()=>{commandDialog.close();quickRead()};
+
 const cloudModel=$("model") as HTMLInputElement,cloudKey=$("key") as HTMLInputElement;
 const modelList=$("model-list") as HTMLSelectElement,modelListLabel=$("model-list-label");
 const loadModels=$("load-models") as HTMLButtonElement,saveConfig=$("save") as HTMLButtonElement;
@@ -213,7 +355,7 @@ const writerStop=$("writer-stop") as HTMLButtonElement,writerError=$("writer-err
 function syncWriterMode(){const once=writerMode.value==="once";$("writer-target-label").textContent=once?"Объём разового задания":"Суточный объём";writerNow.disabled=once;if(once){writerNow.checked=true;if(!Number(writerTarget.value))writerTarget.value="5"}$("writer-save").textContent=once?"Начать задание":writerMode.value==="off"?"Выключить / сохранить":"Сохранить"}
 writerMode.onchange=syncWriterMode;
 writerTarget.onchange=()=>{if(writerMode.value==="off"&&Number(writerTarget.value))writerMode.value="once";syncWriterMode()};
-function renderWriter(data:any){const active=data.job?.state==="active";if(writerJobActive&&!active&&writerMode.value==="once"){writerMode.value=data.mode;writerTarget.value=String(data.target_pages);syncWriterMode()}writerJobActive=active;writerStop.hidden=!active;writerResume.hidden=!data.resume_available;$("writer-resume-help").hidden=writerResume.hidden;writerStatus.textContent=[data.reason,...(data.job?["Разовое задание: "+(data.job.chars/data.page_chars).toFixed(1)+" / "+data.job.pages+" усл. А4 · "+data.job.attempts+"/"+data.job.limit+" запросов"]:[]),"Последняя глава: "+data.published+" · Черновики: "+data.pending,"Модель: "+(data.model||"не выбрана"),"Cloud.ru: "+(data.connected?"подключён":"не подключён")+(data.saved_connection?" · есть защищённое подключение":""),"Сегодня: "+(data.published_chars/data.page_chars).toFixed(1)+" усл. А4"+(data.target_pages?" / "+data.target_pages:"")+" · Запросов: "+data.attempts_today+"/"+data.daily_limit,data.budget].join("\n")}
+function renderWriter(data:any){draftBadge(Number(data.pending)||0);const metrics=$("writer-metrics");metrics.replaceChildren();for(const [label,value] of [["Последняя глава",String(data.published)],["На утверждении",String(data.pending)],["Запросы сегодня",data.attempts_today+" / "+data.daily_limit]]){const box=document.createElement("section"),title=document.createElement("small"),number=document.createElement("strong");title.textContent=label;number.textContent=value;box.append(title,number);metrics.append(box)}const active=data.job?.state==="active";if(writerJobActive&&!active&&writerMode.value==="once"){writerMode.value=data.mode;writerTarget.value=String(data.target_pages);syncWriterMode()}writerJobActive=active;writerStop.hidden=!active;writerResume.hidden=!data.resume_available;$("writer-resume-help").hidden=writerResume.hidden;writerStatus.textContent=[data.reason,...(data.job?["Разовое задание: "+(data.job.chars/data.page_chars).toFixed(1)+" / "+data.job.pages+" усл. А4 · "+data.job.attempts+"/"+data.job.limit+" запросов"]:[]),"Модель: "+(data.model||"не выбрана"),"Cloud.ru: "+(data.connected?"подключён":"не подключён")+(data.saved_connection?" · есть защищённое подключение":""),"Сегодня опубликовано: "+(data.published_chars/data.page_chars).toFixed(1)+" усл. А4"+(data.target_pages?" / "+data.target_pages:""),data.budget].join("\n")}
 $("writer-open").onclick=async()=>{menu.hidden=true;if(writerDialog.open)return;const session=++writerSession;writerConsent.checked=false;writerNow.checked=false;writerPreviewOpt.checked=false;writerPreviewText.hidden=true;writerPreviewText.textContent="";writerSave.disabled=true;writerJobActive=false;writerStop.hidden=true;writerResume.hidden=true;$("writer-resume-help").hidden=true;writerError.textContent="";$("writer-retry").hidden=true;writerStatus.textContent="Загрузка…";writerDialog.showModal();try{const data=await api("writer");if(session!==writerSession||!writerDialog.open)return;writerMode.value=data.job?.state==="active"?"once":data.mode;writerInterval.value=String(data.interval);writerTarget.value=String(data.job?.state==="active"?data.job.pages:data.target_pages);writerChapterPages.value=String(data.chapter_pages??0);writerBudget.value=String(data.budget_settings?.monthly??"");writerInputRate.value=String(data.budget_settings?.input??"");writerOutputRate.value=String(data.budget_settings?.output??"");renderWriter(data);syncWriterMode();writerSave.disabled=false}catch(e){if(session===writerSession&&writerDialog.open){writerStatus.textContent=String(e);$("writer-retry").hidden=false}}};
 $("writer-retry").onclick=()=>{writerDialog.close();$("writer-open").click()};
 writerDialog.onclose=()=>{if(!writerDialog.open)writerSession++};
@@ -269,7 +411,7 @@ $("config-form").onsubmit=async e=>{
   if(session===configSession)setConfigPending(false);
  }
 };
-$("composer").onsubmit=async e=>{e.preventDefault();const content=prompt.value.trim();if(!content||busy||!historyReady)return;busy=true;prompt.value="";syncComposer();message("user",content,true);$("status").textContent="Обработка запроса…";try{const result=await api("chat",{content});if(result.reader)showBook(result.reader);else message("assistant",result.reply);$("status").textContent=result.connected?"Cloud.ru · ответ получен":"Локальный режим · сообщение сохранено"}catch(e){message("error",String(e));$("status").textContent="Ошибка запроса"}finally{busy=false;syncComposer();void refreshGraph();if(!chat.hidden&&!config.open&&!writerDialog.open&&!commandDialog.open&&!universeDialog.open&&!note.open){if(book.hidden){if(!prompt.value.trim())prompt.focus()}else $("book-scroll").focus()}}};
+$("composer").onsubmit=async e=>{e.preventDefault();const content=prompt.value.trim();if(!content||busy||!historyReady)return;const intent=creativeIntent(content);if(intent&&content.length<=2000){openProposals(intent,content);return}busy=true;prompt.value="";syncComposer();message("user",content,true);$("status").textContent="Обработка запроса…";try{const result=await api("chat",{content});if(result.reader)showBook(result.reader);else message("assistant",result.reply);$("status").textContent=result.connected?"Cloud.ru · ответ получен":"Локальный режим · сообщение сохранено"}catch(e){message("error",String(e));$("status").textContent="Ошибка запроса"}finally{busy=false;syncComposer();void refreshGraph();if(!chat.hidden&&!config.open&&!writerDialog.open&&!commandDialog.open&&!universeDialog.open&&!note.open&&!draftDialog.open&&!proposalDialog.open){if(book.hidden){if(!prompt.value.trim())prompt.focus()}else $("book-scroll").focus()}}};
 
 const image=$("avatar-image") as HTMLImageElement;
 function useAvatar(){image.src="/api/avatar?"+Date.now();image.onerror=()=>{image.onerror=null;image.src="/avatar.svg"}}
@@ -420,7 +562,7 @@ $("book-smaller").onclick=()=>{font=Math.max(16,font-1);readerStyle()};
 $("book-larger").onclick=()=>{font=Math.min(32,font+1);readerStyle()};
 $("book-spacing").onclick=()=>{spacing=spacing>=2.15?1.5:Math.min(2.2,Math.round((spacing+.15)*100)/100);readerStyle()};
 $("book-focus").onclick=()=>{focused=!focused;chat.classList.toggle("book-focus",focused);syncGraphViewport();scheduleReflow();$("book-focus").setAttribute("aria-pressed",String(focused))};
-document.addEventListener("keydown",e=>{if(book.hidden||chat.hidden||config.open||writerDialog.open||commandDialog.open||universeDialog.open||note.open||e.altKey||e.ctrlKey||e.metaKey||e.shiftKey||e.repeat||window.getSelection()?.toString())return;if(e.target instanceof HTMLInputElement||e.target instanceof HTMLTextAreaElement||e.target instanceof HTMLButtonElement)return;if(e.key==="ArrowRight"||e.key==="ArrowLeft"){e.preventDefault();void turn(e.key==="ArrowRight"?"next":"back")}});
+document.addEventListener("keydown",e=>{if(book.hidden||chat.hidden||config.open||writerDialog.open||commandDialog.open||universeDialog.open||note.open||draftDialog.open||proposalDialog.open||e.altKey||e.ctrlKey||e.metaKey||e.shiftKey||e.repeat||window.getSelection()?.toString())return;if(e.target instanceof HTMLInputElement||e.target instanceof HTMLTextAreaElement||e.target instanceof HTMLButtonElement)return;if(e.key==="ArrowRight"||e.key==="ArrowLeft"){e.preventDefault();void turn(e.key==="ArrowRight"?"next":"back")}});
 let touch:{x:number,y:number}|null=null;
 scroll.addEventListener("touchstart",e=>{touch=e.touches.length===1?{x:e.touches[0].clientX,y:e.touches[0].clientY}:null},{passive:true});
 scroll.addEventListener("touchcancel",()=>{touch=null},{passive:true});

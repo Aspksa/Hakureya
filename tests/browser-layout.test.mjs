@@ -40,7 +40,7 @@ const brainKeys=["plot","characters","relations","magic","time","memory","editor
 const neural={network:true,total:10,limited:false,records:[{key:"lit:db",label:"SQLite",kind:"lit_database",group:4,slot:0},...brainKeys.map((k,i)=>({key:"brain:"+k,label:k,kind:"lit_brain",group:4,slot:i+1,neural_inputs:i?[brainKeys[i-1]]:[]}))],edges:brainKeys.slice(1).map((k,i)=>({a:"brain:"+brainKeys[i],b:"brain:"+k,kind:"neural_input"}))};
 const prose=Array.from({length:55},(_,i)=>"Абзац "+(i+1)+". Хакурэя подняла глаза и прислушалась к тишине. — Пойдём дальше, — сказала она. Герой улыбнулся.").join("\n\n");
 const checkpoints=[];
-let chatCalls=0,historyFailure=false;
+let chatCalls=0,historyFailure=false,proposalCalls=0;
 const inFlightGraphs=new Map();let maxGraphConcurrency=0;
 let activity={session:"test",revision:1,active:[],recent:[]};
 const reader={chapter:1,title:"Первая глава",volume:1,page:1,pages:5,text:"Вечный снег. \n\nХакурэя открыла глаза.",chapter_progress:.2,volume_progress:.03,can_back:false,can_next:true,last_published:false,document:{chapter:1,last_chapter:1,title:"Первая глава",volume:1,text:prose,hash:"fixture",offset:0,segments:[{number:1,start:0,end:Array.from(prose).length,hash:"fixture-part"}],latest:2,volume_count:2,volume_ordinal:1,parts:1,epoch:1}};
@@ -60,6 +60,9 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
      res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify(payload.action==="position"?{ok:true}:{reader}));return;
     }
     if(path==="/api/history"&&historyFailure){historyFailure=false;res.writeHead(503,{"Content-Type":"application/json"}).end(JSON.stringify({error:"fixture unavailable"}));return}
+    if(path==="/api/proposals"){res.writeHead(200,{"Content-Type":"application/json"}).end(JSON.stringify({pending:null,recent:[],approved:0}));return}
+    if(path==="/api/proposals/generate"){proposalCalls++;req.resume();res.writeHead(200,{"Content-Type":"application/json"}).end(JSON.stringify({pending:{id:1,revision:"fixture",kind:"character",idea:"Хочу добавить персонажа",title:"Новый герой",description:"Описание",impact:"Влияние",risks:"Риски"},recent:[],approved:0}));return}
+    if(path==="/api/proposals/decision"){req.resume();res.writeHead(200,{"Content-Type":"application/json"}).end(JSON.stringify({pending:null,recent:[{title:"Новый герой",status:"approved"}],approved:1}));return}
     if(path==="/api/chat")chatCalls++;
     if(path==="/api/graph"||path==="/api/graph/network"){inFlightGraphs.set(path,(inFlightGraphs.get(path)||0)+1);maxGraphConcurrency=Math.max(maxGraphConcurrency,[...inFlightGraphs.values()].reduce((a,b)=>a+b,0));await delay(60);inFlightGraphs.set(path,inFlightGraphs.get(path)-1)}
     const data=path==="/api/graph/network"?neural:path==="/api/graph"?graph:path==="/api/history"?{messages:[],connected:false}:path==="/api/reader"?{reader:null}:path==="/api/chat"?{reply:"",reader,connected:false}:activity;
@@ -128,9 +131,11 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
    assert.equal(await evaluate("document.querySelector('#menu').hidden"),true);
    const chat=await evaluate("({width:document.querySelector('#chat').getBoundingClientRect().width,graph:document.querySelector('#graph').clientWidth,font:parseFloat(getComputedStyle(document.querySelector('#messages')).fontSize)})");
    assert.ok(chat.font>=16);
-   if(width>=1050){assert.ok(chat.width>=600&&chat.width<=700);assert.ok(Math.abs(chat.width+chat.graph-width)<2)}else assert.equal(chat.width,width);
+   if(width>=1050){assert.ok(chat.width>=640&&chat.width<=860);assert.ok(Math.abs(chat.width+chat.graph-width)<2)}else assert.equal(chat.width,width);
    await evaluate("document.querySelector('#command-plus').click()");
    assert.equal(await evaluate("document.querySelector('#command-dialog').open"),true);
+   assert.ok(await evaluate("document.querySelectorAll('#command-results .command-item').length>0 && document.querySelectorAll('#command-results .command-item').length<30"));
+   await evaluate("(()=>{const s=document.querySelector('#command-category');s.value='';s.dispatchEvent(new Event('change',{bubbles:true}))})()");
    assert.equal(await evaluate("document.querySelectorAll('#command-results .command-item').length"),186);
    const palette=await evaluate("(()=>{const r=document.querySelector('#command-dialog').getBoundingClientRect();return {w:r.width,h:r.height}})()");
    assert.ok(palette.w<=width&&palette.h<=height,JSON.stringify(palette));
@@ -147,6 +152,22 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
    assert.equal(await evaluate("document.querySelector('#prompt').value"),"Летопись: читать 5");
    assert.equal(await evaluate("document.querySelector('#prompt').value.slice(document.querySelector('#prompt').selectionStart,document.querySelector('#prompt').selectionEnd)"),"5");
    assert.equal(await evaluate("document.querySelector('#messages').children.length"),0);
+   if(width===1920){
+    const previousCalls=chatCalls,previousProposals=proposalCalls;
+    await evaluate("document.querySelector('#prompt').value='Хочу добавить персонажа';document.querySelector('#composer').dispatchEvent(new Event('submit',{cancelable:true,bubbles:true}));true");
+    await waitFor(()=>evaluate("document.querySelector('#proposal-dialog').open && !document.querySelector('#proposal-create').hidden"));
+    assert.equal(await evaluate("document.querySelector('#proposal-idea').value"),"Хочу добавить персонажа");
+    assert.equal(await evaluate("document.querySelector('#proposal-generate').disabled"),true);
+    assert.equal(chatCalls,previousCalls);
+    await evaluate("document.querySelector('#proposal-consent').click();document.querySelector('#proposal-generate').click()");
+    await waitFor(()=>evaluate("!document.querySelector('#proposal-review').hidden && !document.querySelector('#proposal-approve').disabled"));
+    assert.equal(await evaluate("document.querySelector('#proposal-title').textContent"),"Новый герой");
+    await evaluate("window.confirm=()=>true;document.querySelector('#proposal-approve').click()");
+    await waitFor(()=>evaluate("document.querySelector('#proposal-history-list').textContent.includes('Утверждён')"));
+    assert.equal(proposalCalls,previousProposals+1);
+    assert.equal(chatCalls,previousCalls);
+    await evaluate("document.querySelector('#proposal-close').click()");
+   }
    const sentBefore=chatCalls;
    await evaluate("document.querySelector('#prompt').value='Читать книгу';document.querySelector('#composer').dispatchEvent(new Event('submit',{cancelable:true,bubbles:true}));document.querySelector('#prompt').value='Дубль';document.querySelector('#composer').dispatchEvent(new Event('submit',{cancelable:true,bubbles:true}));true");
    await waitFor(()=>evaluate("!document.querySelector('#book').hidden"));
