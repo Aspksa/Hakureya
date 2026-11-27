@@ -36,6 +36,8 @@ for(let i=0;i<80;i++)graph.records.push({key:"m:"+i,group:i%5,slot:Math.floor(i/
 for(let i=0;i<4;i++)graph.records.push({key:"era:"+["past","meeting","love","future"][i],group:4,kind:"epoch",sector:["past","meeting","love","future"][i],book:0,chapter_slot:0,label:["Прошлое","Встреча","Любовь","Будущее"][i],slot:20+i});
 graph.records.push({key:"immortal:root",group:4,kind:"immortal_root",immortal_slot:-1,label:"Летопись",slot:30});
 graph.total=graph.records.length;
+const brainKeys=["plot","characters","relations","magic","time","memory","editor","analytics","twist","coordinator"];
+const neural={network:true,total:10,limited:false,records:[{key:"lit:db",label:"SQLite",kind:"lit_database",group:4,slot:0},...brainKeys.map((k,i)=>({key:"brain:"+k,label:k,kind:"lit_brain",group:4,slot:i+1,neural_inputs:i?[brainKeys[i-1]]:[]}))],edges:brainKeys.slice(1).map((k,i)=>({a:"brain:"+brainKeys[i],b:"brain:"+k,kind:"neural_input"}))};
 const prose=Array.from({length:55},(_,i)=>"Абзац "+(i+1)+". Хакурэя подняла глаза и прислушалась к тишине. — Пойдём дальше, — сказала она. Герой улыбнулся.").join("\n\n");
 const checkpoints=[];
 let activity={session:"test",revision:1,active:[],recent:[]};
@@ -55,7 +57,7 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
      if(payload.action==="position")checkpoints.push(payload);
      res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify(payload.action==="position"?{ok:true}:{reader}));return;
     }
-    const data=path==="/api/graph"?graph:path==="/api/history"?{messages:[],connected:false}:path==="/api/reader"?{reader:null}:path==="/api/chat"?{reply:"",reader,connected:false}:activity;
+    const data=path==="/api/graph/network"?neural:path==="/api/graph"?graph:path==="/api/history"?{messages:[],connected:false}:path==="/api/reader"?{reader:null}:path==="/api/chat"?{reply:"",reader,connected:false}:activity;
     req.resume();res.writeHead(200,{"Content-Type":"application/json"});res.end(JSON.stringify(data));return;
    }
    const file=resolve(dist,"."+ (path==="/"?"/index.html":path));
@@ -83,6 +85,11 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
    await send("Emulation.setDeviceMetricsOverride",{width,height,deviceScaleFactor:1,mobile:false});
    await send("Page.navigate",{url:url+"?width="+width});
    await waitFor(()=>evaluate("location.search==='?width="+width+"' && !!document.querySelector('#graph [data-key=\"immortal:root\"]')"));
+   await evaluate("document.querySelector('#network-open').click()");
+   await waitFor(()=>evaluate("document.querySelector('#network-open').getAttribute('aria-pressed')==='true' && document.querySelectorAll('#graph [data-key^=\"brain:\"]').length===10"));
+   assert.ok(await evaluate("document.querySelector('#info').textContent.includes('10 мозгов')"));
+   await evaluate("document.querySelector('#network-open').click()");
+   await waitFor(()=>evaluate("document.querySelector('#network-open').getAttribute('aria-pressed')==='false' && !!document.querySelector('#graph [data-key=\"immortal:root\"]')"));
    await delay(150);
    const metrics=await evaluate("(()=>{const root=document.querySelector('#graph [data-key=\"root\"]'),circle=root.querySelector('circle[r=\"9\"]'),label=root.querySelector('text');return {width:document.querySelector('#graph').clientWidth,diameter:circle.getBoundingClientRect().width,font:parseFloat(getComputedStyle(label).fontSize)*label.getScreenCTM().a,labels:[...document.querySelectorAll('#graph .label')].filter(e=>e.getAttribute('visibility')!=='hidden').length}})()");
    assert.equal(metrics.width,width);
