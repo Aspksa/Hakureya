@@ -146,7 +146,8 @@ def snapshot(db, limit=5000):
         did=int(pending["key"].split(":")[1])
         warnings=[]
         try:
-            import soul_romance, soul_immortal, soul_infinite
+            import soul_romance, soul_immortal, soul_infinite, soul_chronicle
+            warnings.extend(soul_chronicle.review_warnings(db,did))
             meta=soul_omega.metadata(db,did)
             report=soul_romance.report(db,did)
             for value in (meta,report):
