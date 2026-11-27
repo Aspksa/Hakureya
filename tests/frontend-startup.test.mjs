@@ -4,7 +4,7 @@ import {readFile} from 'node:fs/promises';
 import {transformWithEsbuild} from 'vite';
 
 class ElementStub {
- constructor(tag="div"){this.tagName=tag;this.children=[];this.attrs=new Map();this.hidden=false;this.clientWidth=900;this.clientHeight=650;this.textContent="";this.value="";this.style={setProperty(){}};this.classList={add(){},remove(){},toggle(){}}}
+ constructor(tag="div"){this.tagName=tag;this.children=[];this.attrs=new Map();this.dataset={};this.hidden=false;this.clientWidth=900;this.clientHeight=650;this.textContent="";this.value="";this.style={setProperty(){}};this.classList={add(){},remove(){},toggle(){}}}
  append(...nodes){this.children.push(...nodes)}
  replaceChildren(...nodes){this.children=nodes}
  setAttribute(k,v){this.attrs.set(k,String(v))}
