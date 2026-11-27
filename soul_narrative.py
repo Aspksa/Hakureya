@@ -11,6 +11,7 @@ import soul_omega as o
 import soul_universe as u
 import soul_evolution as ev
 import soul_embeddings as embeddings
+import soul_semantic as semantic
 
 VERSION=1
 CONTEXT_BYTES=10000
@@ -32,6 +33,7 @@ CUES={
 }
 def init(db):
     embeddings.init(db)
+    semantic.init(db)
     db.execute("""CREATE TABLE IF NOT EXISTS narrative_sources(
         chapter INTEGER PRIMARY KEY,digest TEXT NOT NULL,payload TEXT NOT NULL,checksum TEXT NOT NULL,
         scenes INTEGER NOT NULL,chars INTEGER NOT NULL,signals INTEGER NOT NULL)""")
@@ -141,7 +143,7 @@ def status(db):
     evidence=db.execute("SELECT COUNT(*) FROM intellect_evidence").fetchone()[0]
     return {"published":expected,"archive":total,"indexed":indexed,"pending":max(0,expected-indexed),
             "scenes":scenes,"chars":chars,"signals":signals,"evidence":evidence,"method":"local_extractive",
-            "vector_enabled":embeddings.status(db)["indexed"]>0,"vectors":embeddings.status(db)}
+            "vector_enabled":embeddings.status(db)["indexed"]>0,"vectors":embeddings.status(db),"analysis":semantic.status(db)}
 
 def audit(db):
     if status(db)["published"]!=status(db)["archive"]:return "Архив публикаций неполон; требуется восстановление."
