@@ -62,10 +62,12 @@ document.addEventListener("visibilitychange",()=>{clearTimeout(activityTimer);if
 const avatar=$("avatar"),chat=$("chat"),prompt=$("prompt") as HTMLTextAreaElement,menu=$("menu"),config=$("config") as HTMLDialogElement;
 let cinema=false;
 function syncGraphViewport(){const stage=$("stage");stage.classList.toggle("stellar-cinema",cinema);stage.classList.toggle("chat-open",!chat.hidden);stage.classList.toggle("book-open",!chat.hidden&&!book.hidden);stage.classList.toggle("book-full",!chat.hidden&&!book.hidden&&focused);live?.setReader(!cinema&&!chat.hidden&&!book.hidden,!cinema&&!chat.hidden&&!book.hidden&&focused);live?.resize()}
-function toggle(open=chat.hidden){chat.hidden=!open;syncGraphViewport();avatar.setAttribute("aria-expanded",String(open));avatar.setAttribute("aria-label",open?"Свернуть чат":"Открыть чат Hakureya");if(open){if(!book.hidden){$("book-scroll").focus();scheduleReflow()}else prompt.focus()}else avatar.focus()}
+function toggle(open=chat.hidden){menu.hidden=true;chat.hidden=!open;syncGraphViewport();avatar.setAttribute("aria-expanded",String(open));avatar.setAttribute("aria-label",open?"Свернуть чат":"Открыть чат Hakureya");if(open){if(!book.hidden){$("book-scroll").focus();scheduleReflow()}else{$("messages").scrollTop=$("messages").scrollHeight;prompt.focus()}}else avatar.focus()}
 function setCinema(value:boolean){cinema=value;$("stellar-cinema").setAttribute("aria-pressed",String(value));$("stellar-cinema").setAttribute("aria-label",value?"Выйти из режима наблюдения":"Кинематографический режим");syncGraphViewport();}
 $("stellar-cinema").onclick=()=>setCinema(!cinema);
-avatar.onclick=()=>toggle();$("close").onclick=()=>toggle(false);avatar.oncontextmenu=e=>{e.preventDefault();menu.hidden=!menu.hidden};document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(config.open||writerDialog.open||commandDialog.open||universeDialog.open||note.open)return;if(cinema){setCinema(false);return}if(!menu.hidden)menu.hidden=true;else if(!chat.hidden&&!config.open&&!writerDialog.open&&!commandDialog.open&&!universeDialog.open&&!note.open)toggle(false)}});document.addEventListener("click",e=>{if(!menu.contains(e.target as Node)&&!avatar.contains(e.target as Node))menu.hidden=true});
+avatar.onclick=()=>toggle();$("close").onclick=()=>toggle(false);avatar.oncontextmenu=e=>{e.preventDefault();toggleMenu()};
+function toggleMenu(){menu.hidden=!menu.hidden;$("chat-menu").setAttribute("aria-expanded",String(!menu.hidden));if(!menu.hidden){menu.classList.toggle("from-chat",!chat.hidden);(menu.querySelector("button") as HTMLButtonElement|null)?.focus()}}
+$("chat-menu").onclick=toggleMenu;document.addEventListener("keydown",e=>{if(e.key==="Escape"){if(config.open||writerDialog.open||commandDialog.open||universeDialog.open||note.open)return;if(cinema){setCinema(false);return}if(!menu.hidden)menu.hidden=true;else if(!chat.hidden&&!config.open&&!writerDialog.open&&!commandDialog.open&&!universeDialog.open&&!note.open)toggle(false)}});document.addEventListener("click",e=>{if(!menu.contains(e.target as Node)&&!avatar.contains(e.target as Node)&&!$("chat-menu").contains(e.target as Node))menu.hidden=true;if(menu.hidden)$("chat-menu").setAttribute("aria-expanded","false")});
 function message(role:string,content:string,force=false){const box=$("messages"),follow=force||box.scrollHeight-box.scrollTop-box.clientHeight<80;const p=document.createElement("p");p.className="message "+role;p.textContent=content;box.append(p);if(follow)box.scrollTop=box.scrollHeight;return p}
 async function api(path:string,data?:unknown){
  const controller=new AbortController(),timeout=window.setTimeout(()=>controller.abort(),path==="chat"?130000:15000);
@@ -129,6 +131,8 @@ $("command-close").onclick=()=>commandDialog.close();
 commandSearch.oninput=()=>{renderCommands();commandResults.scrollTop=0};commandCategory.onchange=()=>{renderCommands();commandResults.scrollTop=0};
 $("command-writer").onclick=()=>{commandDialog.close();$("writer-open").click()};
 $("command-cloud").onclick=()=>{commandDialog.close();$("settings").click()};
+$("command-universe").onclick=()=>{commandDialog.close();$("universe-open").click()};
+$("command-network").onclick=()=>{commandDialog.close();toggle(false);if(!networkView)$("network-open").click()};
 const cloudModel=$("model") as HTMLInputElement,cloudKey=$("key") as HTMLInputElement;
 const modelList=$("model-list") as HTMLSelectElement,modelListLabel=$("model-list-label");
 const loadModels=$("load-models") as HTMLButtonElement,saveConfig=$("save") as HTMLButtonElement;
@@ -145,7 +149,7 @@ $("settings").onclick=()=>{
  config.showModal();
 };
 $("config-close").onclick=()=>config.close();
-$("forget-cloud").onclick=async()=>{try{await api("config/forget",{});cloudKey.value="";rememberCloud.checked=false;$("status").textContent="Cloud.ru отключён";configStatus.textContent="Ключ удалён, автономный писатель остановлен."}catch(e){configStatus.textContent=String(e)}};
+$("forget-cloud").onclick=async()=>{if(saveConfig.disabled)return;const session=configSession;setConfigPending(true);try{await api("config/forget",{});$("status").textContent="Cloud.ru отключён";if(session===configSession&&config.open){cloudKey.value="";rememberCloud.checked=false;configStatus.textContent="Ключ удалён, автономный писатель остановлен."}}catch(e){if(session===configSession&&config.open)configStatus.textContent=String(e)}finally{if(session===configSession)setConfigPending(false)}};
 const writerDialog=$("writer-dialog") as HTMLDialogElement,writerMode=$("writer-mode") as HTMLSelectElement,writerInterval=$("writer-interval") as HTMLSelectElement,writerConsent=$("writer-consent") as HTMLInputElement,writerNow=$("writer-now") as HTMLInputElement;
 const universeDialog=$("universe-dialog") as HTMLDialogElement;
 let universePage=1,universeSerial=0;
@@ -179,7 +183,7 @@ async function renderUniverse(){
  }catch(e){if(serial===universeSerial&&universeDialog.open){$("universe-summary").textContent=String(e);$("universe-list").replaceChildren();$("universe-galaxies").replaceChildren();$("universe-actors").replaceChildren();$("universe-family").textContent="";$("universe-page").textContent="";($("universe-prev") as HTMLButtonElement).disabled=universePage<=1;$("universe-retry").hidden=false}}
 }
 function universeCommand(value:string){if(busy||!historyReady){$("universe-summary").textContent="Дождитесь окончания запроса или загрузки истории.";return}if(prompt.value.trim()&&prompt.value!==value&&!window.confirm("Заменить текущий текст?"))return;universeDialog.close();if(!book.hidden)exitBook();toggle(true);prompt.value=value;syncComposer();prompt.focus();if(!value.endsWith(" ")){const form=$("composer") as HTMLFormElement;form.requestSubmit()}}
-$("universe-open").onclick=()=>{menu.hidden=true;universePage=1;universeDialog.showModal();void renderUniverse()};
+$("universe-open").onclick=()=>{menu.hidden=true;if(universeDialog.open)return;universePage=1;universeDialog.showModal();void renderUniverse()};
 $("universe-close").onclick=()=>{universeSerial++;universeDialog.close()};
 $("universe-prev").onclick=()=>{if(universePage>1){universePage--;void renderUniverse()}};
 $("universe-next").onclick=()=>{universePage++;void renderUniverse()};
@@ -202,7 +206,9 @@ function syncWriterMode(){const once=writerMode.value==="once";$("writer-target-
 writerMode.onchange=syncWriterMode;
 writerTarget.onchange=()=>{if(writerMode.value==="off"&&Number(writerTarget.value))writerMode.value="once";syncWriterMode()};
 function renderWriter(data:any){const active=data.job?.state==="active";if(writerJobActive&&!active&&writerMode.value==="once"){writerMode.value=data.mode;writerTarget.value=String(data.target_pages);syncWriterMode()}writerJobActive=active;writerStop.hidden=!active;writerStatus.textContent=[data.reason,...(data.job?["Разовое задание: "+(data.job.chars/data.page_chars).toFixed(1)+" / "+data.job.pages+" усл. А4 · "+data.job.attempts+"/"+data.job.limit+" запросов"]:[]),"Последняя глава: "+data.published+" · Черновики: "+data.pending,"Модель: "+(data.model||"не выбрана"),"Cloud.ru: "+(data.connected?"подключён":"не подключён")+(data.saved_connection?" · есть защищённое подключение":""),"Сегодня: "+(data.published_chars/data.page_chars).toFixed(1)+" усл. А4"+(data.target_pages?" / "+data.target_pages:"")+" · Запросов: "+data.attempts_today+"/"+data.daily_limit,data.budget].join("\n")}
-$("writer-open").onclick=async()=>{menu.hidden=true;const session=++writerSession;writerConsent.checked=false;writerNow.checked=false;writerPreviewOpt.checked=false;writerPreviewText.hidden=true;writerPreviewText.textContent="";writerSave.disabled=true;writerJobActive=false;writerStop.hidden=true;writerError.textContent="";writerStatus.textContent="Загрузка…";writerDialog.showModal();try{const data=await api("writer");if(session!==writerSession||!writerDialog.open)return;writerMode.value=data.job?.state==="active"?"once":data.mode;writerInterval.value=String(data.interval);writerTarget.value=String(data.job?.state==="active"?data.job.pages:data.target_pages);writerChapterPages.value=String(data.chapter_pages??0);writerBudget.value=String(data.budget_settings?.monthly??"");writerInputRate.value=String(data.budget_settings?.input??"");writerOutputRate.value=String(data.budget_settings?.output??"");renderWriter(data);syncWriterMode();writerSave.disabled=false}catch(e){if(session===writerSession)writerStatus.textContent=String(e)}};
+$("writer-open").onclick=async()=>{menu.hidden=true;if(writerDialog.open)return;const session=++writerSession;writerConsent.checked=false;writerNow.checked=false;writerPreviewOpt.checked=false;writerPreviewText.hidden=true;writerPreviewText.textContent="";writerSave.disabled=true;writerJobActive=false;writerStop.hidden=true;writerError.textContent="";$("writer-retry").hidden=true;writerStatus.textContent="Загрузка…";writerDialog.showModal();try{const data=await api("writer");if(session!==writerSession||!writerDialog.open)return;writerMode.value=data.job?.state==="active"?"once":data.mode;writerInterval.value=String(data.interval);writerTarget.value=String(data.job?.state==="active"?data.job.pages:data.target_pages);writerChapterPages.value=String(data.chapter_pages??0);writerBudget.value=String(data.budget_settings?.monthly??"");writerInputRate.value=String(data.budget_settings?.input??"");writerOutputRate.value=String(data.budget_settings?.output??"");renderWriter(data);syncWriterMode();writerSave.disabled=false}catch(e){if(session===writerSession&&writerDialog.open){writerStatus.textContent=String(e);$("writer-retry").hidden=false}}};
+$("writer-retry").onclick=()=>{writerDialog.close();$("writer-open").click()};
+writerDialog.onclose=()=>{if(!writerDialog.open)writerSession++};
 $("writer-close").onclick=()=>{writerSession++;writerDialog.close()};
 writerStop.onclick=async()=>{if(writerSave.disabled)return;writerSave.disabled=true;writerStop.disabled=true;const session=++writerSession;writerError.textContent="";try{const data=await api("writer",{mode:"off",interval:Number(writerInterval.value),target_pages:0});if(session!==writerSession||!writerDialog.open)return;writerMode.value="off";writerTarget.value="0";writerConsent.checked=false;writerNow.checked=false;renderWriter(data);syncWriterMode()}catch(e){if(session===writerSession)writerError.textContent=String(e)}finally{writerStop.disabled=false;if(session===writerSession)writerSave.disabled=false}};
 $("writer-form").onsubmit=async e=>{e.preventDefault();if(writerSave.disabled)return;writerSave.disabled=true;writerError.textContent="";const session=++writerSession;try{const data=await api("writer",{mode:writerMode.value,interval:Number(writerInterval.value),consent:writerConsent.checked,start_now:writerNow.checked,target_pages:Number(writerTarget.value),chapter_pages:Number(writerChapterPages.value),...([writerBudget,writerInputRate,writerOutputRate].some(x=>x.value.trim())?{budget:{monthly:Number(writerBudget.value),input:Number(writerInputRate.value),output:Number(writerOutputRate.value)}}:{})});if(session!==writerSession||!writerDialog.open)return;renderWriter(data);writerMode.value=data.job?.state==="active"?"once":data.mode;writerNow.checked=false;writerConsent.checked=false;syncWriterMode()}catch(e){if(session===writerSession)writerError.textContent=String(e)}finally{if(session===writerSession)writerSave.disabled=false}};
@@ -340,7 +346,7 @@ function scheduleReflow(){
 }
 function showBook(p:BookPage){
  readerGeneration++;
- book.hidden=false;chat.classList.add("reading");syncGraphViewport();$("messages").hidden=true;$("composer").hidden=true;$("status").hidden=true;
+ book.hidden=false;chat.classList.add("reading");syncGraphViewport();$("messages").hidden=true;$("composer").hidden=true;$("chat-status-row").hidden=true;
  novelDoc=p.document||null;novelPages=[];novelIndex=0;layoutKey="";
  const d=novelDoc;
  $("book-kicker").textContent="ТОМ "+(d?.volume??p.volume)+" · ГЛАВА "+(d?.chapter??p.chapter);
@@ -356,7 +362,7 @@ function showBook(p:BookPage){
  $("book-end").hidden=!p.last_published;$("book-status").textContent="";
  animatePage();scheduleReflow();
 }
-function exitBook(){readerGeneration++;novelDoc=null;novelPages=[];layoutKey="";book.hidden=true;chat.classList.remove("reading","book-focus");focused=false;syncGraphViewport();$("book-focus").setAttribute("aria-pressed","false");$("messages").hidden=false;$("composer").hidden=false;$("status").hidden=false;prompt.focus()}
+function exitBook(){readerGeneration++;novelDoc=null;novelPages=[];layoutKey="";book.hidden=true;chat.classList.remove("reading","book-focus");focused=false;syncGraphViewport();$("book-focus").setAttribute("aria-pressed","false");$("messages").hidden=false;$("composer").hidden=false;$("chat-status-row").hidden=false;prompt.focus()}
 async function turn(action:string){
  if(reading||busy)return;
  reading=true;
