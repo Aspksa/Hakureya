@@ -501,8 +501,8 @@ $("note-save").onclick=async()=>{const btn=$("note-save") as HTMLButtonElement;i
 
 
 // Reading is a separate local presentation of the same immutable SQLite bookmark.
-type NovelDocument={chapter:number,last_chapter:number,title:string,volume:number,text:string,hash:string,offset:number,latest:number,volume_count:number,volume_ordinal:number,parts:number,epoch:number,segments:{number:number,start:number,end:number,hash:string}[]};
-type BookPage={chapter:number,title:string,volume:number,page:number,pages:number,text:string,chapter_progress:number,volume_progress:number,can_back:boolean,can_next:boolean,last_published:boolean,document?:NovelDocument|null};
+type NovelDocument={chapter:number,last_chapter:number,title:string,volume:number,text:string,hash:string,offset:number,latest:number,volume_count:number,volume_ordinal:number,parts:number,epoch:number,volume_parts?:number,assembly?:{target_chars?:number,chars:number,closed:boolean},segments:{number:number,start:number,end:number,hash:string}[]};
+type BookPage={chapter:number,title:string,volume:number,page:number,pages:number,text:string,chapter_progress:number,volume_progress:number,can_back:boolean,can_next:boolean,last_published:boolean,document?:NovelDocument|null,preferences?:{font:number,spacing:number,theme:string,family:string,width:string}|null};
 const book=$("book"),scroll=$("book-scroll");
 let font=21,spacing=1.8,focused=false,reading=false;
 let bookTheme="night",bookFamily="serif",bookWidth="normal";
@@ -511,7 +511,7 @@ const jump=$("book-jump") as HTMLInputElement;
 let novelDoc:NovelDocument|null=null,novelPages:{start:number,end:number,text:string}[]=[],novelIndex=0,layoutKey="",reflowTimer=0,positionChain:Promise<unknown>=Promise.resolve();
 let readerGeneration=0;
 try{const saved=JSON.parse(localStorage.getItem("hakureya-reading-style")||"{}");if(Number.isFinite(saved.font))font=Math.min(32,Math.max(16,saved.font===18&&!saved.largeUI?21:saved.font));if(Number.isFinite(saved.spacing))spacing=[1.5,1.8,2.1].reduce((a,b)=>Math.abs(a-saved.spacing)<=Math.abs(b-saved.spacing)?a:b);if(["night","sepia","paper"].includes(saved.theme))bookTheme=saved.theme;if(["serif","sans"].includes(saved.family))bookFamily=saved.family;if(["normal","wide"].includes(saved.width))bookWidth=saved.width}catch{}
-function readerStyle(){book.style.setProperty("--book-font",font+"px");book.style.setProperty("--book-spacing",String(spacing));chat.dataset.bookTheme=bookTheme;book.dataset.family=bookFamily;book.dataset.width=bookWidth;$("book-font-value").textContent=font+" px";($("book-spacing") as HTMLSelectElement).value=String(spacing);($("book-font-family") as HTMLSelectElement).value=bookFamily;($("book-width") as HTMLSelectElement).value=bookWidth;($("book-theme") as HTMLSelectElement).value=bookTheme;try{localStorage.setItem("hakureya-reading-style",JSON.stringify({font,spacing,largeUI:true,theme:bookTheme,family:bookFamily,width:bookWidth}))}catch{}scheduleReflow()}
+function readerStyle(persist=false){book.style.setProperty("--book-font",font+"px");book.style.setProperty("--book-spacing",String(spacing));chat.dataset.bookTheme=bookTheme;book.dataset.family=bookFamily;book.dataset.width=bookWidth;$("book-font-value").textContent=font+" px";($("book-spacing") as HTMLSelectElement).value=String(spacing);($("book-font-family") as HTMLSelectElement).value=bookFamily;($("book-width") as HTMLSelectElement).value=bookWidth;($("book-theme") as HTMLSelectElement).value=bookTheme;try{localStorage.setItem("hakureya-reading-style",JSON.stringify({font,spacing,largeUI:true,theme:bookTheme,family:bookFamily,width:bookWidth}))}catch{}if(persist){const preferences={font,spacing,theme:bookTheme,family:bookFamily,width:bookWidth};positionChain=positionChain.catch(()=>{}).then(()=>api("reader",{action:"style",preferences})).catch(e=>{if(!book.hidden)$("book-status").textContent="Настройки: "+String(e)})}scheduleReflow()}
 readerStyle();
 function renderProse(text:string){
  const body=$("book-text");body.replaceChildren();
@@ -581,6 +581,7 @@ function showBook(p:BookPage){
  readerGeneration++;
  book.hidden=false;$("chat-workspace").hidden=true;chat.classList.add("reading");syncGraphViewport();$("messages").hidden=true;$("composer").hidden=true;$("chat-status-row").hidden=true;
  novelDoc=p.document||null;novelPages=[];novelIndex=0;layoutKey="";
+ if(p.preferences){({font,spacing,theme:bookTheme,family:bookFamily,width:bookWidth}=p.preferences);readerStyle()}
  const d=novelDoc;
  $("book-kicker").textContent="ТОМ "+(d?.volume??p.volume)+" · ГЛАВА "+(d?.chapter??p.chapter);
  $("book-title").textContent=d?.title??p.title;
@@ -641,13 +642,13 @@ if(typeof ResizeObserver==="function"){const observer=new ResizeObserver(schedul
 else window.addEventListener("resize",scheduleReflow);
 setInterval(()=>void readerPresence(),10000);
 $("book-prev").onclick=()=>void turn("back");$("book-next").onclick=()=>void turn("next");$("book-exit").onclick=()=>void turn("pause");
-$("book-smaller").onclick=()=>{font=Math.max(16,font-1);readerStyle()};
-$("book-larger").onclick=()=>{font=Math.min(32,font+1);readerStyle()};
-($("book-spacing") as HTMLSelectElement).onchange=()=>{spacing=Number(($("book-spacing") as HTMLSelectElement).value);readerStyle()};
-($("book-font-family") as HTMLSelectElement).onchange=()=>{bookFamily=($("book-font-family") as HTMLSelectElement).value;readerStyle()};
-($("book-width") as HTMLSelectElement).onchange=()=>{bookWidth=($("book-width") as HTMLSelectElement).value;readerStyle()};
-($("book-theme") as HTMLSelectElement).onchange=()=>{bookTheme=($("book-theme") as HTMLSelectElement).value;readerStyle()};
-$("book-reset-style").onclick=()=>{font=21;spacing=1.8;bookTheme="night";bookFamily="serif";bookWidth="normal";readerStyle()};
+$("book-smaller").onclick=()=>{font=Math.max(16,font-1);readerStyle(true)};
+$("book-larger").onclick=()=>{font=Math.min(32,font+1);readerStyle(true)};
+($("book-spacing") as HTMLSelectElement).onchange=()=>{spacing=Number(($("book-spacing") as HTMLSelectElement).value);readerStyle(true)};
+($("book-font-family") as HTMLSelectElement).onchange=()=>{bookFamily=($("book-font-family") as HTMLSelectElement).value;readerStyle(true)};
+($("book-width") as HTMLSelectElement).onchange=()=>{bookWidth=($("book-width") as HTMLSelectElement).value;readerStyle(true)};
+($("book-theme") as HTMLSelectElement).onchange=()=>{bookTheme=($("book-theme") as HTMLSelectElement).value;readerStyle(true)};
+$("book-reset-style").onclick=()=>{font=21;spacing=1.8;bookTheme="night";bookFamily="serif";bookWidth="normal";readerStyle(true)};
 let contentsPage=1,contentsSeq=0,contentsPages=1;
 function closeBookPanels(){contentsSeq++;contentsPanel.hidden=true;settingsPanel.hidden=true;$("book-contents").setAttribute("aria-expanded","false");$("book-settings").setAttribute("aria-expanded","false")}
 async function loadBookContents(){
