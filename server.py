@@ -1012,6 +1012,14 @@ class Handler(SimpleHTTPRequestHandler):
             data = json.loads(self.rfile.read(length))
             if not isinstance(data, dict):
                 raise ValueError("Некорректный JSON")
+            if self.path == "/api/diagnostics":
+                kind=data.get("kind")
+                route=data.get("route")
+                status=data.get("status")
+                if kind not in ("timeout","http","response","network") or not isinstance(route,str) or type(status) is not int or not 0<=status<=599:
+                    return self.respond({"error":"Некорректная диагностика"},400)
+                diagnostics.emit("client.failed",kind=kind,route=diagnostics.route("/api/"+route),status=status,source="web/app.ts")
+                return self.respond({"ok":True})
             if self.path == "/api/writer/resume":
                 if data.get("consent") is not True:return self.respond({"error":"Подтвердите новый платный запрос."},400)
                 with LOCK, closing(connect()) as db, db:
