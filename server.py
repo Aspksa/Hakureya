@@ -275,7 +275,7 @@ def generate_chronicle(background=False, arc=None, alternative=False, shadow=Fal
             writer=cloud_writer.selected(db)
             if reservation:
                 model=writer or CONFIG["model"]
-                plan["approved_directions"]=soul_proposals.directions(db)
+                plan["approved_directions"]=soul_proposals.directions(db,plan.get("guide","")+" "+plan.get("universe",{}).get("title","")) if plan["arc"]=="future" else []
                 messages=soul_chronicle.prompt(reservation,traits,previous,plan)
                 if len(json.dumps(messages,ensure_ascii=False).encode("utf-8"))>soul_universe.MAX_CONTEXT_BYTES:
                     db.execute("DELETE FROM writer_job_attempt WHERE day=?",(reservation[0],))
@@ -491,6 +491,16 @@ def chronicle_command(content):
     scene_query=re.fullmatch(r"поиск сцены (.{2,180})",q)
     actor_query=re.fullmatch(r"история персонажа (.{2,80})",q)
     timeline_query=re.fullmatch(r"хронология вселенной ([1-9][0-9]{0,5})",q)
+    if q=="очередь замыслов":
+        with LOCK, closing(connect()) as db:
+            return soul_proposals.queue_text(db)
+    executed=re.fullmatch(r"замысел исполнен ([1-9][0-9]{0,8})\s*\|\s*([1-9][0-9]{0,6})\s*\|\s*(.{12,500})",content.strip(),re.I|re.S)
+    if executed:
+        with LOCK, closing(connect()) as db, db:
+            try:
+                soul_proposals.mark_executed(db,int(executed[1]),int(executed[2]),executed[3].strip())
+                return "Исполнение замысла отмечено автором. Цитата связана с опубликованной частью; канон не изменён."
+            except (ValueError,TypeError,KeyError,sqlite3.Error):return "Не подтверждён утверждённый замысел или точная цитата из опубликованной части."
     if q in ("литературная память","проверить литературную память","восстановить литературную память","источники писателя") or re.fullmatch(r"содержание (главы|тома) [1-9][0-9]{0,6}",q):
         with LOCK, closing(connect()) as db, db:
             if not soul_chronicle.canon_ok(db):return "Целостность канона нарушена."
