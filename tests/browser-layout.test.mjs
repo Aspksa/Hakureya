@@ -208,6 +208,7 @@ test("real browser: SVG, chat, book and settings at four viewport widths",{skip:
    assert.ok(await evaluate("document.querySelector('#config').open && parseFloat(getComputedStyle(document.querySelector('#key')).fontSize)>=16"));
    await evaluate("document.querySelector('#config-close').click()");
    await evaluate("document.querySelector('#book-exit').click()");
+   await waitFor(()=>evaluate("document.querySelector('#book').hidden && !document.querySelector('#chat-workspace').hidden"));
    const beforeRead=chatCalls;
    await evaluate("document.querySelector('#prompt').value='Моя незаконченная мысль';document.querySelector('#quick-read').click()");
    await waitFor(()=>evaluate("!document.querySelector('#book').hidden"));
