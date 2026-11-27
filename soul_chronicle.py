@@ -196,7 +196,7 @@ def finish(db, reservation, value, saga_plan=None, *, tolerant=False, warnings=N
         soul_genesis.append_warnings(db,cur.lastrowid,data,plan)
         # Reuse only validated metadata in variants; original unverified fields must not be reintroduced.
         valid_lit=soul_omega.metadata(db,cur.lastrowid)
-        soul_genesis.save_variants(db,cur.lastrowid,data,valid_lit["literary"] if valid_lit and "literary" in valid_lit else None,soul_genesis.world(db,cur.lastrowid),alt,plan)
+        soul_genesis.save_variants(db,cur.lastrowid,data,(valid_lit["literary"] if valid_lit and "literary" in valid_lit else None) if tolerant else literary,soul_genesis.world(db,cur.lastrowid) if tolerant else world,alt,plan)
     soul_romance.save(db,cur.lastrowid,data,plan)
     if "heart" in plan or heart is not None:
         optional("отношения",heart,lambda x:soul_heart.save(db,cur.lastrowid,data,x,plan["arc"]))
