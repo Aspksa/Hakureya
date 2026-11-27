@@ -269,7 +269,12 @@ def news(db):
     rows=db.execute("SELECT number,title FROM omega_index WHERE number>13 ORDER BY number DESC LIMIT 5").fetchall()
     pending=db.execute("SELECT COUNT(*) FROM chronicle_drafts WHERE status='pending'").fetchone()[0]
     result="Последние утверждённые главы:\n"+"\n".join(f"{n}. {t}" for n,t in rows) if rows else "Новых утверждённых глав пока нет."
-    return result+("\n\nЕсть черновик: «Покажи черновик»." if pending else "")
+    if pending:
+        import soul_chronicle as ch
+        p=ch.latest_pending(db)
+        warnings=ch.review_warnings(db,p["id"]) if p else []
+        result+="\n\nЕсть черновик: «Покажи черновик»."+(("\nТребуется ручная проверка: "+"; ".join(warnings)) if warnings else "")
+    return result
 
 def graph(db):
     nodes=[];edges=[];seen=set()
