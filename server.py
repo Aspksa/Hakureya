@@ -339,7 +339,9 @@ def execute_chronicle(reservation,traits,previous,key,model,epoch,activity,plan)
             with LOCK, closing(connect()) as db, db:
                 soul_universe.save_fragment(db,reservation[0],writer_preview.story_prefix(result["choices"][0]["message"]["content"]),"truncated")
             raise ValueError("incomplete literary response")
-        raw=result["choices"][0]["message"]["content"]
+        if result["choices"][0].get("finish_reason") not in (None,"stop"):raise ValueError("unsupported finish reason")
+        raw=result["choices"][0]["message"].get("content")
+        if raw is None or isinstance(raw,str) and not raw.strip():raise ValueError("empty literary content")
         if not isinstance(raw,str) or len(raw)>24000:
             raise ValueError("invalid draft")
         try:
